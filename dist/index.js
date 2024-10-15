@@ -8,6 +8,7 @@ const express_1 = __importDefault(require("express"));
 const doctor_routes_1 = __importDefault(require("./doctor/doctor.routes"));
 const department_routes_1 = __importDefault(require("./department/department.routes")); // Import department routes
 const appointment_routes_1 =__importDefault(require("./appointments/appointment.routes"))
+const login_routes_1 = __importDefault(require("./login/login.routes"))
 const cors_1 = __importDefault(require("cors"));
 
 const app = (0, express_1.default)();
@@ -20,6 +21,7 @@ app.use(express_1.default.json());
 app.use('/api/doctors', doctor_routes_1.default);
 app.use('/api/departments', department_routes_1.default);
 app.use('/api/appointments', appointment_routes_1.default);
+app.use('/api/login',login_routes_1.default)
 
 // Sample health check route to ensure server status
 app.get('/', (req, res) => {

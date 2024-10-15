@@ -1,0 +1,12 @@
+    import { Router } from 'express';
+    import { userLogin, userRegister, userResetPassword, userChangePassword,getUserDetails } from './login.controller';
+    import { authenticateToken } from '../middleware';
+    const router = Router();
+
+    router.post('/login', userLogin);
+    router.post('/register', userRegister);
+    router.post('/reset-password', userResetPassword);
+    router.post('/change-password', userChangePassword);
+    router.get('/user-details', authenticateToken, getUserDetails); // Protected route
+
+    export default router;

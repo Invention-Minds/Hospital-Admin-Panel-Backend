@@ -28,4 +28,21 @@ export default class AppointmentRepository {
     });
     return !appointment; // Returns true if no appointment exists for the given date and time
   }
+  async getAppointmentsCountForDate(date: string): Promise<number> {
+    return await prisma.appointment.count({
+      where: {
+        date,
+      },
+    });
+  }
+
+  // Method to get the count of pending requests for the given date
+  async getPendingAppointmentsCountForDate(date: string): Promise<number> {
+    return await prisma.appointment.count({
+      where: {
+        date,
+        status: 'pending',
+      },
+    });
+  }
 }

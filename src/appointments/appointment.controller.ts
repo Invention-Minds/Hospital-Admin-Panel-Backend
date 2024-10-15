@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import AppointmentResolver from './appointment.resolver';
 import  DoctorRepository  from '../doctor/doctor.repository';
+import AppointmentRepository  from './appointment.repository';
 
 const resolver = new AppointmentResolver();
 const doctorRepository = new DoctorRepository();
+const appointmentRepository = new AppointmentRepository();
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -96,6 +98,31 @@ export const deleteAppointment = async (req: Request, res: Response): Promise<vo
   try {
     await resolver.deleteAppointment(Number(req.params.id));
     res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+// Endpoint to get total appointments for today
+export const getTotalAppointments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date } = req.query; // Get today's date from query parameters
+    if (!date) {
+      res.status(400).json({ error: 'Date is required' });
+      return;
+    }
+    const count = await appointmentRepository.getAppointmentsCountForDate(date as string);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+
+// Endpoint to get pending requests for today
+export const getPendingAppointments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date } = req.query;
+    const count = await appointmentRepository.getPendingAppointmentsCountForDate(date as string);
+    res.json({ count });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }

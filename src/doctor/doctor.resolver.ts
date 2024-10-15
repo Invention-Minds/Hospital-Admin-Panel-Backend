@@ -1,5 +1,7 @@
 import DoctorRepository from './doctor.repository';
+import { PrismaClient } from '@prisma/client';
 
+const prisma = new PrismaClient();
 export default class DoctorResolver {
   private repository = new DoctorRepository();
 
@@ -45,5 +47,20 @@ export default class DoctorResolver {
       console.error('Error fetching doctor availability:', error);
       throw new Error('Unable to fetch doctor availability.');
     }
+  }
+  async getAvailableDoctors(date: string): Promise<any[]> {
+    const unavailableDoctorIds = await this.repository.getUnavailableDoctors(date);
+    console.log('Unavailable doctors in resolver:', unavailableDoctorIds);
+    const availableDoctors = await prisma.doctor.findMany({
+      where: {
+        id: { notIn: unavailableDoctorIds },
+      },
+    });
+    console.log('Available doctors:', availableDoctors);
+    return availableDoctors;
+  }
+
+  async getAvailableDoctorsCount(date: string): Promise<number> {
+    return this.repository.getAvailableDoctorsCount(date);
   }
 }

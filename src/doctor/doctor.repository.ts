@@ -87,5 +87,30 @@ public async getBookedSlots(doctorId: number, date: string) {
     },
   });
 }
+async getAvailableDoctorsCountForDate(date: string): Promise<number> {
+  return await prisma.doctor.count({
+    where: {
+      unavailableDates: {
+        none: {
+          date: new Date(date),
+        },
+      },
+    },
+  });
+}
+async getUnavailableDoctors(date: string): Promise<number[]> {
+  const unavailableDoctors = await prisma.unavailableDates.findMany({
+    where: { date: new Date(date) },
+    select: { doctorId: true },
+  });
+  console.log('Unavailable doctors:', unavailableDoctors);
+  return unavailableDoctors.map((doctor) => doctor.doctorId);
+}
+
+async getAvailableDoctorsCount(date: string): Promise<number> {
+  const unavailableDoctorIds = await this.getUnavailableDoctors(date);
+  const totalDoctorsCount = await prisma.doctor.count();
+  return totalDoctorsCount - unavailableDoctorIds.length;
+}
 
 }

@@ -28,6 +28,8 @@ class DepartmentRepository {
       throw new Error('Failed to get departments');
     }
   }
+  
 }
+
 
 export default DepartmentRepository;

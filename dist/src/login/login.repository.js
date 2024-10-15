@@ -12,57 +12,46 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 class AppointmentRepository {
-    create(data) {
+    findUserByUsername(username) {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.create({ data });
-        });
-    }
-    findMany() {
-        return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.findMany({ include: { doctor: true } });
-        });
-    }
-    update(id, data) {
-        return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.update({ where: { id }, data });
-        });
-    }
-    delete(id) {
-        return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.delete({ where: { id } });
-        });
-    }
-    isSlotAvailable(doctorId, date, time) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const appointment = yield prisma.appointment.findFirst({
-                where: {
-                    doctorId,
-                    date,
-                    time,
-                },
+            return prisma.user.findUnique({
+                where: { username },
             });
-            return !appointment; // Returns true if no appointment exists for the given date and time
         });
     }
-    getAppointmentsCountForDate(date) {
+    findUserById(userId) {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.count({
-                where: {
-                    date,
+            return prisma.user.findUnique({
+                where: { id: userId },
+            });
+        });
+    }
+    createUser(username, password, role) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return prisma.user.create({
+                data: {
+                    username,
+                    password,
+                    role,
                 },
             });
         });
     }
-    // Method to get the count of pending requests for the given date
-    getPendingAppointmentsCountForDate(date) {
+    updatePasswordByUsername(username, newPassword) {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.count({
-                where: {
-                    date,
-                    status: 'pending',
-                },
+            return prisma.user.update({
+                where: { username },
+                data: { password: newPassword },
+            });
+        });
+    }
+    updatePasswordByUserId(userId, newPassword) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return prisma.user.update({
+                where: { id: userId },
+                data: { password: newPassword },
             });
         });
     }
 }
-exports.default = AppointmentRepository;
+exports.default = new AppointmentRepository();
