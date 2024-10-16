@@ -37,6 +37,12 @@ class AppointmentRepository {
       data: { password: newPassword },
     });
   }
+  async deleteUserByUsername (username: string){
+    return prisma.user.delete({
+        where: { username },
+    });
+};
+
 }
 
 export default new AppointmentRepository();

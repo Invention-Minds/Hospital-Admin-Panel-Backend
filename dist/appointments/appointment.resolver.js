@@ -42,5 +42,15 @@ class AppointmentResolver {
             return yield this.repository.delete(id);
         });
     }
+    getAppointmentsByUser(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield this.repository.findAppointmentsByUserId(userId);
+        });
+    }
+    getAllAdminAppointmentsAndUser(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield this.repository.findAppointmentsByAdminAndUser(userId);
+        });
+    }
 }
 exports.default = AppointmentResolver;

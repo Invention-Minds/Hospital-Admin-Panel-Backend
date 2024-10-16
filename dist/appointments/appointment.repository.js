@@ -19,7 +19,7 @@ class AppointmentRepository {
     }
     findMany() {
         return __awaiter(this, void 0, void 0, function* () {
-            return yield prisma.appointment.findMany({ include: { doctor: true } });
+            return yield prisma.appointment.findMany({ include: { doctor: true, user: true } });
         });
     }
     update(id, data) {
@@ -62,6 +62,41 @@ class AppointmentRepository {
                     status: 'pending',
                 },
             });
+        });
+    }
+    findAppointmentsByUser(userId, status) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const whereClause = { userId };
+            if (status) {
+                whereClause.status = status;
+            }
+            return yield prisma.appointment.findMany({
+                where: whereClause,
+                include: { doctor: true, user: true }
+            });
+        });
+    }
+    findAppointmentsByUserId(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield prisma.appointment.findMany({
+                where: { userId },
+                include: { doctor: true, user: true },
+            });
+        });
+    }
+    findAllAdminAppointments() {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield prisma.appointment.findMany({
+                where: { user: { role: 'admin' } },
+                include: { doctor: true, user: true },
+            });
+        });
+    }
+    findAppointmentsByAdminAndUser(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const adminAppointments = yield this.findAllAdminAppointments();
+            const userAppointments = yield this.findAppointmentsByUserId(userId);
+            return [...adminAppointments, ...userAppointments];
         });
     }
 }

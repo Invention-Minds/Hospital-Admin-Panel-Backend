@@ -21,7 +21,8 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
         status,
         email,
         requestVia,
-        smsSent
+        smsSent,
+        emailSent
       } = req.body;
   
       // Convert the date to "YYYY-MM-DD" format
@@ -53,6 +54,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     res.status(400).json({ error: 'Selected time slot is not available.' });
     return;
  }
+ const userId = req.body.userId || null;
       // Create the appointment with Prisma
       const newAppointment = await resolver.createAppointment({
         patientName,
@@ -65,11 +67,15 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
         status,
         email,
         requestVia,
-        smsSent
+        smsSent,
+        emailSent,
+        userId
       });
   console.log("New Appointment:", newAppointment);
+  if(newAppointment.status === 'confirmed') {
   await doctorRepository.addBookedSlot(doctorId, date, time);
       res.status(201).json(newAppointment);
+  }
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
     }
@@ -87,7 +93,11 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 
 export const updateAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), req.body);
+    const userId = req.body.userId || null; 
+    const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), {
+      ...req.body,
+      userId, // Add userId to track who updated the appointment
+    });
     res.status(200).json(updatedAppointment);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -123,6 +133,21 @@ export const getPendingAppointments = async (req: Request, res: Response): Promi
     const { date } = req.query;
     const count = await appointmentRepository.getPendingAppointmentsCountForDate(date as string);
     res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+export const getAppointmentsByUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, status } = req.query;
+
+    // Find appointments filtered by userId and optionally by status
+    const appointments = await appointmentRepository.findAppointmentsByUser(
+      Number(userId),
+      status ? status.toString() : undefined
+    );
+
+    res.status(200).json(appointments);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }

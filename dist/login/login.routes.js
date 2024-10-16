@@ -9,4 +9,5 @@ router.post('/register', login_controller_1.userRegister);
 router.post('/reset-password', login_controller_1.userResetPassword);
 router.post('/change-password', login_controller_1.userChangePassword);
 router.get('/user-details', middleware_1.authenticateToken, login_controller_1.getUserDetails); // Protected route
+router.delete('/delete-user/:username', middleware_1.authenticateToken, login_controller_1.deleteUserByUsername);
 exports.default = router;

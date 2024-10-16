@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPendingAppointments = exports.getTotalAppointments = exports.deleteAppointment = exports.updateAppointment = exports.getAppointments = exports.createAppointment = void 0;
+exports.getAppointmentsByRole = exports.getAppointmentsByUser = exports.getPendingAppointments = exports.getTotalAppointments = exports.deleteAppointment = exports.updateAppointment = exports.getAppointments = exports.createAppointment = void 0;
 const appointment_resolver_1 = __importDefault(require("./appointment.resolver"));
 const doctor_repository_1 = __importDefault(require("../doctor/doctor.repository"));
 const appointment_repository_1 = __importDefault(require("./appointment.repository"));
@@ -23,7 +23,7 @@ const createAppointment = (req, res) => __awaiter(void 0, void 0, void 0, functi
     try {
         req.body.status = req.body.status === 'Confirm' ? 'confirmed' :
             req.body.status === 'Cancel' ? 'cancelled' : req.body.status;
-        const { patientName, phoneNumber, doctorName, doctorId, department, time, status, email, requestVia, smsSent } = req.body;
+        const { patientName, phoneNumber, doctorName, doctorId, department, time, status, email, requestVia, smsSent, emailSent } = req.body;
         // Convert the date to "YYYY-MM-DD" format
         let date = new Date(req.body.date).toISOString().split('T')[0];
         // Ensure the status field matches Prisma enum
@@ -50,6 +50,7 @@ const createAppointment = (req, res) => __awaiter(void 0, void 0, void 0, functi
             res.status(400).json({ error: 'Selected time slot is not available.' });
             return;
         }
+        const userId = req.body.userId || null;
         // Create the appointment with Prisma
         const newAppointment = yield resolver.createAppointment({
             patientName,
@@ -62,11 +63,15 @@ const createAppointment = (req, res) => __awaiter(void 0, void 0, void 0, functi
             status,
             email,
             requestVia,
-            smsSent
+            smsSent,
+            emailSent,
+            userId
         });
         console.log("New Appointment:", newAppointment);
-        yield doctorRepository.addBookedSlot(doctorId, date, time);
-        res.status(201).json(newAppointment);
+        if (newAppointment.status === 'confirmed') {
+            yield doctorRepository.addBookedSlot(doctorId, date, time);
+            res.status(201).json(newAppointment);
+        }
     }
     catch (error) {
         res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -85,7 +90,8 @@ const getAppointments = (req, res) => __awaiter(void 0, void 0, void 0, function
 exports.getAppointments = getAppointments;
 const updateAppointment = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const updatedAppointment = yield resolver.updateAppointment(Number(req.params.id), req.body);
+        const userId = req.body.userId || null;
+        const updatedAppointment = yield resolver.updateAppointment(Number(req.params.id), Object.assign(Object.assign({}, req.body), { userId }));
         res.status(200).json(updatedAppointment);
     }
     catch (error) {
@@ -131,3 +137,36 @@ const getPendingAppointments = (req, res) => __awaiter(void 0, void 0, void 0, f
     }
 });
 exports.getPendingAppointments = getPendingAppointments;
+const getAppointmentsByUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { userId, status } = req.query;
+        // Find appointments filtered by userId and optionally by status
+        const appointments = yield appointmentRepository.findAppointmentsByUser(Number(userId), status ? status.toString() : undefined);
+        res.status(200).json(appointments);
+    }
+    catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    }
+});
+exports.getAppointmentsByUser = getAppointmentsByUser;
+const getAppointmentsByRole = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { role, id } = req.user;
+        // Assuming user information is stored in the request after authentication
+        if (role === 'admin') {
+            const appointments = yield resolver.getAppointmentsByUser(id);
+            res.status(200).json(appointments);
+        }
+        else if (role === 'sub_admin' || role === 'super_admin') {
+            const appointments = yield resolver.getAllAdminAppointmentsAndUser(id);
+            res.status(200).json(appointments);
+        }
+        else {
+            res.status(403).json({ error: 'Unauthorized access' });
+        }
+    }
+    catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+    }
+});
+exports.getAppointmentsByRole = getAppointmentsByRole;

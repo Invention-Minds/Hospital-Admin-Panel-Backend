@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUserDetails = exports.userChangePassword = exports.userResetPassword = exports.userRegister = exports.userLogin = void 0;
+exports.deleteUserByUsername = exports.getUserDetails = exports.userChangePassword = exports.userResetPassword = exports.userRegister = exports.userLogin = void 0;
 const login_resolver_1 = require("./login.resolver");
 const client_1 = require("@prisma/client");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -29,7 +29,7 @@ const extractRoleFromUsername = (username) => {
                 return client_1.UserRole.sub_admin;
             case 'doctor':
                 return client_1.UserRole.doctor;
-            case 'super_admin':
+            case 'superadmin':
                 return client_1.UserRole.super_admin; // Added for completeness
             default:
                 console.warn(`Unknown role: ${roleString}`); // Log unknown role
@@ -52,7 +52,7 @@ const userLogin = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         if (user) {
             const role = extractRoleFromUsername(user.username); // Extract role
             const token = generateToken(user); // Generate JWT token
-            res.status(200).json({ token, user: { username: user.username, role } }); // Send token and user data
+            res.status(200).json({ token, user: { userId: user.id, username: user.username, role } }); // Send token and user data
         }
         else {
             res.status(401).json({ error: 'Invalid username or password' });
@@ -106,9 +106,10 @@ const getUserDetails = (req, res) => __awaiter(void 0, void 0, void 0, function*
             return; // Ensure to return after sending a response
         }
         const user = yield login_repository_1.default.findUserById(userId);
+        console.log(user);
         if (user) {
             const role = extractRoleFromUsername(user.username); // Extract role from username if needed
-            res.status(200).json({ username: user.username, role }); // Send username and role
+            res.status(200).json({ userId: user.id, username: user.username, role }); // Include userId in the response
         }
         else {
             res.status(404).json({ error: 'User not found' });
@@ -119,3 +120,26 @@ const getUserDetails = (req, res) => __awaiter(void 0, void 0, void 0, function*
     }
 });
 exports.getUserDetails = getUserDetails;
+const deleteUserByUsername = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.id; // Assuming user ID is stored in the request after authentication
+    if (typeof userId !== 'number') {
+        res.status(401).json({ error: 'Unauthorized: User ID not found' });
+        return; // Ensure to return after sending a response
+    }
+    const { username } = req.params;
+    try {
+        const user = yield login_repository_1.default.findUserByUsername(username);
+        console.log(user);
+        if (!user) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+        yield login_repository_1.default.deleteUserByUsername(username); // Call delete function from the repository
+        res.status(200).json({ message: `User with username ${username} has been deleted successfully.` });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+exports.deleteUserByUsername = deleteUserByUsername;

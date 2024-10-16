@@ -9,4 +9,6 @@ router.put('/:id', appointment_controller_1.updateAppointment);
 router.delete('/:id', appointment_controller_1.deleteAppointment);
 router.get('/total', appointment_controller_1.getTotalAppointments);
 router.get('/pending', appointment_controller_1.getPendingAppointments);
+router.get('/by-user', appointment_controller_1.getAppointmentsByUser);
+router.get('/by-role', appointment_controller_1.getAppointmentsByRole);
 exports.default = router;

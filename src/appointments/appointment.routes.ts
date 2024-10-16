@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createAppointment, getAppointments, updateAppointment, deleteAppointment,  getTotalAppointments,
-    getPendingAppointments, } from './appointment.controller';
+    getPendingAppointments,getAppointmentsByUser } from './appointment.controller';
+    import { authenticateToken } from '../middleware';
 
 const router = Router();
 
@@ -10,5 +11,7 @@ router.put('/:id', updateAppointment);
 router.delete('/:id', deleteAppointment);
 router.get('/total', getTotalAppointments);
 router.get('/pending', getPendingAppointments);
+router.get('/by-user',getAppointmentsByUser);
+// router.get('/by-role',authenticateToken,);
 
 export default router;

@@ -165,9 +165,12 @@ model Appointment {
   time        String
   requestVia  String?
   smsSent     Boolean?          @default(false)
+  emailSent   Boolean?          @default(false) // Added new field for email notification
   status      AppointmentStatus @default(pending)
   created_at  DateTime          @default(now())
   updated_at  DateTime          @updatedAt
+  userId      Int? // Added new field to store the user who created the appointment
+  user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull, name: "UserAppointments") // Linking to User model
 
   @@map("appointments")
 }
@@ -176,6 +179,7 @@ enum AppointmentStatus {
   pending
   confirmed
   cancelled
+  completed
 }
 
 model BookedSlot {
@@ -188,11 +192,15 @@ model BookedSlot {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  password  String
-  role      UserRole // super_admin, sub_admin, admin
-  createdAt DateTime @default(now())
+  id           Int           @id @default(autoincrement())
+  username     String        @unique
+  password     String
+  role         UserRole // super_admin, sub_admin, admin
+  createdAt    DateTime      @default(now())
+  // Relation
+  appointments Appointment[] @relation(name: "UserAppointments")
+
+  @@map("users")
 }
 
 enum UserRole {

@@ -8,7 +8,7 @@ export default class AppointmentRepository {
   }
 
   async findMany() {
-    return await prisma.appointment.findMany({ include: { doctor: true } });
+    return await prisma.appointment.findMany({ include: { doctor: true,user: true } });
   }
 
   async update(id: number, data: any) {
@@ -44,5 +44,37 @@ export default class AppointmentRepository {
         status: 'pending',
       },
     });
+  }
+  async findAppointmentsByUser(userId: number, status?: string) {
+    const whereClause: any = { userId };
+
+    if (status) {
+      whereClause.status = status;
+    }
+
+    return await prisma.appointment.findMany({
+      where: whereClause,
+      include: { doctor: true, user: true }
+    });
+  }
+  async findAppointmentsByUserId(userId: number) {
+    return await prisma.appointment.findMany({
+      where: { userId },
+      include: { doctor: true, user: true },
+    });
+  }
+
+  async findAllAdminAppointments() {
+    return await prisma.appointment.findMany({
+      where: { user: { role: 'admin' } },
+      include: { doctor: true, user: true },
+    });
+  }
+
+  async findAppointmentsByAdminAndUser(userId: number) {
+    const adminAppointments = await this.findAllAdminAppointments();
+    const userAppointments = await this.findAppointmentsByUserId(userId);
+
+    return [...adminAppointments, ...userAppointments];
   }
 }

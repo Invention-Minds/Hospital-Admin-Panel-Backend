@@ -2,10 +2,17 @@ import { UserRole } from '@prisma/client';
 import loginRepository from './login.repository';
 import bcrypt from 'bcrypt';
 
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+
 export const loginUser = async (username: string, password: string) => {
     const user = await loginRepository.findUserByUsername(username);
     if (user && bcrypt.compareSync(password, user.password)) {
-      return user;
+      return {
+        id: user.id,           // Include id in the returned user object
+        username: user.username,
+        role: user.role
+    };
     }
     return null;
   };
@@ -28,3 +35,12 @@ export const loginUser = async (username: string, password: string) => {
     }
     return null;
   };
+  export const deleteUserById = async (id: number): Promise<void> => {
+    try {
+        await prisma.user.delete({
+            where: { id },  // Delete user by ID
+        });
+    } catch (error) {
+        throw new Error('Failed to delete user');
+    }
+};

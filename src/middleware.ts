@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
+
 export const authenticateToken = (req: Request, res: Response, next: NextFunction): void => {
     const token = req.headers['authorization']?.split(' ')[1]; // Extract token from Authorization header
 

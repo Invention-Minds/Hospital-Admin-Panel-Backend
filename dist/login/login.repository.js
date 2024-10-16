@@ -53,5 +53,13 @@ class AppointmentRepository {
             });
         });
     }
+    deleteUserByUsername(username) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return prisma.user.delete({
+                where: { username },
+            });
+        });
+    }
+    ;
 }
 exports.default = new AppointmentRepository();

@@ -26,4 +26,11 @@ export default class AppointmentResolver {
   async deleteAppointment(id: number) {
     return await this.repository.delete(id);
   }
+  async getAppointmentsByUser(userId: number) {
+    return await this.repository.findAppointmentsByUserId(userId);
+  }
+
+  async getAllAdminAppointmentsAndUser(userId: number) {
+    return await this.repository.findAppointmentsByAdminAndUser(userId);
+  }
 }

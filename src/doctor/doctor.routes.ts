@@ -1,8 +1,8 @@
-import express from 'express';
+import { Router } from 'express';
 
 import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability,getBookedSlots,addBookedSlot,addUnavailableDates,getUnavailableDates,getAvailableDoctors,getAvailableDoctorsCount } from './doctor.controller';
 
-const router = express.Router();
+const router = Router();
 
 
 // Define routes for doctors
@@ -26,3 +26,4 @@ router.get('/available/count', getAvailableDoctorsCount);
 
 
 export default router;
+

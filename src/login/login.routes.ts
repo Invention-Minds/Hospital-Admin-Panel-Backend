@@ -1,5 +1,5 @@
     import { Router } from 'express';
-    import { userLogin, userRegister, userResetPassword, userChangePassword,getUserDetails } from './login.controller';
+    import { userLogin, userRegister, userResetPassword, userChangePassword,getUserDetails,deleteUserByUsername } from './login.controller';
     import { authenticateToken } from '../middleware';
     const router = Router();
 
@@ -9,4 +9,7 @@
     router.post('/change-password', userChangePassword);
     router.get('/user-details', authenticateToken, getUserDetails); // Protected route
 
+    router.delete('/delete-user/:username', authenticateToken, deleteUserByUsername); 
+
     export default router;
+

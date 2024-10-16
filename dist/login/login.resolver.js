@@ -12,13 +12,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.changePassword = exports.resetPassword = exports.createUser = exports.loginUser = void 0;
+exports.deleteUserById = exports.changePassword = exports.resetPassword = exports.createUser = exports.loginUser = void 0;
 const login_repository_1 = __importDefault(require("./login.repository"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
+const client_1 = require("@prisma/client");
+const prisma = new client_1.PrismaClient();
 const loginUser = (username, password) => __awaiter(void 0, void 0, void 0, function* () {
     const user = yield login_repository_1.default.findUserByUsername(username);
     if (user && bcrypt_1.default.compareSync(password, user.password)) {
-        return user;
+        return {
+            id: user.id, // Include id in the returned user object
+            username: user.username,
+            role: user.role
+        };
     }
     return null;
 });
@@ -42,3 +48,14 @@ const changePassword = (userId, oldPassword, newPassword) => __awaiter(void 0, v
     return null;
 });
 exports.changePassword = changePassword;
+const deleteUserById = (id) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        yield prisma.user.delete({
+            where: { id }, // Delete user by ID
+        });
+    }
+    catch (error) {
+        throw new Error('Failed to delete user');
+    }
+});
+exports.deleteUserById = deleteUserById;
