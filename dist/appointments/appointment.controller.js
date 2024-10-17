@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getAppointmentsByRole = exports.getAppointmentsByUser = exports.getPendingAppointments = exports.getTotalAppointments = exports.deleteAppointment = exports.updateAppointment = exports.getAppointments = exports.createAppointment = void 0;
+exports.unlockAppointment = exports.lockAppointment = exports.getDoctorReport = exports.getAppointmentsByUser = exports.getPendingAppointments = exports.getTotalAppointments = exports.deleteAppointment = exports.updateAppointment = exports.getAppointments = exports.createAppointment = void 0;
 const appointment_resolver_1 = __importDefault(require("./appointment.resolver"));
 const doctor_repository_1 = __importDefault(require("../doctor/doctor.repository"));
 const appointment_repository_1 = __importDefault(require("./appointment.repository"));
@@ -149,24 +149,56 @@ const getAppointmentsByUser = (req, res) => __awaiter(void 0, void 0, void 0, fu
     }
 });
 exports.getAppointmentsByUser = getAppointmentsByUser;
-const getAppointmentsByRole = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+const getDoctorReport = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    console.log("userId", req.query);
     try {
-        const { role, id } = req.user;
-        // Assuming user information is stored in the request after authentication
-        if (role === 'admin') {
-            const appointments = yield resolver.getAppointmentsByUser(id);
-            res.status(200).json(appointments);
+        const userId = req.query.userId ? Number(req.query.userId) : null;
+        if (!userId) {
+            res.status(400).json({ error: 'User ID is required' });
+            return;
         }
-        else if (role === 'sub_admin' || role === 'super_admin') {
-            const appointments = yield resolver.getAllAdminAppointmentsAndUser(id);
-            res.status(200).json(appointments);
-        }
-        else {
-            res.status(403).json({ error: 'Unauthorized access' });
-        }
+        const report = yield resolver.getDoctorReport(userId);
+        res.status(200).json(report);
     }
     catch (error) {
-        res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+        res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
     }
 });
-exports.getAppointmentsByRole = getAppointmentsByRole;
+exports.getDoctorReport = getDoctorReport;
+const lockAppointment = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        const appointmentId = Number(req.params.id);
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.id;
+        if (!userId) {
+            res.status(400).json({ error: 'User ID is required' });
+            return;
+        }
+        // Find the appointment
+        const appointment = yield appointmentRepository.getAppointmentById(appointmentId);
+        // Check if the appointment is already locked
+        if (appointment && appointment.lockedBy && appointment.lockExpiresAt && appointment.lockExpiresAt > new Date()) {
+            res.status(403).json({ error: 'This appointment is currently being accessed by another user.' });
+            return;
+        }
+        // Set the lock
+        const lockExpiresAt = new Date(new Date().getTime() + 15 * 60 * 1000); // Lock for 15 minutes
+        yield appointmentRepository.lockAppointment(appointmentId, userId, lockExpiresAt);
+        res.status(200).json({ message: 'Appointment locked successfully' });
+    }
+    catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    }
+});
+exports.lockAppointment = lockAppointment;
+const unlockAppointment = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const appointmentId = Number(req.params.id);
+        yield appointmentRepository.unlockAppointment(appointmentId);
+        res.status(200).json({ message: 'Appointment unlocked successfully' });
+    }
+    catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    }
+});
+exports.unlockAppointment = unlockAppointment;

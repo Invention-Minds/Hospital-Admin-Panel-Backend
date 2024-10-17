@@ -33,4 +33,9 @@ export default class AppointmentResolver {
   async getAllAdminAppointmentsAndUser(userId: number) {
     return await this.repository.findAppointmentsByAdminAndUser(userId);
   }
+  async getDoctorReport(userId: number) {
+    return await this.repository.findAppointmentsByDoctorUserId(userId);
+  }
+  
+  
 }

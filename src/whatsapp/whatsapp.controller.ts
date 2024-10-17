@@ -24,8 +24,8 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
                     "id": "1",
                     "coding": 1,
                     "msgtype": 1,
-                    "text": `Hello Keerthana, your appointment with  doctornmae is confirmed on 16/01/25 at 16:00-16:20.`,
-                    // "type": "text",
+                    "type": "text",
+                    "templateInfo":'1480342~patientName~doctorName~appointmentDate~appointmentTime',
                     "addresses": [
                         {
                             "seq": "NA",

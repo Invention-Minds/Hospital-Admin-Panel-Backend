@@ -52,5 +52,10 @@ class AppointmentResolver {
             return yield this.repository.findAppointmentsByAdminAndUser(userId);
         });
     }
+    getDoctorReport(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield this.repository.findAppointmentsByDoctorUserId(userId);
+        });
+    }
 }
 exports.default = AppointmentResolver;

@@ -77,4 +77,36 @@ export default class AppointmentRepository {
 
     return [...adminAppointments, ...userAppointments];
   }
+  async findAppointmentsByDoctorUserId(userId: number) {
+    const doctor = await prisma.doctor.findFirst({ where: { userId } });
+    if (!doctor) return [];
+    return await prisma.appointment.findMany({ where: { doctorId: doctor.id }, include: { doctor: true, user: true } });
+  }
+
+
+  async lockAppointment(appointmentId: number, userId: number, lockExpiresAt: Date) {
+    return await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        lockedBy: userId,
+        lockExpiresAt: lockExpiresAt,
+      },
+    });
+  }
+
+  async unlockAppointment(appointmentId: number) {
+    return await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        lockedBy: null,
+        lockExpiresAt: null,
+      },
+    });
+  }
+  async getAppointmentById(appointmentId: number) {
+    return await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+    });
+  }
+  
 }

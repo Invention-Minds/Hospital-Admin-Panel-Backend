@@ -28,14 +28,16 @@
 //   departmentId     Int
 //   departmentName   String               @default("Unknown")
 //   department       Department           @relation(fields: [departmentId], references: [id])
+//     userId           Int?                 // Linking to the User table
+//   user             User?                @relation(fields: [userId], references: [id])
 //   availableFrom    String? // New field for available timing
 //   slotDuration     Int? // New field for slot duration
 //   createdAt        DateTime             @default(now())
 //   updatedAt        DateTime             @updatedAt
 //   availability     DoctorAvailability[] @relation(name: "DoctorToAvailability")
 //   unavailableDates UnavailableDates[]   @relation(name: "DoctorToUnavailableDate")
-//   Appointment      Appointment[]
-//   bookedSlots BookedSlot[] @relation(name: "DoctorToBookedSlot")
+//   appointments     Appointment[] // Fixed field name to follow naming convention
+//   bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
 
 // }
 
@@ -71,9 +73,12 @@
 //   time        String
 //   requestVia  String?
 //   smsSent     Boolean?          @default(false)
+//   emailSent   Boolean?          @default(false) // Added new field for email notification
 //   status      AppointmentStatus @default(pending)
 //   created_at  DateTime          @default(now())
 //   updated_at  DateTime          @updatedAt
+//   userId      Int? // Added new field to store the user who created the appointment
+//   user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull, name: "UserAppointments") // Linking to User model
 
 //   @@map("appointments")
 // }
@@ -82,23 +87,39 @@
 //   pending
 //   confirmed
 //   cancelled
+//   completed
 // }
 
 // model BookedSlot {
-//   id          Int      @id @default(autoincrement())
-//   doctorId    Int
-//   doctor      Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-//   date        String   // Store the date as a string (e.g., 'YYYY-MM-DD')
-//   time        String   // The booked time slot (e.g., '09:00-09:20')
-//   createdAt   DateTime @default(now())
+//   id        Int      @id @default(autoincrement())
+//   doctorId  Int
+//   doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToBookedSlot") // Added correct relation name
+//   date      String // Store the date as a string (e.g., 'YYYY-MM-DD')
+//   time      String // The booked time slot (e.g., '09:00-09:20')
+//   createdAt DateTime @default(now())
 // }
 
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// model User {
+//   id        Int      @id @default(autoincrement())
+//   username  String   @unique
+//   password  String
+//   role      UserRole // super_admin, sub_admin, admin
+//    doctors      Doctor[]      @relation("UserDoctors") // Corrected relation with Doctor model
+//   createdAt DateTime @default(now())
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+//   // Relation
+//   appointments Appointment[] @relation(name: "UserAppointments")
 
+//   @@map("users")
+// }
+
+// enum UserRole {
+//   super_admin
+//   sub_admin
+//   admin
+//   doctor
+//   unknown
+// }
 generator client {
   provider = "prisma-client-js"
 }
@@ -123,24 +144,37 @@ model Doctor {
   departmentId     Int
   departmentName   String               @default("Unknown")
   department       Department           @relation(fields: [departmentId], references: [id])
-  availableFrom    String? // New field for available timing
-  slotDuration     Int? // New field for slot duration
+  userId           Int? // Links to the User model
+  user             User?                @relation(fields: [userId], references: [id], name: "DoctorUser") // Corrected relation name
+  availableFrom    String?
+  slotDuration     Int?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   availability     DoctorAvailability[] @relation(name: "DoctorToAvailability")
   unavailableDates UnavailableDates[]   @relation(name: "DoctorToUnavailableDate")
-  appointments     Appointment[] // Fixed field name to follow naming convention
+  appointments     Appointment[]        @relation(name: "DoctorAppointments")
   bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  username     String        @unique
+  password     String
+  role         UserRole
+  createdAt    DateTime      @default(now())
+  doctors      Doctor[]      @relation("DoctorUser") // Relation to Doctor model
+  appointments Appointment[] @relation("UserAppointments") // Relation to Appointment model
+
+  @@map("users")
 }
 
 model DoctorAvailability {
   id            Int    @id @default(autoincrement())
   doctorId      Int
-  day           String // e.g., "mon", "tue", etc.
-  availableFrom String // e.g., "09:00-11:00"
-  slotDuration  Int    @default(20) // Slot duration in minutes
+  day           String
+  availableFrom String
+  slotDuration  Int    @default(20)
 
-  // Relation to Doctor
   doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToAvailability")
 }
 
@@ -153,24 +187,26 @@ model UnavailableDates {
 }
 
 model Appointment {
-  id          Int               @id @default(autoincrement())
-  patientName String
-  phoneNumber String
-  email       String
-  doctorId    Int
-  doctor      Doctor            @relation(fields: [doctorId], references: [id])
-  doctorName  String
-  department  String
-  date        String
-  time        String
-  requestVia  String?
-  smsSent     Boolean?          @default(false)
-  emailSent   Boolean?          @default(false) // Added new field for email notification
-  status      AppointmentStatus @default(pending)
-  created_at  DateTime          @default(now())
-  updated_at  DateTime          @updatedAt
-  userId      Int? // Added new field to store the user who created the appointment
-  user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull, name: "UserAppointments") // Linking to User model
+  id            Int               @id @default(autoincrement())
+  patientName   String
+  phoneNumber   String
+  email         String
+  doctorId      Int
+  doctor        Doctor            @relation(fields: [doctorId], references: [id], name: "DoctorAppointments")
+  doctorName    String
+  department    String
+  date          String
+  time          String
+  requestVia    String?
+  smsSent       Boolean?          @default(false)
+  emailSent     Boolean?          @default(false)
+  status        AppointmentStatus @default(pending)
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
+  userId        Int?
+  user          User?             @relation(fields: [userId], references: [id], name: "UserAppointments")
+  lockedBy      Int? // Stores the user ID who locked the appointment
+  lockExpiresAt DateTime? // Stores the expiration of the lock
 
   @@map("appointments")
 }
@@ -185,22 +221,10 @@ enum AppointmentStatus {
 model BookedSlot {
   id        Int      @id @default(autoincrement())
   doctorId  Int
-  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToBookedSlot") // Added correct relation name
-  date      String // Store the date as a string (e.g., 'YYYY-MM-DD')
-  time      String // The booked time slot (e.g., '09:00-09:20')
+  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToBookedSlot")
+  date      String
+  time      String
   createdAt DateTime @default(now())
-}
-
-model User {
-  id           Int           @id @default(autoincrement())
-  username     String        @unique
-  password     String
-  role         UserRole // super_admin, sub_admin, admin
-  createdAt    DateTime      @default(now())
-  // Relation
-  appointments Appointment[] @relation(name: "UserAppointments")
-
-  @@map("users")
 }
 
 enum UserRole {

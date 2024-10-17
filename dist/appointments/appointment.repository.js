@@ -99,5 +99,42 @@ class AppointmentRepository {
             return [...adminAppointments, ...userAppointments];
         });
     }
+    findAppointmentsByDoctorUserId(userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const doctor = yield prisma.doctor.findFirst({ where: { userId } });
+            if (!doctor)
+                return [];
+            return yield prisma.appointment.findMany({ where: { doctorId: doctor.id }, include: { doctor: true, user: true } });
+        });
+    }
+    lockAppointment(appointmentId, userId, lockExpiresAt) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield prisma.appointment.update({
+                where: { id: appointmentId },
+                data: {
+                    lockedBy: userId,
+                    lockExpiresAt: lockExpiresAt,
+                },
+            });
+        });
+    }
+    unlockAppointment(appointmentId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield prisma.appointment.update({
+                where: { id: appointmentId },
+                data: {
+                    lockedBy: null,
+                    lockExpiresAt: null,
+                },
+            });
+        });
+    }
+    getAppointmentById(appointmentId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return yield prisma.appointment.findUnique({
+                where: { id: appointmentId },
+            });
+        });
+    }
 }
 exports.default = AppointmentRepository;
