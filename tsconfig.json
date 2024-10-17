@@ -7,5 +7,9 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "global.d.ts", "src/middleware/middleware.ts"]
+  "include": [
+    "index.ts",
+    "src/**/*.ts",
+    "global.d.ts",
+  ]
 }

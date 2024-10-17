@@ -1,14 +1,16 @@
+/// <reference path="../global.d.ts" />
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 
-import doctorRoutes from './src/api/doctor/doctor.routes';
-import departmentRoutes from './src/api/department/department.routes';
-import appointmentRoutes from './src/api/appointments/appointment.routes';
-import loginRoutes from './src/api/login/login.routes';
-import whatsappRoutes from './src/api/whatsapp/whatsapp.routes';
-import emailRoutes from './src/api/email/email.routes';
+import doctorRoutes from './api/doctor/doctor.routes';
+import departmentRoutes from './api/department/department.routes';
+import appointmentRoutes from './api/appointments/appointment.routes';
+import loginRoutes from './api/login/login.routes';
+import whatsappRoutes from './api/whatsapp/whatsapp.routes';
+import emailRoutes from './api/email/email.routes';
 
 // Load environment variables from .env file
 dotenv.config();

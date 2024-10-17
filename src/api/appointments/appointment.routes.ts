@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
     createAppointment, getAppointments, updateAppointment, deleteAppointment, getTotalAppointments,
-    getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment
+    getPendingAppointments, getAppointmentsByUser, getDoctorReport
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -16,7 +16,7 @@ router.get('/pending', getPendingAppointments);
 router.get('/by-user', getAppointmentsByUser);
 // router.get('/by-role',authenticateToken,);
 router.get('/by-doctor', getDoctorReport);
-router.put('/lock/:id', lockAppointment);
-router.put('/unlock/:id', unlockAppointment);
+// router.put('/lock/:id', lockAppointment);
+// router.put('/unlock/:id', unlockAppointment);
 
 export default router;
