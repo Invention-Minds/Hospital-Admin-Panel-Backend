@@ -366,7 +366,7 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
     }
 
     // Query booked slots for the given doctor and date
-    const bookedSlots = await prisma.bookedSlot.findMany({
+    const bookedSlots: { time: string }[] = await prisma.bookedSlot.findMany({
       where: {
         doctorId: Number(doctorId),
         date: date as string,
@@ -377,7 +377,7 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
     });
 
     // Extract the times from the booked slots
-    const bookedTimes = bookedSlots.map(slot => slot.time);
+    const bookedTimes = bookedSlots.map((slot: { time: string })  => slot.time);
 
     res.status(200).json(bookedTimes);
   } catch (error) {
