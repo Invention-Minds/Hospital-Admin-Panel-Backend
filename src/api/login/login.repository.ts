@@ -1,4 +1,4 @@
-import { PrismaClient,  $Enums } from '@prisma/client';
+import { PrismaClient, UserRole } from '@prisma/client';
 const prisma = new PrismaClient();
 
 class AppointmentRepository {
@@ -14,7 +14,7 @@ class AppointmentRepository {
     });
   }
 
-  async createUser(username: string, password: string, role: $Enums.UserRole) {
+  async createUser(username: string, password: string, role: UserRole) {
     return prisma.user.create({
       data: {
         username,

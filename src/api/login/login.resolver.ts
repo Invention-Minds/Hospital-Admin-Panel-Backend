@@ -1,4 +1,4 @@
-import {  $Enums } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import loginRepository from './login.repository';
 import bcrypt from 'bcrypt';
 
@@ -17,7 +17,7 @@ export const loginUser = async (username: string, password: string) => {
   return null;
 };
 
-export const createUser = async (username: string, password: string, role: $Enums.UserRole) => {
+export const createUser = async (username: string, password: string, role: UserRole) => {
   const hashedPassword = bcrypt.hashSync(password, 10);
   return loginRepository.createUser(username, hashedPassword, role);  // Pass role here
 };
