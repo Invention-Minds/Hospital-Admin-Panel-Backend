@@ -1,12 +1,13 @@
 import { Request, Response } from 'express';
 import { loginUser, createUser, resetPassword, changePassword } from './login.resolver';
-import { UserRole } from '@prisma/client';
+// import { UserRole } from '@prisma/client';
+import { $Enums } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import loginRepository from './login.repository';
 import { deleteUserById } from './login.resolver';
 
 
-const extractRoleFromUsername = (username: string): UserRole => {
+const extractRoleFromUsername = (username: string):  $Enums.UserRole => {
   const parts = username.split('_');
   if (parts.length > 1) {
     const roleString = parts[1].split('@')[0];
@@ -14,19 +15,19 @@ const extractRoleFromUsername = (username: string): UserRole => {
     // Ensure the role is one of the valid enum values
     switch (roleString.toLowerCase()) {
       case 'admin':
-        return UserRole.admin;
+        return $Enums.UserRole.admin;
       case 'subadmin':
-        return UserRole.sub_admin;
+        return $Enums.UserRole.sub_admin;
       case 'doctor':
-        return UserRole.doctor;
+        return $Enums.UserRole.doctor;
       case 'superadmin':
-        return UserRole.super_admin; // Added for completeness
+        return $Enums.UserRole.super_admin; // Added for completeness
       default:
         console.warn(`Unknown role: ${roleString}`); // Log unknown role
-        return UserRole.unknown; // Return 'unknown' if role is unrecognized
+        return $Enums.UserRole.unknown; // Return 'unknown' if role is unrecognized
     }
   }
-  return UserRole.super_admin;  // Default to 'user' if no role is found
+  return $Enums.UserRole.super_admin;  // Default to 'user' if no role is found
 };
 // Function to generate JWT token
 const generateToken = (user: any) => {
