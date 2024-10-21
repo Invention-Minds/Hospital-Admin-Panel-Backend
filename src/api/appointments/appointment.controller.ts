@@ -3,6 +3,7 @@ import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import AppointmentRepository from './appointment.repository';
 
+
 const resolver = new AppointmentResolver();
 const doctorRepository = new DoctorRepository();
 const appointmentRepository = new AppointmentRepository();
@@ -94,10 +95,15 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 export const updateAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.body.userId || null;
-    const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), {
-      ...req.body,
-      userId, // Add userId to track who updated the appointment
-    });
+    // Destructure and remove unnecessary nested objects before updating
+    const { id, doctor, user, ...updateData } = req.body;
+
+    // Include userId if needed
+    if (userId) {
+      updateData.userId = userId;
+    }
+
+    const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), updateData);
     res.status(200).json(updatedAppointment);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -167,44 +173,65 @@ export const getDoctorReport = async (req: Request, res: Response): Promise<void
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
-// export const lockAppointment = async (req: Request, res: Response): Promise<void> => {
+export const lockAppointment = async (req: Request, res: Response): Promise<void> => {
+  console.log(req.body)
+  try {
+    const appointmentId = Number(req.params.id);
+    const userId = req.body.userId;
+    const userIdNum = Number(userId);
+    console.log(appointmentId,userId)
+    const appointment = await appointmentRepository.getAppointmentById(appointmentId);
+    if (!appointment) {
+      res.status(404).json({ message: 'Appointment not found' });
+      return;
+    }
+    console.log(appointment.lockedBy);
+    // if (appointment.lockedBy && appointment.lockedBy !== userId) {
+    //   res.status(423).json({ message: 'Appointment is currently locked by another user.' });
+    //   return;
+    // }
+    const lockedAppointment = await resolver.lockAppointment(appointmentId, userIdNum);
+console.log(lockedAppointment,"locked")
+    if (!lockedAppointment) {
+       res.status(409).json({ message: 'Appointment is currently locked by another user.' });
+       return;
+    }
 
-//   try {
-//     const appointmentId = Number(req.params.id);
-//     const userId = req.user?.id;
+    res.status(200).json(lockedAppointment);
+  } catch (error) {
+    console.error('Error locking appointment:', error);
+    res.status(500).json({ error: 'Failed to lock appointment' });
+  }
+};
+export const scheduleCompletion = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentId = Number(req.params.id);
+    const delayMinutes = req.body.delayMinutes;
 
-//     if (!userId) {
-//       res.status(400).json({ error: 'User ID is required' });
-//       return;
-//     }
+    if (!delayMinutes || isNaN(delayMinutes)) {
+      res.status(400).json({ message: 'Invalid delay minutes' });
+      return;
+    }
 
-//     // Find the appointment
-//     const appointment = await appointmentRepository.getAppointmentById(appointmentId);
+    await resolver.scheduleAppointmentCompletion(appointmentId, delayMinutes);
+    res.status(200).json({ message: 'Appointment completion scheduled successfully' });
+  } catch (error) {
+    console.error('Error scheduling appointment completion:', error);
+    res.status(500).json({ error: 'Failed to schedule appointment completion' });
+  }
+};
 
-//     // Check if the appointment is already locked
-//     if (appointment && appointment.lockedBy && appointment.lockExpiresAt && appointment.lockExpiresAt > new Date()) {
-//       res.status(403).json({ error: 'This appointment is currently being accessed by another user.' });
-//       return;
-//     }
 
+export const unlockAppointment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentId = Number(req.params.id);
 
-//     // Set the lock
-//     const lockExpiresAt = new Date(new Date().getTime() + 15 * 60 * 1000); // Lock for 15 minutes
-//     await appointmentRepository.lockAppointment(appointmentId, userId, lockExpiresAt);
-
-//     res.status(200).json({ message: 'Appointment locked successfully' });
-//   } catch (error) {
-//     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
-//   }
-// };
-// export const unlockAppointment = async (req: Request, res: Response): Promise<void> => {
-//   try {
-//     const appointmentId = Number(req.params.id);
-//     await appointmentRepository.unlockAppointment(appointmentId);
-//     res.status(200).json({ message: 'Appointment unlocked successfully' });
-//   } catch (error) {
-//     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
-//   }
-// };
+    const unlockedAppointment = await resolver.unlockAppointment(appointmentId);
+    res.status(200).json(unlockedAppointment);
+  } catch (error) {
+    console.error('Error unlocking appointment:', error);
+    res.status(500).json({ error: 'Failed to unlock appointment' });
+  }
+};
 
 

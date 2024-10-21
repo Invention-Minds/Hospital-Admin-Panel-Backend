@@ -4,44 +4,62 @@ import nodemailer from 'nodemailer';
 
 // Nodemailer transporter configuration
 const transporter = nodemailer.createTransport({
-  service: 'Gmail', // or any SMTP service you're using
+  service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587, // Use SSL/TLS for the connection
+  // service: 'Gmail', // or any SMTP service you're using
   auth: {
-    user: 'inventionmindsblr@gmail.com',
-    pass: 'Bsrenuk@1993',
+    user: 'keerthanasaminathan0805@gmail.com',
+    pass: 'kjzh yjab zdpx zxjq',
   },
 });
 
 // Helper function to generate email content based on status
-const generateEmailContent = (status: string, appointmentDetails: any) => {
+const generateEmailContent = (status: string, appointmentDetails: any, recipientType: string) => {
+  if (status === 'confirmed') {
+    if (recipientType === 'doctor') {
+      return {
+        subject: 'Rashtrotthana Hospital - Appointment Confirmed',
+        text: `Hi  ${appointmentDetails.doctorName},\n\nYou have a confirmed appointment with ${appointmentDetails.patientName} on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact the admin staff at 80501 10333. Thank you!`,
+      };
+    } else if (recipientType === 'patient') {
+      return {
+        subject: 'Rashtrotthana Hospital - Appointment Confirmed',
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} is confirmed on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact us at 80501 10333. Thank you!`,
+      };
+    }
+  }
   switch (status) {
     case 'received':
       return {
-        subject: 'Appointment Received',
-        text: `Hello ${appointmentDetails.patientName},\n\nYour appointment request has been received. We will get back to you soon.\n\nThank you.`,
+        subject: 'Rashtrotthana Hospital - Appointment Received',
+        text: `Hi ${appointmentDetails.patientName},\n\nWe have received your appointment request with  ${appointmentDetails.doctorName}. Our team will process it and get back to you shortly.\n\nIf you have any immediate questions, please reach out to us at 80501 10333. Thank you!`,
       };
-    case 'confirmed':
+    case 'rescheduled':
       return {
-        subject: 'Appointment Confirmed',
-        text: `Hello ${appointmentDetails.patientName},\n\nYour appointment with Dr. ${appointmentDetails.doctorName} on ${appointmentDetails.date} at ${appointmentDetails.time} has been confirmed.\n\nThank you.`,
+        subject: 'Rashtrotthana Hospital - Appointment Rescheduled',
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} has been rescheduled to ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nIf you have any questions, feel free to reach out to us at 80501 10333. Thank you!`,
       };
     case 'cancelled':
       return {
-        subject: 'Appointment Cancelled',
-        text: `Hello ${appointmentDetails.patientName},\n\nYour appointment with Dr. ${appointmentDetails.doctorName} on ${appointmentDetails.date} at ${appointmentDetails.time} has been cancelled.\n\nThank you.`,
+        subject: 'Rashtrotthana Hospital - Appointment Cancelled',
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} on ${appointmentDetails.date} has been cancelled.\n\nIf you need to reschedule or have any questions, please contact us at 80501 10333. Thank you for understanding!`,
       };
     default:
       return {
-        subject: 'Appointment Update',
-        text: `Hello ${appointmentDetails.patientName},\n\nThere has been an update to your appointment.\n\nThank you.`,
+        subject: 'Rashtrotthana Hospital - Appointment Update',
+        text: `Hi ${appointmentDetails.patientName},\n\nThere has been an update to your appointment.\n\nFor any questions, please contact us at 80501 10333. Thank you!`,
       };
   }
 };
+
 
 // Controller function to send email
 // Controller function to send email
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { to, status, appointmentDetails } = req.body;
+    const { to, status, appointmentDetails, recipientType } = req.body;
+    console.log(to,status,appointmentDetails,recipientType)
 
     // Validation to ensure all required fields are provided
     if (!to || !status || !appointmentDetails) {
@@ -50,11 +68,11 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Generate the email content based on the status
-    const emailContent = generateEmailContent(status, appointmentDetails);
+    const emailContent = generateEmailContent(status, appointmentDetails,recipientType);
 
     const mailOptions = {
-      from: 'your-email@gmail.com',
-      to,
+      from: 'keerthanasaminathan0805@gmail.com',
+      to: Array.isArray(to) ? to.join(', ') : to,
       subject: emailContent.subject,
       text: emailContent.text,
     };

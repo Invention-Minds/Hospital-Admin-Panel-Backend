@@ -1,5 +1,7 @@
 import AppointmentRepository from './appointment.repository';
-
+import { PrismaClient } from '@prisma/client';
+import { scheduleAppointmentCompletionJob } from './appointment.scheduler';
+const prisma = new PrismaClient();
 export default class AppointmentResolver {
   private repository: AppointmentRepository;
 
@@ -35,6 +37,43 @@ export default class AppointmentResolver {
   async getDoctorReport(userId: number) {
     return await this.repository.findAppointmentsByDoctorUserId(userId);
   }
+  async lockAppointment(appointmentId: number, userId: number) {
+    const appointment = await this.repository.getAppointmentById(appointmentId);
 
+    if (!appointment) {
+      throw new Error('Appointment not found');
+    }
 
+    // Check if the appointment is already locked by another user
+    if (appointment.lockedBy && appointment.lockedBy !== userId) {
+      // Appointment is locked by someone else
+      return null;
+    }
+
+    // Lock the appointment for the current user
+    return await this.repository.lockAppointment(appointmentId, userId);
+  }
+
+  // Method to unlock an appointment
+  async unlockAppointment(appointmentId: number) {
+    const appointment = await this.repository.getAppointmentById(appointmentId);
+
+    if (!appointment) {
+      throw new Error('Appointment not found');
+    }
+
+    // Unlock the appointment
+    return await this.repository.unlockAppointment(appointmentId);
+  }
+  async scheduleAppointmentCompletion(appointmentId: number, delayMinutes: number): Promise<void> {
+    const appointment = await this.repository.getAppointmentById(appointmentId);
+    if (!appointment) {
+      throw new Error('Appointment not found');
+    }
+
+    // Schedule the appointment completion job
+    scheduleAppointmentCompletionJob(appointmentId, delayMinutes);
+  }
 }
+
+

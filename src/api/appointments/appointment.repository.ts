@@ -84,12 +84,11 @@ export default class AppointmentRepository {
   }
 
 
-  async lockAppointment(appointmentId: number, userId: number, lockExpiresAt: Date) {
+  async lockAppointment(appointmentId: number, userId: number) {
     return await prisma.appointment.update({
       where: { id: appointmentId },
       data: {
         lockedBy: userId,
-        lockExpiresAt: lockExpiresAt,
       },
     });
   }
@@ -99,13 +98,18 @@ export default class AppointmentRepository {
       where: { id: appointmentId },
       data: {
         lockedBy: null,
-        lockExpiresAt: null,
       },
     });
   }
   async getAppointmentById(appointmentId: number) {
     return await prisma.appointment.findUnique({
       where: { id: appointmentId },
+    });
+  }
+  async completeAppointment(appointmentId: number) {
+    return await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: { status: 'completed' },
     });
   }
 
