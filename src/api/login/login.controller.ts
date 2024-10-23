@@ -67,8 +67,8 @@ export const userRegister = async (req: Request, res: Response) => {
 
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
-    const { username, newPassword } = req.body;
-    await resetPassword(username, newPassword);
+    const { userId, oldPassword, newPassword } = req.body;
+    await changePassword(userId, oldPassword, newPassword);
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });

@@ -6,6 +6,6 @@ import { authenticateToken } from '../../middleware/middleware';
 const router = Router();
 
 // Route to send email
-router.post('/send-email',authenticateToken, sendEmail);
+router.post('/send-email', sendEmail);
 
 export default router;
