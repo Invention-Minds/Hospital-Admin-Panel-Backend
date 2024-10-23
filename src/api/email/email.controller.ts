@@ -9,8 +9,8 @@ const transporter = nodemailer.createTransport({
     port: 587, // Use SSL/TLS for the connection
   // service: 'Gmail', // or any SMTP service you're using
   auth: {
-    user: 'keerthanasaminathan0805@gmail.com',
-    pass: 'kjzh yjab zdpx zxjq',
+    user: 'no-reply@rashtrotthanahospital.com',
+    pass: 'xwrt iqar swhp mcoi',
   },
 });
 
