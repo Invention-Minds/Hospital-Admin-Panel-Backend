@@ -10,10 +10,10 @@ const router = Router();
 router.post('/',authenticateToken, createDoctor);  // Changed from '/doctors' to '/'
 router.get('/', getDoctors);      // Changed from '/doctors' to '/'
 router.get('/availability', authenticateToken,getDoctorAvailability);
-router.get('/booked-slots', authenticateToken,getBookedSlots);
+router.get('/booked-slots',getBookedSlots);
 router.post('/booked-slots',authenticateToken, addBookedSlot);
 router.post('/unavailable-dates',authenticateToken, addUnavailableDates); // New endpoint for adding unavailable dates
-router.get('/unavailable-dates',authenticateToken, getUnavailableDates); // New endpoint for getting unavailable dates
+router.get('/unavailable-dates', getUnavailableDates); // New endpoint for getting unavailable dates
 router.get('/:id', async (req, res) => {
   await getDoctorById(req, res);  // Awaiting to ensure proper response flow
 });
