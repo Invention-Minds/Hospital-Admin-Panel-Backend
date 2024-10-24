@@ -79,7 +79,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         "id": "15b0cc79c0da45771662021",
         "msgtype": "1",
         "text": "",
-        "templateinfo": `1480342~${patientName}~${doctorName}~${status}~${date}~${time}`,
+        "templateinfo": `1482952~${patientName}~${doctorName}~${status}~${date}~${time}`,
         "type": "",
         "contenttype": "",
         "filename": "",
