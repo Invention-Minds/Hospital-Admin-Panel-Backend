@@ -23,7 +23,7 @@ app.use(express.json());
 app.use(helmet());
 
 app.use(cors({
-  origin: ['http://localhost:4200',  'http://localhost:53171/'], 
+  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/,'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
