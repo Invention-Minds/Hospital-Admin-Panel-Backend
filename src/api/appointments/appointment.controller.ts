@@ -3,10 +3,32 @@ import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import AppointmentRepository from './appointment.repository';
 
-
+let clients: Response[] = [];
 const resolver = new AppointmentResolver();
 const doctorRepository = new DoctorRepository();
 const appointmentRepository = new AppointmentRepository();
+
+export const registerForUpdates = (req: Request, res: Response): void => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  clients.push(res);
+
+  // Remove the client if it closes the connection
+  req.on('close', () => {
+    clients = clients.filter(client => client !== res);
+  });
+};
+
+
+// Notify all connected clients of a new appointment with 'pending' status
+export const notifyPendingAppointments = (newAppointment: any): void => {
+  clients.forEach(client => {
+    client.write(`data: ${JSON.stringify(newAppointment)}\n\n`);
+  });
+};
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -73,6 +95,9 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       userId
     });
     console.log("New Appointment:", newAppointment);
+    if (newAppointment.status === 'pending') {
+      notifyPendingAppointments(newAppointment);
+    }
     if (newAppointment.status === 'confirmed') {
       await doctorRepository.addBookedSlot(doctorId, date, time);
       res.status(201).json(newAppointment);

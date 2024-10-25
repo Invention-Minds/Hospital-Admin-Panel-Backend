@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import {
     createAppointment, getAppointments, updateAppointment, deleteAppointment, getTotalAppointments,
-    getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment, scheduleCompletion
+    getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment, scheduleCompletion,registerForUpdates
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
 const router = Router();
-
+router.get('/updates', registerForUpdates);
 router.post('/', createAppointment);
 router.get('/', authenticateToken, getAppointments);
 router.put('/:id', authenticateToken, updateAppointment);

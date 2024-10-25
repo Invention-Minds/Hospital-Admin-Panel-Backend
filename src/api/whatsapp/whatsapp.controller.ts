@@ -96,13 +96,13 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     });
 
     // Message for Doctor (only if the status is 'confirmed')
-    if (status === 'confirmed') {
+    if (status === 'confirmed' || status === 'cancelled') {
         messages.push({
             "coding": "1",
             "id": "15b0cc79c0da45771662022",
             "msgtype": "1",
             "text": "",
-            "templateinfo": `1482731~${doctorName}~${patientName}~${date}~${time}`,
+            "templateinfo": `1483717~${doctorName}~${status}~${patientName}~${date}~${time}`,
             "type": "",
             "contenttype": "",
             "filename": "",
