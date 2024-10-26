@@ -23,12 +23,20 @@ class AppointmentRepository {
       },
     });
   }
+  async getAllUsers() {
+    return prisma.user.findMany();
+  }
 
   async updatePasswordByUsername(username: string, newPassword: string) {
-    return prisma.user.update({
-      where: { username },
-      data: { password: newPassword },
-    });
+    try {
+      return await prisma.user.update({
+        where: { username },
+        data: { password: newPassword },
+      });
+    } catch (error) {
+      console.error('Error updating password for user:', username, error);
+      throw new Error('Failed to update password');
+    }
   }
 
   async updatePasswordByUserId(userId: number, newPassword: string) {

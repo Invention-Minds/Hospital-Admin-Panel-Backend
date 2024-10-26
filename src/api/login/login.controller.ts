@@ -53,6 +53,15 @@ export const userLogin = async (req: Request, res: Response) => {
   }
 };
 
+export const getAllUsers = async (req: Request, res: Response) => {
+  try {
+    const users = await loginRepository.getAllUsers();
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 
 export const userRegister = async (req: Request, res: Response) => {
   try {
@@ -67,8 +76,9 @@ export const userRegister = async (req: Request, res: Response) => {
 
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
-    const { userId, oldPassword, newPassword } = req.body;
-    await changePassword(userId, oldPassword, newPassword);
+    console.log(req.body);
+    const { username, newPassword } = req.body;
+    await resetPassword(username, newPassword);
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });

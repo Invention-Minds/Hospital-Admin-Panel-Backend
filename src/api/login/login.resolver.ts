@@ -24,7 +24,7 @@ export const createUser = async (username: string, password: string, role: UserR
 
 export const resetPassword = async (username: string, newPassword: string) => {
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
-  return loginRepository.updatePasswordByUsername(username, hashedPassword);
+  return await loginRepository.updatePasswordByUsername(username, hashedPassword);
 };
 
 export const changePassword = async (userId: number, oldPassword: string, newPassword: string) => {
