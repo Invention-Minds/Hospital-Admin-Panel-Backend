@@ -60,17 +60,20 @@
 
 import { Request, Response } from 'express';
 import axios from 'axios';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 export const sendWhatsAppMessage = async (req: Request, res: Response) => {
+    console.log('req.body:', req.body);
     const { patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status } = req.body;
     console.log(patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status);
 
-    const url = "https://103.229.250.150/unified/v2/send?=null";
+    const url = process.env.WHATSAPP_API_URL;
     const headers = {
         "Content-Type": "application/json",
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJJbmZpbml0byIsImlhdCI6MTcyODk3ODAxOSwic3ViIjoiUmFzaHRyb3R0aGFuYWFwaXJzbGN1bXl5In0.nyimuGTcfskkFLaE87hNtZ75tjEaFktsSNBPblKG5k4" // Replace with your actual token
+        "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}` // Replace with your actual token
     };
-
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const messages = [];
 
     // Message for Patient (regardless of the status)
@@ -89,7 +92,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
             {
                 "seq": "6310710c80900d37f7b9-20220901",
                 "to": patientPhoneNumber,
-                "from": "918050110333",
+                "from": fromPhoneNumber,
                 "tag": ""
             }
         ]
@@ -112,7 +115,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
                 {
                     "seq": "6310710c80900d37f7b9-20220902",
                     "to": doctorPhoneNumber,
-                    "from": "918050110333",
+                    "from": fromPhoneNumber,
                     "tag": ""
                 }
             ]
@@ -131,7 +134,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     };
 
     try {
-        const response = await axios.post(url, data, { headers });
+        const response = await axios.post(url!, data, { headers });
         res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: response.data });
     } catch (error) {
         res.status(500).json({

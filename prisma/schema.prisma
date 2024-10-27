@@ -14,6 +14,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Hospital {
+  id                       Int    @id @default(autoincrement())
+  hospital_name            String @unique
+  hospital_email           String @unique
+  hospital_phone           String @unique
+  hospital_whatsapp_number String @unique
+}
+
 model Department {
   id      Int      @id @default(autoincrement())
   name    String   @unique

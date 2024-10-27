@@ -1,6 +1,10 @@
 // email.controller.ts
 import { Request, Response } from 'express';
 import nodemailer from 'nodemailer';
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+
 
 // Nodemailer transporter configuration
 const transporter = nodemailer.createTransport({
@@ -9,9 +13,9 @@ const transporter = nodemailer.createTransport({
     port: 587, // Use SSL/TLS for the connection
   // service: 'Gmail', // or any SMTP service you're using
   auth: {
-    user: 'no-reply@rashtrotthanahospital.com',
-    pass: 'xwrt iqar swhp mcoi',
-  },
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  }
 });
 
 // Helper function to generate email content based on status
@@ -71,7 +75,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
     const emailContent = generateEmailContent(status, appointmentDetails,recipientType);
 
     const mailOptions = {
-      from: 'keerthanasaminathan0805@gmail.com',
+      from: process.env.SMTP_USER,
       to: Array.isArray(to) ? to.join(', ') : to,
       subject: emailContent.subject,
       text: emailContent.text,
