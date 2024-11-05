@@ -11,6 +11,7 @@ import appointmentRoutes from './api/appointments/appointment.routes';
 import loginRoutes from './api/login/login.routes';
 import whatsappRoutes from './api/whatsapp/whatsapp.routes';
 import emailRoutes from './api/email/email.routes';
+import patientRoutes from './api/patient/patient.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -36,6 +37,7 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/login', loginRoutes);
+app.use('/api/patients', patientRoutes);
 
 // Sample route to check server status
 app.get('/', (req, res) => {
