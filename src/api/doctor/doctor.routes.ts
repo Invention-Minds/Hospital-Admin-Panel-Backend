@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount } from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable } from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 const router = Router();
 
@@ -14,6 +14,8 @@ router.get('/booked-slots',getBookedSlots);
 router.post('/booked-slots',authenticateToken, addBookedSlot);
 router.post('/unavailable-dates',authenticateToken, addUnavailableDates); // New endpoint for adding unavailable dates
 router.get('/unavailable-dates', getUnavailableDates); // New endpoint for getting unavailable dates
+router.get('/:id/unavailable-slots',authenticateToken,getUnavailableSlots); // New endpoint for getting unavailable slots
+router.patch('/:doctorId/mark-available', markDatesAsAvailable);
 router.get('/:id', async (req, res) => {
   await getDoctorById(req, res);  // Awaiting to ensure proper response flow
 });

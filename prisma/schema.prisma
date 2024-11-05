@@ -47,6 +47,7 @@ model Doctor {
   unavailableDates UnavailableDates[]   @relation(name: "DoctorToUnavailableDate")
   appointments     Appointment[]        @relation(name: "DoctorAppointments")
   bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
+  unavailableSlots UnavailableSlot[]    @relation(name: "DoctorToUnavailableSlot") // Relation to UnavailableSlot
 }
 
 model User {
@@ -109,6 +110,7 @@ enum AppointmentStatus {
   confirmed
   cancelled
   completed
+  rescheduled
 }
 
 model BookedSlot {
@@ -118,6 +120,14 @@ model BookedSlot {
   date      String
   time      String
   createdAt DateTime @default(now())
+}
+
+model UnavailableSlot {
+  id       Int    @id @default(autoincrement())
+  doctorId Int
+  time     String // Time in HH:MM format
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToUnavailableSlot")
 }
 
 enum UserRole {

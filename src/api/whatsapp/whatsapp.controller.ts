@@ -77,12 +77,13 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     const messages = [];
 
     // Message for Patient (regardless of the status)
+    if(status !== 'received'){
     messages.push({
         "coding": "1",
         "id": "15b0cc79c0da45771662021",
         "msgtype": "1",
         "text": "",
-        "templateinfo": `1482952~${patientName}~${doctorName}~${status}~${date}~${time}`,
+        "templateinfo": `1484423~${patientName}~${doctorName}~${status}~${date}~${time}`,
         "type": "",
         "contenttype": "",
         "filename": "",
@@ -97,15 +98,37 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
             }
         ]
     });
-
-    // Message for Doctor (only if the status is 'confirmed')
-    if (status === 'confirmed' || status === 'cancelled') {
+}
+    if(status === 'received'){
         messages.push({
             "coding": "1",
             "id": "15b0cc79c0da45771662022",
             "msgtype": "1",
             "text": "",
-            "templateinfo": `1483717~${doctorName}~${status}~${patientName}~${date}~${time}`,
+            "templateinfo": `1484424~${patientName}~${doctorName}`,
+            "type": "",
+            "contenttype": "",
+            "filename": "",
+            "mediadata": "",
+            "b_urlinfo": "",
+            "addresses": [
+                {
+                    "seq": "6310710c80900d37f7b9-20220902",
+                    "to": patientPhoneNumber,
+                    "from": fromPhoneNumber,
+                    "tag": ""
+                }
+            ]
+        });   
+    }
+    // Message for Doctor (only if the status is 'confirmed')
+    if (status === 'confirmed' || status === 'cancelled' || status === 'rescheduled') {
+        messages.push({
+            "coding": "1",
+            "id": "15b0cc79c0da45771662022",
+            "msgtype": "1",
+            "text": "",
+            "templateinfo": `1484425~${doctorName}~${status}~${patientName}~${date}~${time}`,
             "type": "",
             "contenttype": "",
             "filename": "",

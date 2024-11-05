@@ -17,6 +17,7 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       availabilityDays, // Days available // Timing from frontend (e.g., "09:00-10:00")
       slotDuration, // Duration of each slot
       unavailableDates, // Dates when doctor is unavailable
+      unavailableSlots
     } = req.body;
     console.log(req.body)
 
@@ -83,6 +84,23 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       },
 
     });
+    console.log("unavailableSlots", unavailableSlots)
+       // Create unavailable slots if they exist
+       if (unavailableSlots && unavailableSlots.length > 0) {
+        console.log("unavailableSlots in if", unavailableSlots)
+        try {
+          await prisma.unavailableSlot.createMany({
+            data: unavailableSlots.map((time: string) => ({
+              doctorId: newDoctor.id,
+              time: time,
+            })),
+          });
+  
+          console.log("Unavailable Slots Inserted Successfully");
+        } catch (error) {
+          console.error("Error inserting unavailable slots:", error);
+        }
+      }
     console.log("after added", newDoctor)
     res.status(201).json(newDoctor);
   } catch (error) {
@@ -148,6 +166,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
       availabilityDays,
       availableFrom,
       unavailableDates = [],
+      unavailableSlots = [],
     } = req.body;
     const slotDuration = parseInt(req.body.slotDuration);
     console.log(slotDuration)
@@ -225,7 +244,23 @@ export const updateDoctor = async (req: Request, res: Response) => {
         data: unavailableDateEntries,
       });
     }
+// Delete and recreate unavailable slots
+await prisma.unavailableSlot.deleteMany({
+  where: {
+    doctorId: Number(id),
+  },
+});
 
+const unavailableSlotEntries = unavailableSlots.map((slot: string) => ({
+  time: slot,
+  doctorId: Number(id),
+}));
+
+if (unavailableSlotEntries.length > 0) {
+  await prisma.unavailableSlot.createMany({
+    data: unavailableSlotEntries,
+  });
+}
     // Return the updated doctor along with availability and unavailable dates
     const doctorWithRelations = await prisma.doctor.findUnique({
       where: { id: Number(id) },
@@ -243,7 +278,36 @@ export const updateDoctor = async (req: Request, res: Response) => {
   }
 };
 
+export const getUnavailableSlots = async (req: Request, res: Response) => {
+  try {
+    const doctorId = req.params.id; // Fetch doctor ID from parameters
+    console.log("Doctor ID from doctor:", doctorId);
 
+    if (!doctorId) {
+      res.status(400).json({ error: 'Doctor ID is required.' });
+      return;
+    }
+
+    // Fetch unavailable slots from the database
+    const unavailableSlots = await prisma.unavailableSlot.findMany({
+      where: {
+        doctorId: Number(doctorId),
+      },
+      select: {
+        time: true,
+      },
+    });
+
+    // Map and extract the unavailable slot times
+
+    const slotTimes = unavailableSlots.map(slot => slot.time);
+    console.log("Unavailable Slots:", slotTimes);
+    res.status(200).json(slotTimes);
+  } catch (error) {
+    console.error('Error fetching unavailable slots:', error);
+    res.status(500).json({ error: 'An error occurred while fetching unavailable slots' });
+  }
+};
 
 export const deleteDoctor = async (req: Request, res: Response) => {
   try {
@@ -435,6 +499,35 @@ export const addUnavailableDates = async (req: Request, res: Response): Promise<
     res.status(500).json({ error: 'An error occurred while updating unavailable dates.' });
   }
 };
+
+export const markDatesAsAvailable = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorId } = req.params; // Extract doctor ID from request parameters
+    const { startDate, endDate } = req.body; // Extract start and end date from request body
+
+    if (!doctorId || !startDate || !endDate) {
+      res.status(400).json({ error: 'Doctor ID, start date, and end date are required.' });
+      return;
+    }
+
+    // Deleting unavailable dates for given doctor and date range
+    await prisma.unavailableDates.deleteMany({
+      where: {
+        doctorId: Number(doctorId),
+        date: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+    });
+
+    res.status(200).json({ message: 'Dates marked as available successfully.' });
+  } catch (error) {
+    console.error('Error marking dates as available:', error);
+    res.status(500).json({ error: 'An error occurred while marking dates as available.' });
+  }
+};
+
 
 // Get Unavailable Dates for Doctor
 export const getUnavailableDates = async (req: Request, res: Response): Promise<void> => {
