@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
     createAppointment, getAppointments, updateAppointment, deleteAppointment, getTotalAppointments,
-    getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment, scheduleCompletion,registerForUpdates
+    getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment, scheduleCompletion,registerForUpdates,checkInAppointment
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -24,6 +24,7 @@ router.put('/:id/lock', authenticateToken, lockAppointment);
 // Route to unlock an appointment
 router.put('/:id/unlock', authenticateToken, unlockAppointment);
 router.put('/:id/schedule-completion', scheduleCompletion);
+router.put('/:id/checkin', authenticateToken, checkInAppointment);
 
 
 export default router;

@@ -2,11 +2,15 @@ import { Request, Response } from 'express';
 import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import AppointmentRepository from './appointment.repository';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 let clients: Response[] = [];
 const resolver = new AppointmentResolver();
 const doctorRepository = new DoctorRepository();
 const appointmentRepository = new AppointmentRepository();
+
 
 export const registerForUpdates = (req: Request, res: Response): void => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -45,8 +49,10 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       email,
       requestVia,
       smsSent,
-      emailSent
+      emailSent,
+      prnNumber
     } = req.body;
+    console.log(req.body);
 
     // Convert the date to "YYYY-MM-DD" format
     let date = new Date(req.body.date).toISOString().split('T')[0];
@@ -92,7 +98,8 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       requestVia,
       smsSent,
       emailSent,
-      userId
+      userId,
+      prnNumber
     });
     console.log("New Appointment:", newAppointment);
     if (newAppointment.status === 'pending') {
@@ -245,7 +252,27 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
     res.status(500).json({ error: 'Failed to schedule appointment completion' });
   }
 };
+// Controller function to handle the check-in action
+export const checkInAppointment = async (req: Request, res: Response) => {
+  const { id } = req.params;
 
+  try {
+    // Update the checkedIn status for the specified appointment
+    const updatedAppointment = await prisma.appointment.update({
+      where: {
+        id: Number(id),
+      },
+      data: {
+        checkedIn: true,
+      },
+    });
+
+    res.status(200).json({ message: 'Appointment checked in successfully', updatedAppointment });
+  } catch (error) {
+    console.error('Error updating check-in status:', error);
+    res.status(500).json({ error: 'An error occurred while updating the check-in status' });
+  }
+};
 
 export const unlockAppointment = async (req: Request, res: Response): Promise<void> => {
   try {

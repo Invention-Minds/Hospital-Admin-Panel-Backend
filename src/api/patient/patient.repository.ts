@@ -22,4 +22,7 @@ export class PatientRepository {
   async deletePatient(id: number) {
     return this.prisma.patient.delete({ where: { id } });
   }
+  async getPatientByPhoneNumber(phoneNumber: string) {
+    return this.prisma.patient.findUnique({ where: { phoneNumber } });
+  }
 }

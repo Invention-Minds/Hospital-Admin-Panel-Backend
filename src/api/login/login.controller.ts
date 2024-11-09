@@ -56,6 +56,7 @@ export const userLogin = async (req: Request, res: Response) => {
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await loginRepository.getAllUsers();
+    console.log("loginRepository", users);
     res.status(200).json(users);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -108,7 +109,7 @@ export const getUserDetails = async (req: Request, res: Response): Promise<void>
 
     if (user) {
       const role = extractRoleFromUsername(user.username); // Extract role from username if needed
-      res.status(200).json({ userId: user.id, username: user.username, role }); // Include userId in the response
+      res.status(200).json({ userId: user.id, username: user.username, role}); // Include userId in the response
     }
     else {
       res.status(404).json({ error: 'User not found' });

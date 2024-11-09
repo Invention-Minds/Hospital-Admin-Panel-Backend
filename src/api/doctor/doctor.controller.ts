@@ -17,13 +17,14 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       availabilityDays, // Days available // Timing from frontend (e.g., "09:00-10:00")
       slotDuration, // Duration of each slot
       unavailableDates, // Dates when doctor is unavailable
-      unavailableSlots
+      unavailableSlots,
+      availability
     } = req.body;
     console.log(req.body)
 
     let availableFrom = req.body.availableFrom;
     // Validation to ensure all required fields are present
-    if (!name || !email || !phone_number || !departmentName || !qualification || !availableFrom || !slotDuration || !availabilityDays) {
+    if (!name || !phone_number || !departmentName || !qualification  || !slotDuration || !availabilityDays) {
       res.status(400).json({ error: 'All fields are required.' });
       return;
     }
@@ -71,7 +72,7 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
         departmentId: foundDepartment.id,
         departmentName: foundDepartment.name,
         availability: {
-          create: availableDaysArray
+          create: availability
         },
         unavailableDates: unavailableDates ? {
           create: unavailableDates.map((date: string) => ({
@@ -86,21 +87,23 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
     });
     console.log("unavailableSlots", unavailableSlots)
        // Create unavailable slots if they exist
-       if (unavailableSlots && unavailableSlots.length > 0) {
-        console.log("unavailableSlots in if", unavailableSlots)
-        try {
-          await prisma.unavailableSlot.createMany({
-            data: unavailableSlots.map((time: string) => ({
-              doctorId: newDoctor.id,
-              time: time,
-            })),
-          });
+      //  if (unavailableSlots && unavailableSlots.length > 0) {
+      //   console.log("unavailableSlots in if", unavailableSlots)
+      //   try {
+      //     await prisma.unavailableSlot.createMany({
+      //       data: unavailableSlots.map((time: string) => ({
+      //         doctorId: newDoctor.id,
+      //         time: time,
+      //       })),
+      //     });
   
-          console.log("Unavailable Slots Inserted Successfully");
-        } catch (error) {
-          console.error("Error inserting unavailable slots:", error);
-        }
-      }
+      //     console.log("Unavailable Slots Inserted Successfully");
+      //   } catch (error) {
+      //     console.error("Error inserting unavailable slots:", error);
+      //   }
+      // }
+
+
     console.log("after added", newDoctor)
     res.status(201).json(newDoctor);
   } catch (error) {
@@ -164,16 +167,17 @@ export const updateDoctor = async (req: Request, res: Response) => {
       departmentName,
       qualification,
       availabilityDays,
-      availableFrom,
       unavailableDates = [],
       unavailableSlots = [],
+      availability
     } = req.body;
     const slotDuration = parseInt(req.body.slotDuration);
+    let availableFrom = req.body.availableFrom;
     console.log(slotDuration)
     console.log("Update Request Body:", req.body);
 
     // Validation: Ensure all required fields are present
-    if (!name || !email || !phone_number || !departmentName || !qualification || !availableFrom || !slotDuration) {
+    if (!name || !email || !phone_number || !departmentName || !qualification  || !slotDuration) {
       res.status(400).json({ error: 'All fields are required.' });
       return;
     }
@@ -202,6 +206,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
         departmentName: foundDepartment.name,
         availableFrom,
         slotDuration,
+
       },
     });
 
@@ -212,14 +217,20 @@ export const updateDoctor = async (req: Request, res: Response) => {
       },
     });
 
-    const availabilityEntries = Object.entries(availabilityDays)
-      .filter(([day, isAvailable]) => isAvailable)
-      .map(([day]) => ({
-        day,
-        availableFrom,
-        slotDuration,
-        doctorId: Number(id),
-      }));
+    // const availabilityEntries = Object.entries(availabilityDays)
+    //   .filter(([day, isAvailable]) => isAvailable)
+    //   .map(([day]) => ({
+    //     day,
+    //     availableFrom,
+    //     slotDuration,
+    //     doctorId: Number(id),
+    //   }));
+    const availabilityEntries = availability.map((avail: { day: string; availableFrom: string; slotDuration: number }) => ({
+      day: avail.day,
+      availableFrom: avail.availableFrom,
+      slotDuration: avail.slotDuration,
+      doctorId: Number(id), // Use the doctor ID here to link the availability
+    }));
 
     if (availabilityEntries.length > 0) {
       await prisma.doctorAvailability.createMany({
@@ -244,23 +255,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
         data: unavailableDateEntries,
       });
     }
-// Delete and recreate unavailable slots
-await prisma.unavailableSlot.deleteMany({
-  where: {
-    doctorId: Number(id),
-  },
-});
 
-const unavailableSlotEntries = unavailableSlots.map((slot: string) => ({
-  time: slot,
-  doctorId: Number(id),
-}));
-
-if (unavailableSlotEntries.length > 0) {
-  await prisma.unavailableSlot.createMany({
-    data: unavailableSlotEntries,
-  });
-}
     // Return the updated doctor along with availability and unavailable dates
     const doctorWithRelations = await prisma.doctor.findUnique({
       where: { id: Number(id) },
@@ -277,37 +272,86 @@ if (unavailableSlotEntries.length > 0) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
+export const addUnavailableSlots = async (req: Request, res: Response) => {
+  try {
+    const { doctorId, date, times } = req.body;
+
+    // Ensure all required fields are provided
+    if (!doctorId || !date || !times || !Array.isArray(times)) {
+      res.status(400).json({ error: 'Doctor ID, date, and an array of times are required.' });
+      return;
+    }
+
+    // Validate the date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      res.status(400).json({ error: 'Invalid date format. Expected format: YYYY-MM-DD.' });
+      return;
+    }
+
+    // Delete existing unavailable slots for that date and doctor (if any)
+    await prisma.unavailableSlot.deleteMany({
+      where: {
+        doctorId: Number(doctorId),
+        date: date,
+      },
+    });
+
+    // Insert new unavailable slots for the given date and doctor
+    const unavailableSlotEntries = times.map((time: string) => ({
+      doctorId: Number(doctorId),
+      date: date,
+      time,
+    }));
+
+    if (unavailableSlotEntries.length > 0) {
+      await prisma.unavailableSlot.createMany({
+        data: unavailableSlotEntries,
+      });
+    }
+console.log("unavailableSlotEntries",unavailableSlotEntries)
+    res.status(201).json({ message: 'Unavailable slots updated successfully.' });
+  } catch (error) {
+    console.error('Error adding unavailable slots:', error);
+    res.status(500).json({ error: 'An error occurred while updating unavailable slots.' });
+  }
+};
 
 export const getUnavailableSlots = async (req: Request, res: Response) => {
   try {
-    const doctorId = req.params.id; // Fetch doctor ID from parameters
-    console.log("Doctor ID from doctor:", doctorId);
+    const doctorId = req.params.id;
 
     if (!doctorId) {
       res.status(400).json({ error: 'Doctor ID is required.' });
       return;
     }
 
-    // Fetch unavailable slots from the database
     const unavailableSlots = await prisma.unavailableSlot.findMany({
       where: {
         doctorId: Number(doctorId),
       },
       select: {
+        date: true,
         time: true,
       },
     });
 
-    // Map and extract the unavailable slot times
+    // Format the response to group times by date
+    const response = unavailableSlots.reduce((acc: any, slot) => {
+      if (!acc[slot.date]) {
+        acc[slot.date] = [];
+      }
+      acc[slot.date].push(slot.time);
+      return acc;
+    }, {});
 
-    const slotTimes = unavailableSlots.map(slot => slot.time);
-    console.log("Unavailable Slots:", slotTimes);
-    res.status(200).json(slotTimes);
+    res.status(200).json(response);
   } catch (error) {
     console.error('Error fetching unavailable slots:', error);
     res.status(500).json({ error: 'An error occurred while fetching unavailable slots' });
   }
 };
+
 
 export const deleteDoctor = async (req: Request, res: Response) => {
   try {

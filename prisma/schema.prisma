@@ -102,7 +102,9 @@ model Appointment {
   lockedBy      Int? // Stores the user ID who locked the appointment
   lockExpiresAt DateTime? // Stores the expiration of the lock
   patientId     Int?
+  prnNumber     Int?
   patient       Patient?          @relation(fields: [patientId], references: [id], name: "AppointmentToPatient")
+  checkedIn     Boolean?          @default(false)
 
   @@map("appointments")
 }
@@ -127,9 +129,12 @@ model BookedSlot {
 model UnavailableSlot {
   id       Int    @id @default(autoincrement())
   doctorId Int
+  date     String // Change from DateTime to String
   time     String // Time in HH:MM format
 
   doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToUnavailableSlot")
+
+  @@unique([doctorId, date, time])
 }
 
 enum UserRole {

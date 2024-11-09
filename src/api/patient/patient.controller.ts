@@ -11,6 +11,14 @@ export class PatientController {
   async createPatient(req: Request, res: Response): Promise<void> {
     try {
       const { name, phoneNumber, email, prn } = req.body;
+       // Check if the patient with the phone number already exists
+    const existingPatient = await this.patientRepository.getPatientByPhoneNumber(phoneNumber);
+
+    if (existingPatient) {
+      // If the patient already exists, return a 409 Conflict response
+      res.status(409).json({ message: 'Patient with this phone number already exists', patient: existingPatient });
+      return;
+    }
       const patient = await this.patientRepository.createPatient({ name, phoneNumber, email, prn });
       res.status(201).json(patient);
     } catch (error) {
