@@ -9,8 +9,8 @@ dotenv.config();
 // Nodemailer transporter configuration
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-    host: 'smtp.gmail.com',
-    port: 587, // Use SSL/TLS for the connection
+  host: 'smtp.gmail.com',
+  port: 587, // Use SSL/TLS for the connection
   // service: 'Gmail', // or any SMTP service you're using
   auth: {
     user: process.env.SMTP_USER,
@@ -63,32 +63,66 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
     const { to, status, appointmentDetails, recipientType } = req.body;
-    console.log(to,status,appointmentDetails,recipientType)
+    console.log(to, status, appointmentDetails, recipientType)
 
     // Validation to ensure all required fields are provided
     if (!to || !status || !appointmentDetails) {
       res.status(400).json({ message: 'Missing required fields' });
       return;
     }
+    if (status === 'frontoffice') {
+      const emailContenttoFrontOffice = {
+        subject: 'Rashtrotthana Hospital - Appointment Received From Website',
+        text: `
+          Doctor Name: ${appointmentDetails.doctorName}
+      
+          Doctor Designation: ${appointmentDetails.doctorDesignation}
+      
+          Patient Name: ${appointmentDetails.patientName}
+      
+          Patient Email: ${appointmentDetails.patientEmail}
+      
+          Patient Contact: ${appointmentDetails.patientContact}
+      
+          Appointment Date: ${appointmentDetails.appointmentDate}
+      
+          Appointment Time: ${appointmentDetails.appointmentTime}
+      
+          Message: ${appointmentDetails.message}
+        `
+      };
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: emailContenttoFrontOffice.subject,
+        text: emailContenttoFrontOffice.text,
+      };
+      const info = await transporter.sendMail(mailOptions);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    }
+    else{
+      const emailContent = generateEmailContent(status, appointmentDetails, recipientType);
 
-    // Generate the email content based on the status
-    const emailContent = generateEmailContent(status, appointmentDetails,recipientType);
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: emailContent.subject,
+        text: emailContent.text,
+      };
+      const info = await transporter.sendMail(mailOptions);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    }
 
-    const mailOptions = {
-      from: process.env.SMTP_USER,
-      to: Array.isArray(to) ? to.join(', ') : to,
-      subject: emailContent.subject,
-      text: emailContent.text,
-    };
+      // Generate the email content based on the status
+    
 
-    // Send email using nodemailer
-    const info = await transporter.sendMail(mailOptions);
-    res.status(200).json({ message: 'Email sent successfully', info });
-  } catch (error) {
-    console.error('Error sending email:', error);
-    res.status(500).json({ message: 'Failed to send email' });
-  }
-};
+      // Send email using nodemailer
+      
+    } catch (error) {
+      console.error('Error sending email:', error);
+      res.status(500).json({ message: 'Failed to send email' });
+    }
+  };
 
 
 
