@@ -24,7 +24,7 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
 
     let availableFrom = req.body.availableFrom;
     // Validation to ensure all required fields are present
-    if (!name || !phone_number || !departmentName || !qualification  || !slotDuration || !availabilityDays) {
+    if (!name || !phone_number || !departmentName || !slotDuration || !availabilityDays) {
       res.status(400).json({ error: 'All fields are required.' });
       return;
     }
@@ -177,7 +177,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
     console.log("Update Request Body:", req.body);
 
     // Validation: Ensure all required fields are present
-    if (!name || !email || !phone_number || !departmentName || !qualification  || !slotDuration) {
+    if (!name || !phone_number || !departmentName  || !slotDuration) {
       res.status(400).json({ error: 'All fields are required.' });
       return;
     }
