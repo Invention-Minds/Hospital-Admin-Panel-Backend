@@ -12,7 +12,7 @@ export class PatientRepository {
   }
 
   async getPatientById(id: number) {
-    return this.prisma.patient.findUnique({ where: { id } });
+    return this.prisma.patient.findFirst({ where: { id } });
   }
 
   async updatePatient(id: number, data: { name: string; phoneNumber: string; email: string; prn: number }) {
@@ -23,6 +23,6 @@ export class PatientRepository {
     return this.prisma.patient.delete({ where: { id } });
   }
   async getPatientByPhoneNumber(phoneNumber: string) {
-    return this.prisma.patient.findUnique({ where: { phoneNumber } });
+    return this.prisma.patient.findFirst({ where: { phoneNumber } });
   }
 }

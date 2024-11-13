@@ -493,6 +493,45 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+export const cancelBookedSlot = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorId, date, time } = req.body;
+    console.log("Doctor ID:", req.body);
+
+    // Validate the request parameters
+    if (!doctorId || !date || !time) {
+      res.status(400).json({ error: 'Doctor ID, date, and time are required.' });
+      return;
+    }
+
+    // Check if the slot is already canceled
+    const existingBooking = await prisma.bookedSlot.findFirst({
+      where: {
+        doctorId,
+        date,
+        time,
+      },
+    });
+
+    if (!existingBooking) {
+      res.status(404).json({ error: 'No booking found for the selected slot' });
+      return;
+    }
+    console.log("Existing Booking:", existingBooking);
+    // Delete the booked slot from the BookedSlot table
+    await prisma.bookedSlot.delete({
+      where: {
+        id: existingBooking.id,  // Deleting by the unique ID of the booked slot
+      },
+    });
+
+    res.status(200).json({ message: 'Slot successfully canceled and is now available for rebooking.' });
+  } catch (error) {
+    console.error('Error cancelling the booked slot:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 // Create or Update Unavailable Dates for Doctor
 export const addUnavailableDates = async (req: Request, res: Response): Promise<void> => {
   try {

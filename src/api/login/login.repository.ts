@@ -50,6 +50,35 @@ class AppointmentRepository {
       where: { username },
     });
   };
+// Store a new token for a user session
+// async storeToken(data: any){
+//   return prisma.activeToken.create({
+//     data
+//   });
+// };
+// async updateTokenStatus(token: string, data: any){
+//   return prisma.activeToken.updateMany({
+//     where: {
+//       token: token,
+//       isActive: true
+//     },
+//     data
+//   });
+// };
+// async getActiveSessions(){
+//   return prisma.activeToken.findMany({
+//     where: { isActive: true },
+//     include: { user: true }
+//   });
+// };
+// async findActiveTokenByUserId(userId: number){
+//   return prisma.activeToken.findFirst({
+//     where: {
+//       userId: userId,
+//       isActive: true
+//     }
+//   });
+// };
 
 }
 

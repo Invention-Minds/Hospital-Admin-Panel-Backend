@@ -58,6 +58,7 @@ model User {
   createdAt    DateTime      @default(now())
   doctors      Doctor[]      @relation("DoctorUser") // Relation to Doctor model
   appointments Appointment[] @relation("UserAppointments") // Relation to Appointment model
+  activeTokens ActiveToken[] // Relation to the ActiveToken model
 
   @@map("users")
 }
@@ -81,30 +82,32 @@ model UnavailableDates {
 }
 
 model Appointment {
-  id            Int               @id @default(autoincrement())
-  patientName   String
-  phoneNumber   String
-  email         String
-  doctorId      Int
-  doctor        Doctor            @relation(fields: [doctorId], references: [id], name: "DoctorAppointments")
-  doctorName    String
-  department    String
-  date          String
-  time          String
-  requestVia    String?
-  smsSent       Boolean?          @default(false)
-  emailSent     Boolean?          @default(false)
-  status        AppointmentStatus @default(pending)
-  created_at    DateTime          @default(now())
-  updated_at    DateTime          @updatedAt
-  userId        Int?
-  user          User?             @relation(fields: [userId], references: [id], name: "UserAppointments")
-  lockedBy      Int? // Stores the user ID who locked the appointment
-  lockExpiresAt DateTime? // Stores the expiration of the lock
-  patientId     Int?
-  prnNumber     Int?
-  patient       Patient?          @relation(fields: [patientId], references: [id], name: "AppointmentToPatient")
-  checkedIn     Boolean?          @default(false)
+  id             Int               @id @default(autoincrement())
+  patientName    String
+  phoneNumber    String
+  email          String
+  doctorId       Int
+  doctor         Doctor            @relation(fields: [doctorId], references: [id], name: "DoctorAppointments")
+  doctorName     String
+  department     String
+  date           String
+  time           String
+  requestVia     String?
+  smsSent        Boolean?          @default(false)
+  emailSent      Boolean?          @default(false)
+  status         AppointmentStatus @default(pending)
+  created_at     DateTime          @default(now())
+  updated_at     DateTime          @updatedAt
+  userId         Int?
+  user           User?             @relation(fields: [userId], references: [id], name: "UserAppointments")
+  lockedBy       Int? // Stores the user ID who locked the appointment
+  lockExpiresAt  DateTime? // Stores the expiration of the lock
+  patientId      Int?
+  prnNumber      Int?
+  patient        Patient?          @relation(fields: [patientId], references: [id], name: "AppointmentToPatient")
+  checkedIn      Boolean?          @default(false)
+  remainder1Sent Boolean?          @default(false)
+  remainder2Sent Boolean?          @default(false)
 
   @@map("appointments")
 }
@@ -149,9 +152,21 @@ model Patient {
   id           Int           @id @default(autoincrement())
   prn          Int           @unique
   name         String
-  phoneNumber  String        @unique
-  email        String        @unique
+  phoneNumber  String
+  email        String
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
   appointments Appointment[] @relation(name: "AppointmentToPatient")
+}
+
+model ActiveToken {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  token      String   @unique
+  loggedInAt DateTime @default(now())
+  lastActive DateTime @default(now())
+  isActive   Boolean  @default(true) // Field to mark if the session is active or not
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@map("active_tokens")
 }

@@ -44,6 +44,15 @@ export const userLogin = async (req: Request, res: Response) => {
     if (user) {
       const role = extractRoleFromUsername(user.username); // Extract role
       const token = generateToken(user); // Generate JWT token
+            // Store the token with loggedInAt and isActive in the database
+            // await loginRepository.storeToken({
+            //   userId: user.id,
+            //   token: token,
+            //   loggedInAt: new Date(),
+            //   lastActive: new Date(),
+            //   isActive: true
+            // });
+      
       res.status(200).json({ token, user: { userId: user.id, username: user.username, role } }); // Send token and user data
     } else {
       res.status(401).json({ error: 'Invalid username or password' });
@@ -142,4 +151,22 @@ export const deleteUserByUsername = async (req: Request, res: Response): Promise
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+// Get all users with login status
+// export const getAllUsersWithStatus = async (req: Request, res: Response) => {
+//   try {
+//     const users = await loginRepository.getAllUsers();
 
+//     // Get all active sessions to determine who is logged in
+//     const activeSessions = await loginRepository.getActiveSessions();
+//     const activeUserIds = activeSessions.map((session:any) => session.userId);
+
+//     const usersWithStatus = users.map((user) => ({
+//       ...user,
+//       isActive: activeUserIds.includes(user.id)
+//     }));
+
+//     res.status(200).json(usersWithStatus);
+//   } catch (error) {
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// };
