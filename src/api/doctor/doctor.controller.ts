@@ -456,6 +456,7 @@ export const addBookedSlot = async (req: Request, res: Response): Promise<void> 
         time,
       },
     });
+    console.log("Booked Slot is working:", bookedSlot);
 
     res.status(201).json(bookedSlot);
   } catch (error) {
@@ -505,7 +506,7 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
     }
 
     // Check if the slot is already canceled
-    const existingBooking = await prisma.bookedSlot.findFirst({
+    const existingBooking = await prisma.bookedSlot.findMany({
       where: {
         doctorId,
         date,
@@ -519,9 +520,11 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
     }
     console.log("Existing Booking:", existingBooking);
     // Delete the booked slot from the BookedSlot table
-    await prisma.bookedSlot.delete({
+    await prisma.bookedSlot.deleteMany({
       where: {
-        id: existingBooking.id,  // Deleting by the unique ID of the booked slot
+        doctorId,
+        date,
+        time // Deleting by the unique ID of the booked slot
       },
     });
 

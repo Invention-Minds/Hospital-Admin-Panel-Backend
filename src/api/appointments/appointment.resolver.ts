@@ -70,7 +70,7 @@ export default class AppointmentResolver {
     if (!appointment) {
       throw new Error('Appointment not found');
     }
-
+    console.log(`Scheduling appointment ${appointmentId} for completion in ${delayMinutes} minutes`);
     // Schedule the appointment completion job
     scheduleAppointmentCompletionJob(appointmentId, delayMinutes);
   }

@@ -56,6 +56,8 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     // Convert the date to "YYYY-MM-DD" format
     let date = new Date(req.body.date).toISOString().split('T')[0];
+    console.log(date,'selected slot is not available')
+
     // Ensure the status field matches Prisma enum
     const bookedSlots = await doctorRepository.getBookedSlots(doctorId, date);
     const isSlotAvailable = !bookedSlots.some(slot => slot.time === time);
@@ -244,7 +246,7 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
       res.status(400).json({ message: 'Invalid delay minutes' });
       return;
     }
-
+    console.log(appointmentId,delayMinutes)
     await resolver.scheduleAppointmentCompletion(appointmentId, delayMinutes);
     res.status(200).json({ message: 'Appointment completion scheduled successfully' });
   } catch (error) {

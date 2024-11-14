@@ -4,6 +4,9 @@ import { UserRole } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import loginRepository from './login.repository';
 import { deleteUserById } from './login.resolver';
+import { PrismaClient } from '@prisma/client';
+import moment from 'moment-timezone';
+const prisma = new PrismaClient();
 
 
 const extractRoleFromUsername = (username: string): UserRole => {
@@ -44,16 +47,34 @@ export const userLogin = async (req: Request, res: Response) => {
     if (user) {
       const role = extractRoleFromUsername(user.username); // Extract role
       const token = generateToken(user); // Generate JWT token
-            // Store the token with loggedInAt and isActive in the database
-            // await loginRepository.storeToken({
-            //   userId: user.id,
-            //   token: token,
-            //   loggedInAt: new Date(),
-            //   lastActive: new Date(),
-            //   isActive: true
-            // });
-      
-      res.status(200).json({ token, user: { userId: user.id, username: user.username, role } }); // Send token and user data
+      const usEasternTime = moment.tz("America/New_York");
+
+      // Convert US Eastern Time to Indian Standard Time (IST)
+      const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+
+      // Store the date and time in two separate variables
+      const indianDate = indianTime.format('YYYY-MM-DD');
+      const indianTimeOnly = indianTime.format('HH:mm:ss');
+
+      // Print the converted date and time
+      console.log("Indian Date:", indianDate);
+      console.log("Indian Time:", indianTimeOnly);
+      // const tokenGeneratedAt = new Date();
+      // console.log("tokenGeneratedAt", tokenGeneratedAt);
+      const generatedDate = indianDate; // "YYYY-MM-DD"
+      const generatedTime = indianTimeOnly; // "HH:mm:ss"
+
+      await prisma.user.update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          loggedInDate: generatedDate,
+          loggedInTime: generatedTime,
+        },
+      });
+      console.log("tokenGeneratedAt", generatedDate, generatedTime);
+      res.status(200).json({ token,generatedDate,generatedTime, user: { userId: user.id, username: user.username, role } }); // Send token and user data
     } else {
       res.status(401).json({ error: 'Invalid username or password' });
     }
