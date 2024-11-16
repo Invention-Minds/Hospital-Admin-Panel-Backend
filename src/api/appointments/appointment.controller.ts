@@ -50,6 +50,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       requestVia,
       smsSent,
       emailSent,
+      messageSent,
       prnNumber
     } = req.body;
     console.log(req.body);
@@ -100,6 +101,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       requestVia,
       smsSent,
       emailSent,
+      messageSent,
       userId,
       prnNumber
     });

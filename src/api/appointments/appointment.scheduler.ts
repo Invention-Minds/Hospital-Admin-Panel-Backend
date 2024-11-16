@@ -63,7 +63,7 @@ dotenv.config();
 //   //       } catch (error) {
 //   //         console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
 //   //       }
-      
+
 //   //     }
 //   //     console.log(`Appointment ${appointmentId} marked as completed.`);
 //   //     task.stop();
@@ -88,7 +88,7 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
   // Stop or clear the existing task for the appointment if there's any
   if (scheduledTasks.has(appointmentId)) {
     const scheduledTask = scheduledTasks.get(appointmentId);
-    
+
     if (scheduledTask) {
       if (isCronTask(scheduledTask)) {
         scheduledTask.stop(); // Stop the cron job if it is a cron task
@@ -96,7 +96,7 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
         clearTimeout(scheduledTask); // Clear the timeout if it is a timeout
       }
     }
-    
+
     scheduledTasks.delete(appointmentId); // Remove the task from the map after stopping
   }
 
@@ -113,50 +113,7 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
 
       // Retrieve appointment details to send WhatsApp message
       const appointment = await repository.getAppointmentById(appointmentId);
-      // if (appointment) {
-      //   const url = process.env.WHATSAPP_API_URL;
-      //   const headers = {
-      //     "Content-Type": "application/json",
-      //     "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`,
-      //   };
-      //   const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-
-      //   const messages = [
-      //     {
-      //       "coding": "1",
-      //       "id": "15b0cc79c0da45771662021",
-      //       "msgtype": "1",
-      //       "text": "",
-      //       "templateinfo": `1489098`,
-      //       "addresses": [
-      //         {
-      //           "to": appointment.phoneNumber,
-      //           "from": fromPhoneNumber,
-      //         },
-      //       ],
-      //     },
-      //   ];
-
-      //   const data = {
-      //     "apiver": "1.0",
-      //     "whatsapp": {
-      //       "ver": "2.0",
-      //       "dlr": {
-      //         "url": "",
-      //       },
-      //       "messages": messages,
-      //     },
-      //   };
-
-      //   // Send WhatsApp message
-      //   try {
-      //     await axios.post(url!, data, { headers });
-      //     console.log("WhatsApp message(s) sent successfully");
-      //   } catch (error) {
-      //     console.error("Failed to send WhatsApp message(s):", (error as any).response ? (error as any).response.data : (error as any).message);
-      //   }
-      // }
-      if(appointment){
+      if (appointment) {
         // Send a message to the patient
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
@@ -196,11 +153,22 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
 
         try {
           await axios.post(url!, data, { headers });
+          let success = 'true'
+          if (success === 'true') {
+            const apiKey = process.env.SMS_API_KEY;
+            const apiUrl = process.env.SMS_API_URL;
+            const sender = process.env.SMS_SENDER;
+            let success_message = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+            const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+            const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+            const responseofcomplete = await axios.get(urlforComplete);
+            console.log('SMS sent successfully to patient', responseofcomplete.data);
+          }
           console.log('WhatsApp message(s) sent successfully');
         } catch (error) {
           console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
         }
-      
+
       }
       // Cleanup after completion
       scheduledTasks.delete(appointmentId);

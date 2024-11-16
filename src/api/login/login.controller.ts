@@ -40,6 +40,7 @@ const generateToken = (user: any) => {
 
 export const userLogin = async (req: Request, res: Response) => {
   try {
+    console.log(req.body);
     const { username, password } = req.body;
     const role = extractRoleFromUsername(username);  // Extract role
     const user = await loginUser(username, password);
@@ -73,8 +74,32 @@ export const userLogin = async (req: Request, res: Response) => {
           loggedInTime: generatedTime,
         },
       });
-      console.log("tokenGeneratedAt", generatedDate, generatedTime);
+      console.log('Creating ActiveToken with data:', {
+        userId: user.id,
+        token: token,
+        loggedInAt: generatedDate,
+        lastActive: generatedTime,
+      });
+  // Create an active token
+  try {
+    await prisma.activeToken.create({
+      data: {
+        userId: user.id,
+        token: token,
+        loggedInAt: generatedDate,
+        lastActive: generatedTime,
+        isActive: true,
+      },
+    });
+    console.log("Token created successfully:", generatedDate, generatedTime);
+  } catch (createTokenError) {
+    console.error('Error creating active token:', createTokenError);
+    throw createTokenError; // Rethrow to handle in the main catch block
+  }
+  console.log("tokenGeneratedAt", generatedDate, generatedTime);
       res.status(200).json({ token,generatedDate,generatedTime, user: { userId: user.id, username: user.username, role } }); // Send token and user data
+
+      
     } else {
       res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -173,21 +198,4 @@ export const deleteUserByUsername = async (req: Request, res: Response): Promise
   }
 };
 // Get all users with login status
-// export const getAllUsersWithStatus = async (req: Request, res: Response) => {
-//   try {
-//     const users = await loginRepository.getAllUsers();
 
-//     // Get all active sessions to determine who is logged in
-//     const activeSessions = await loginRepository.getActiveSessions();
-//     const activeUserIds = activeSessions.map((session:any) => session.userId);
-
-//     const usersWithStatus = users.map((user) => ({
-//       ...user,
-//       isActive: activeUserIds.includes(user.id)
-//     }));
-
-//     res.status(200).json(usersWithStatus);
-//   } catch (error) {
-//     res.status(500).json({ error: 'Internal server error' });
-//   }
-// };

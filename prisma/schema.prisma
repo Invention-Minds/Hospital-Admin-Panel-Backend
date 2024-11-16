@@ -97,6 +97,7 @@ model Appointment {
   requestVia     String?
   smsSent        Boolean?          @default(false)
   emailSent      Boolean?          @default(false)
+  messageSent    Boolean?          @default(false)
   status         AppointmentStatus @default(pending)
   created_at     DateTime          @default(now())
   updated_at     DateTime          @updatedAt
@@ -162,13 +163,13 @@ model Patient {
 }
 
 model ActiveToken {
-  id         Int      @id @default(autoincrement())
+  id         Int     @id @default(autoincrement())
   userId     Int
-  token      String   @unique
-  loggedInAt DateTime @default(now())
-  lastActive DateTime @default(now())
-  isActive   Boolean  @default(true) // Field to mark if the session is active or not
-  user       User     @relation(fields: [userId], references: [id])
+  token      String  @unique @db.VarChar(500)
+  loggedInAt String
+  lastActive String
+  isActive   Boolean @default(true) // Field to mark if the session is active or not
+  user       User    @relation(fields: [userId], references: [id])
 
   @@map("active_tokens")
 }

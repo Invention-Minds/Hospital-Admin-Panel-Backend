@@ -1,0 +1,18 @@
+# Ignore environment files
+.env
+
+# Ignore node_modules
+node_modules
+npm-debug.log
+
+# Ignore build artifacts
+dist
+build
+
+# Ignore other system or editor-specific files
+.DS_Store
+.git
+.gitignore
+.vscode
+.idea
+*.log

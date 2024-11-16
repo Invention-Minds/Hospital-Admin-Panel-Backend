@@ -283,6 +283,17 @@ export const checkAndSendReminders = async () => {
 
                 try {
                     await axios.post(url!, data, { headers });
+                    let success = 'true'
+                    if (success === 'true') {
+                        const apiKey = process.env.SMS_API_KEY;
+                        const apiUrl = process.env.SMS_API_URL;
+                        const sender = process.env.SMS_SENDER;
+                        let success_message = `Namaste ${appointment.patientName}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${appointment.date} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+                        const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
+                        const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+                        const responseofcomplete = await axios.get(urlforComplete);
+                        console.log('SMS sent successfully to patient', responseofcomplete.data);
+                    }
                     await prisma.appointment.update({
                         where: { id: appointment.id },
                         data: { remainder1Sent: true }
@@ -365,7 +376,7 @@ export const checkAndSendReminders = async () => {
             // const fourHoursInMinutes = convertTimeToMinutes(indianTimePlus4Str);
             // const fiveHoursInMinutes = convertTimeToMinutes(indianTimePlusHoursStr);
             const startTimeHour = parseInt(startTime.split(':')[0]); // Extract hour from start time
-            console.log(indianTimePlus4Str, 'four',indianTimePlusHoursStr,'five' );
+            console.log(indianTimePlus4Str, 'four', indianTimePlusHoursStr, 'five');
             console.log(Number(indianTimePlus4Str.split(':')[0]));
 
 
@@ -417,6 +428,17 @@ export const checkAndSendReminders = async () => {
                 try {
                     await axios.post(url!, data, { headers });
                     console.log('WhatsApp message(s) sent successfully');
+                    let success = 'true'
+                    if (success === 'true') {
+                        const apiKey = process.env.SMS_API_KEY;
+                        const apiUrl = process.env.SMS_API_URL;
+                        const sender = process.env.SMS_SENDER;
+                        let success_message = `Namaste ${appointment.patientName}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${appointment.date} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+                        const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
+                        const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+                        const responseofcomplete = await axios.get(urlforComplete);
+                        console.log('SMS sent successfully to patient', responseofcomplete.data);
+                    }
                     await prisma.appointment.update({
                         where: { id: appointment.id },
                         data: { remainder2Sent: true }

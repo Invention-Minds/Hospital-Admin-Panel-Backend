@@ -12,6 +12,7 @@ import loginRoutes from './api/login/login.routes';
 import whatsappRoutes from './api/whatsapp/whatsapp.routes';
 import emailRoutes from './api/email/email.routes';
 import patientRoutes from './api/patient/patient.routes';
+import smsRoutes from './api/sms/sms.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -24,7 +25,7 @@ app.use(express.json());
 app.use(helmet());
 
 app.use(cors({
-  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58664/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/'], 
+  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -38,6 +39,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/login', loginRoutes);
 app.use('/api/patients', patientRoutes);
+app.use('/api/sms', smsRoutes);
 
 // Sample route to check server status
 app.get('/', (req, res) => {
