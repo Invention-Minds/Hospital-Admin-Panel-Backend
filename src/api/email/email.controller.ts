@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import nodemailer from 'nodemailer';
 import * as dotenv from 'dotenv';
+import multer from 'multer';
 import fs from 'fs';
 dotenv.config();
 
@@ -159,7 +160,9 @@ export const sendMailtoLab = async (req: Request, res: Response): Promise<void> 
   try {
     const { name, contact, address,to } = req.body;
         const file = req.file
-
+        console.log(req)
+        
+console.log(name, contact, address, file)
         if (!name || !contact || !address || !file) {
              res.status(400).json({ success: false, message: 'Missing required fields' });
         }
