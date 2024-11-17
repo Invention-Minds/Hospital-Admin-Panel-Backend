@@ -112,5 +112,13 @@ export default class AppointmentRepository {
       data: { status: 'completed' },
     });
   }
-
+ async getAppointmentsBySlot(doctorId: number, date: string, time: string) {
+    return await prisma.appointment.findFirst({
+      where: {
+        doctorId,
+        date,
+        time,
+      },
+    });
+  }
 }

@@ -506,3 +506,59 @@ cron.schedule('0 * * * *', () => {
 export const sendAppointmentReminders = async (req: Request, res: Response) => {
     res.status(200).json({ message: 'Reminder job is running in the background' });
 };
+
+export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
+    try {
+        const {patientName,service,patientPhoneNumber} =req.body;
+        const url = process.env.WHATSAPP_API_URL;
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}` // Replace with your actual token
+        };
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        const messages = [];
+        messages.push({
+            "coding": "1",
+            "id": "15b0cc79c0da45771662021",
+            "msgtype": "1",
+            "text": "",
+            "templateinfo": `1490445~${patientName}~${service}`,
+            "type": "",
+            "contenttype": "",
+            "filename": "",
+            "mediadata": "",
+            "b_urlinfo": "",
+            "addresses": [
+                {
+                    "seq": "6310710c80900d37f7b9-20220901",
+                    "to": patientPhoneNumber,
+                    "from": fromPhoneNumber,
+                    "tag": ""
+                }
+            ]
+        });
+        
+        const data = {
+            "apiver": "1.0",
+            "whatsapp": {
+                "ver": "2.0",
+                "dlr": {
+                    "url": ""
+                },
+                "messages": messages
+            }
+        };
+        try {
+            const response = await axios.post(url!, data, { headers });
+            res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: response.data });
+        } catch (error) {
+            res.status(500).json({
+                error: 'Failed to send WhatsApp message(s)',
+                details: (error as any).response ? (error as any).response.data : (error as any).message
+            });
+        }
+
+    } catch (error) {
+        console.error('Error sending WhatsApp message:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }}

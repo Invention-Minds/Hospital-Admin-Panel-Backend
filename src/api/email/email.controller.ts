@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import nodemailer from 'nodemailer';
 import * as dotenv from 'dotenv';
+import fs from 'fs';
 dotenv.config();
 
 
@@ -100,6 +101,36 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       const info = await transporter.sendMail(mailOptions);
       res.status(200).json({ message: 'Email sent successfully', info });
     }
+    else if( status === 'frontofficechatbot' ){
+      const emailContenttoFrontOffice = {
+        subject: 'Rashtrotthana Hospital - Appointment Received From Chatbot',
+        text: `
+          Doctor Name: ${appointmentDetails.doctorName}
+      
+          Doctor Designation: ${appointmentDetails.doctorDesignation}
+      
+          Patient Name: ${appointmentDetails.patientName}
+      
+          Patient Email: ${appointmentDetails.patientEmail}
+      
+          Patient Contact: ${appointmentDetails.patientContact}
+      
+          Appointment Date: ${appointmentDetails.appointmentDate}
+      
+          Appointment Time: ${appointmentDetails.appointmentTime}
+      
+        `
+      };
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: emailContenttoFrontOffice.subject,
+        text: emailContenttoFrontOffice.text,
+      };
+      const info = await transporter.sendMail(mailOptions);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    }
+    
     else{
       const emailContent = generateEmailContent(status, appointmentDetails, recipientType);
 
@@ -124,6 +155,48 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
     }
   };
 
+export const sendMailtoLab = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, contact, address,to } = req.body;
+        const file = req.file
+
+        if (!name || !contact || !address || !file) {
+             res.status(400).json({ success: false, message: 'Missing required fields' });
+        }
+
+        const mailOptions = {
+            from: process.env.SMTP_USER,
+            to: "rithish.manohar006@gmail.com",
+            subject: "Rashtrotthana Hospital - Door step delivery Request ",
+            text: `
+                Name: ${name}
+                Contact: ${contact}
+                Address: ${address}
+            `,
+            attachments: [
+                {
+                    filename: file!.originalname,
+                    path: file!.path
+                }
+            ]
+        }
+
+      const info = await transporter.sendMail(mailOptions);
+      fs.unlinkSync(file!.path);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    
+   
+
+      // Generate the email content based on the status
+    
+
+      // Send email using nodemailer
+      
+    } catch (error) {
+      console.error('Error sending email:', error);
+      res.status(500).json({ message: 'Failed to send email' });
+    }
+  }
 
 
 

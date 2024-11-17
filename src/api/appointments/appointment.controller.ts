@@ -289,5 +289,25 @@ export const unlockAppointment = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ error: 'Failed to unlock appointment' });
   }
 };
+export const getAppointmentsBySlot = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorId, date, time } = req.query;
+
+    if (!doctorId || !date || !time) {
+      res.status(400).json({ error: 'Doctor ID, date, and time are required' });
+      return;
+    }
+
+    const appointments = await appointmentRepository.getAppointmentsBySlot(
+      Number(doctorId),
+      date as string,
+      time as string
+    );
+
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
 
 

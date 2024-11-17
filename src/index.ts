@@ -13,6 +13,7 @@ import whatsappRoutes from './api/whatsapp/whatsapp.routes';
 import emailRoutes from './api/email/email.routes';
 import patientRoutes from './api/patient/patient.routes';
 import smsRoutes from './api/sms/sms.routes';
+import uploadRoutes from './api/upload/upload.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -40,6 +41,7 @@ app.use('/api/email', emailRoutes);
 app.use('/api/login', loginRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/sms', smsRoutes);
+app.use('/api/storage',uploadRoutes)
 
 // Sample route to check server status
 app.get('/', (req, res) => {

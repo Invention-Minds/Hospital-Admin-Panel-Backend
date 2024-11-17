@@ -1,0 +1,13 @@
+{
+    "type": "service_account",
+    "project_id": "invention-minds-dev",
+    "private_key_id": "624f1c860c12381290c515042ae7ef2b0de03228",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEugIBADANBgkqhkiG9w0BAQEFAASCBKQwggSgAgEAAoIBAQC+J1FsdkCvXfrE\nicNqLDoPaUugvSzOUkCw6XbN8BiLqYZvCafEpJRdUbVE07/KrK1skBPDUGEmoNsI\nudB2k5iIG8p44u8yrVIM8m3QaiAyOHD2MVIdNAVpfwmArc4BhmUH/SEQJZQjRBLl\nEb8rhJm2sw6zr/nzPnZy7+FS7tJ/qztk3lgGTDTCIK6y6eVfHx7hP7If9hXIYbgo\nJlniwYbJ58/54GDAGJtP35oer930fr75Jo/HNv3cOgkr8hNhkrg1wBAfpLCxPUUF\nFg0zjFJVZIqf2Kqz04KH/wDloRgIJBMWjZ5sF+qT0lYVIKQCruJradJuXU0PSSFx\ngItHxtUvAgMBAAECggEABVDEDewgUsalw+i19bnWxaeD3bJsFjhmZougLpGPnhfX\nEjOK5QxUuWcXUh05N0ksb+R3KPaOQK4ucUgAc9Aca3Gbb1Woqhn+OS5ts23ECKNb\nRQaL7RUPMavDcD1rjM9c86Q30GO8iF/Wx2B/n4/NXDYVKyC4M/yDAyOBgPf8GmV6\norRFkPHHcMsWhBSCqv0cSFMXMInZnQY9l9BT5Z+4mOYPv8B4K/nzGLHZoL9ILIkg\nezCOHOnKo1ZgwRrNGmtq++tzfOb+f7wmMWqAjCpJDwzaWdtQML5Y70xPmA1AudrQ\nyAsJMkJpJfFdEEqegbafKCHM9p82pQ1P4qmXjx8tgQKBgQDmhHMfYxhxqOpRW51x\nhhMloVkMRQ361KuirA+InpUleIYA00qa9AH6hhUPtNFKZ3kAlsI1s5XJ2cI8o11d\nGuITEZTkuA3FvZ+iiwwlu489RLeI7UpTbvMamy0LKCqUptLv9QdziGpVYHGFc8xP\ntBu7lcJZ0HRffzvRvKAE8Zl96QKBgQDTLJbIHkNb5FFKc/D1mD1DY8LxXY5fTSn6\n7Um49WodCgYM8OUnjTB4LJfpEou5BrEzKTvs4Dgu0kGRW14vZesjjpaSM9Gw/4rr\new84JN4rPJDc/KoAn6GRndV37NsEEFU9j6nEa47sWQkyxkO6jHX28FmfrzZx/0ob\nKysdJ2bTVwJ/EDU/4vUUwukdkJrgdxr2Pa8ak8JHOVu6tbVjYjfERN40jdpNZJfD\ni9nhoTkVfiXIXEI9ZYk6/vZQsfLKncFGJBEYZvyJ+11Z3BPqxrxpVeV/AiGtGDC0\n5yoCAMbSN6GDM1wHKhhtYZNmZ/u8Yd5IFOhywd3mUNChZB3fInnaUQKBgC6ZglR6\nySZ4BbBGUYAArlQ2qYgVuxswrfjfcAtOrLHnyloEtqy5rV53iLY4D3kvDt9ZVA37\nlKpQX4OyA+C1vuPDzVpJ8RX77i30o/EhwZ0M6nK5ltI4Z7D4gWjLbbFB4W2KTE45\n5fol06/OrJd383ggpcZlJcCWM0Y3inYOgdRVAoGAZfbyK+bgcH/x8nlMhtqdcu9L\nx5buUySnSxS4npA/+E09AMMd2oQez+RKVJso3HpfzcWu5kVC/wJoapTwvFJtlBWe\noREOeVV2CdCFMCcYVlKNNz/RHoJxCY2jQurpY2SzoRKB/M3iXR1pqVfD4+/GZbrW\niJVoyGXFua7N81nPPOc=\n-----END PRIVATE KEY-----\n",
+    "client_email": "rashtrotthanaserviceacc@invention-minds-dev.iam.gserviceaccount.com",
+    "client_id": "117982733828232185944",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/rashtrotthanaserviceacc%40invention-minds-dev.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+  }

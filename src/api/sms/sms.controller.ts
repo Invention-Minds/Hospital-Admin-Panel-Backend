@@ -50,9 +50,45 @@ export const sendSMS = async (req: Request, res: Response): Promise<void> => {
         //     console.log(urlforotp);
         // }
 
-        res.status(200).json({ message: 'SMS sent successfully', responses });
+        // res.status(200).json({ message: 'SMS sent successfully', responses });
     } catch (error) {
       console.error('Error sending SMS:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+}
+export const sendSMSChatbot = async (req: Request, res: Response): Promise<void> => {
+    try {
+        
+    const responses = []
+        const {patientName, otp, service,patientPhoneNumber} = req.body;
+        if(otp){
+            let patient_message =  `Dear ${patientName}, ${otp} is your One Time Password from Rashtrotthana Hospital for ${service} service. Expires in 2 mins. Please do not share this OTP with anyone.`;
+
+        
+        const apiKey = process.env.SMS_API_KEY;
+        const apiUrl = process.env.SMS_API_URL;
+        const sender = process.env.SMS_SENDER;
+        const dltTemplateIdForOTP = process.env.SMS_DLT_TE_ID_FOR_OTP;
+        const url = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(patient_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForOTP}`;
+        const response = await axios.get(url);
+        responses.push({ recipient: 'otp', data: response.data });
+        
+        }
+        else{
+            let message = `Dear ${patientName}, We have received your request for ${service} from Rashtrotthana Hospital. Our team will get back to you shortly. Thank you for choosing us!`
+            const apiKey = process.env.SMS_API_KEY;
+        const apiUrl = process.env.SMS_API_URL;
+        const sender = process.env.SMS_SENDER;
+        const dltTemplateIdforreceivedotp = process.env.SMS_DLT_TE_ID_FOR_CHATBOT;
+        const url = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdforreceivedotp}`;
+        const response = await axios.get(url);
+        responses.push({ recipient: 'received', data: response.data });
+        }
+        res.status(200).json({ message: 'SMS sent successfully', responses });
+        
+    }
+    catch (error) {
+        console.error('Error sending SMS:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
