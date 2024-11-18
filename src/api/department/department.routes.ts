@@ -5,6 +5,6 @@ import {authenticateToken} from '../../middleware/middleware'
 const router = Router();
 
 router.post('/',authenticateToken, createDepartment);  // Changed from '/departments' to '/'
-router.get('/',authenticateToken, getDepartments);      // Changed from '/departments' to '/'
+router.get('/', getDepartments);      // Changed from '/departments' to '/'
 
 export default router;

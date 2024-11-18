@@ -8,6 +8,7 @@ dotenv.config();
 
 
 
+
 // Nodemailer transporter configuration
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -65,7 +66,7 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
     const { to, status, appointmentDetails, recipientType } = req.body;
-    console.log(to, status, appointmentDetails, recipientType)
+    // console.log(to, status, appointmentDetails, recipientType)
 
     // Validation to ensure all required fields are provided
     if (!to || !status || !appointmentDetails) {
@@ -112,8 +113,6 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       
           Patient Name: ${appointmentDetails.patientName}
       
-          Patient Email: ${appointmentDetails.patientEmail}
-      
           Patient Contact: ${appointmentDetails.patientContact}
       
           Appointment Date: ${appointmentDetails.appointmentDate}
@@ -158,19 +157,19 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
 
 export const sendMailtoLab = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, contact, address,to } = req.body;
+    const { name, contact, address,service } = req.body;
         const file = req.file
-        console.log(req)
+        // console.log(req)
         
-console.log(name, contact, address, file)
+// console.log(name, contact, address, file)
         if (!name || !contact || !address || !file) {
              res.status(400).json({ success: false, message: 'Missing required fields' });
         }
-
-        const mailOptions = {
+        if(service === 'Blood Sample Collection'){
+          const mailOptions = {
             from: process.env.SMTP_USER,
-            to: "rithish.manohar006@gmail.com",
-            subject: "Rashtrotthana Hospital - Door step delivery Request ",
+            to: 'keerthanasaminathan0805@gmail.com',
+            subject: "Rashtrotthana Hospital - Door step delivery - Blood Sample Collection Request ",
             text: `
                 Name: ${name}
                 Contact: ${contact}
@@ -183,10 +182,32 @@ console.log(name, contact, address, file)
                 }
             ]
         }
-
-      const info = await transporter.sendMail(mailOptions);
+        const info = await transporter.sendMail(mailOptions);
       fs.unlinkSync(file!.path);
-      res.status(200).json({ message: 'Email sent successfully', info });
+        }else{
+          const mailOptions = {
+            from: process.env.SMTP_USER,
+            to: 'rithish.manohar006@gmail.com',
+            subject: "Rashtrotthana Hospital - Door step delivery - Pharmacy Request ",
+            text: `
+                Name: ${name}
+                Contact: ${contact}
+                Address: ${address}
+            `,
+            attachments: [
+                {
+                    filename: file!.originalname,
+                    path: file!.path
+                }
+            ]
+        }
+        const info = await transporter.sendMail(mailOptions);
+      fs.unlinkSync(file!.path);
+        }
+        
+
+      
+      res.status(200).json({ message: 'Email sent successfully'});
     
    
 

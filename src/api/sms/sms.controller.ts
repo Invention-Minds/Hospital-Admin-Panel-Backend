@@ -38,7 +38,7 @@ export const sendSMS = async (req: Request, res: Response): Promise<void> => {
             const dltTemplateIdforreceived = process.env.SMS_DLT_TE_ID_FOR_RECEIVED;
             const urlforreceived = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(receive_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdforreceived}`;
             const responseofreceived = await axios.get(urlforreceived);
-            console.log(urlforreceived);
+            // console.log(urlforreceived);
             responses.push({ recipient: 'patient (received)', data: responseofreceived.data });
         }
         // if(status === 'otp'){
@@ -64,7 +64,7 @@ export const sendSMSChatbot = async (req: Request, res: Response): Promise<void>
         if(otp){
             let patient_message =  `Dear ${patientName}, ${otp} is your One Time Password from Rashtrotthana Hospital for ${service} service. Expires in 2 mins. Please do not share this OTP with anyone.`;
 
-        
+        // console.log(patient_message)
         const apiKey = process.env.SMS_API_KEY;
         const apiUrl = process.env.SMS_API_URL;
         const sender = process.env.SMS_SENDER;

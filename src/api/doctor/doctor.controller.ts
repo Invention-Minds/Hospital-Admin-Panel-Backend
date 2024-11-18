@@ -352,6 +352,29 @@ export const getUnavailableSlots = async (req: Request, res: Response) => {
   }
 };
 
+export const getUnavailableSlotsByDate = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const docId = parseInt(req.params.docId);
+    const date = req.params.date;
+
+    if (isNaN(docId)) {
+      res.status(400).json({ error: 'Invalid doctor ID' }); // Removed `return`
+      return; // Ensure the function exits after sending a response
+    }
+
+    const unavailableSlots = await prisma.unavailableSlot.findMany({
+      where: {
+        doctorId: docId,
+        date: date,
+      },
+    });
+
+    res.status(200).json(unavailableSlots); // Removed `return`
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Cannot fetch unavailable slots' }); // Removed `return`
+  }
+};
 
 export const deleteDoctor = async (req: Request, res: Response) => {
   try {
@@ -634,7 +657,7 @@ export const getUnavailableDates = async (req: Request, res: Response): Promise<
       },
     });
 
-    res.status(200).json(unavailableDates);
+    res.status(200).json(unavailableDates); 
   } catch (error) {
     console.error('Error fetching unavailable dates:', error);
     res.status(500).json({ error: 'An error occurred while fetching unavailable dates.' });
