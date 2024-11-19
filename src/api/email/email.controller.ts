@@ -168,7 +168,7 @@ export const sendMailtoLab = async (req: Request, res: Response): Promise<void> 
         if(service === 'Blood Sample Collection'){
           const mailOptions = {
             from: process.env.SMTP_USER,
-            to: 'keerthanasaminathan0805@gmail.com',
+            to: 'laboratory@rashtrotthanahospital.com',
             subject: "Rashtrotthana Hospital - Door step delivery - Blood Sample Collection Request ",
             text: `
                 Name: ${name}
@@ -187,7 +187,7 @@ export const sendMailtoLab = async (req: Request, res: Response): Promise<void> 
         }else{
           const mailOptions = {
             from: process.env.SMTP_USER,
-            to: 'rithish.manohar006@gmail.com',
+            to: 'pharmacy@rashtrotthanahospital.com',
             subject: "Rashtrotthana Hospital - Door step delivery - Pharmacy Request ",
             text: `
                 Name: ${name}

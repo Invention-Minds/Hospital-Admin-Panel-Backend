@@ -129,6 +129,7 @@ model BookedSlot {
   doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToBookedSlot")
   date      String
   time      String
+  complete  Boolean? @default(false) // Adding the complete status column
   createdAt DateTime @default(now())
 }
 

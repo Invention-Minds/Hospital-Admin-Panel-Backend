@@ -75,11 +75,23 @@ public async addBookedSlot(doctorId: number, date: string, time: string) {
       doctorId,
       date,
       time,
+      complete: false,
     },
   });
   
 }
-
+public async completeBookedSlot(doctorId: number, date: string, time: string) {
+  return await this.prisma.bookedSlot.updateMany({
+    where: {
+      doctorId,
+      date,
+      time,
+    },
+    data: {
+      complete: true,  // Set complete to true
+    },
+  });
+}
 // Method to get booked slots for a specific doctor and date
 public async getBookedSlots(doctorId: number, date: string) {
   return await this.prisma.bookedSlot.findMany({

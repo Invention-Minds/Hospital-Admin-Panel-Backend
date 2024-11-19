@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
 import DoctorResolver from './doctor.resolver';
 import { PrismaClient } from '@prisma/client';
+import DoctorRepository from './doctor.repository';
 
 
 const resolver = new DoctorResolver();
 const prisma = new PrismaClient();
+const doctorRepository = new DoctorRepository();
 
 export const createDoctor = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -477,6 +479,7 @@ export const addBookedSlot = async (req: Request, res: Response): Promise<void> 
         doctorId,
         date,
         time,
+        complete: false,
       },
     });
     console.log("Booked Slot is working:", bookedSlot);
@@ -505,11 +508,12 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
       },
       select: {
         time: true,
+        complete:true
       },
     });
 
     // Extract the times from the booked slots
-    const bookedTimes = bookedSlots.map(slot => slot.time);
+    const bookedTimes = bookedSlots;
 
     res.status(200).json(bookedTimes);
   } catch (error) {
@@ -557,7 +561,49 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+export const updateBookedSlot = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorId, date, time } = req.body;
 
+    // Validate the request parameters
+    if (!doctorId || !date || !time) {
+      res.status(400).json({ error: 'Doctor ID, date, and time are required.' });
+      return;
+    }
+
+    // Check if the slot is already canceled
+    const existingBooking = await prisma.bookedSlot.findMany({
+      where: {
+        doctorId,
+        date,
+        time,
+      },
+    });
+
+    if (!existingBooking) {
+      res.status(404).json({ error: 'No booking found for the selected slot' });
+      return;
+    }
+
+    // Update the booked slot to mark it as complete
+        // Update the booked slot to mark it as complete
+        const updatedBooking = await prisma.bookedSlot.updateMany({
+          where: {
+            doctorId,
+            date,
+            time,
+          },
+          data: {
+            complete: true, // Mark the slot as complete
+          },
+        });
+
+    res.status(200).json({ updatedBooking, message: 'Slot successfully marked as complete.' });
+  } catch (error) {
+    console.error('Error updating the booked slot:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
 // Create or Update Unavailable Dates for Doctor
 export const addUnavailableDates = async (req: Request, res: Response): Promise<void> => {
   try {
