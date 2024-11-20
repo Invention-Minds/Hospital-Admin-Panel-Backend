@@ -61,14 +61,19 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     // Ensure the status field matches Prisma enum
     const bookedSlots = await doctorRepository.getBookedSlots(doctorId, date);
-    const isSlotAvailable = !bookedSlots.some(slot => slot.time === time);
+    const nonCompleteBookedSlots = bookedSlots.filter(slot => !slot.complete);
+    console.log(nonCompleteBookedSlots,'selected slot is not available oncomplete')
+    const isSlotAvailable = !nonCompleteBookedSlots.some(slot => slot.time === time);
+    console.log(isSlotAvailable,'selected slot is not available on slot')
     if (!isSlotAvailable) {
       res.status(400).json({ error: 'Selected slot is not available' });
       return;
     }
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
+    console.log(day,'selected slot is not available request')
     const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day);
+    console.log(doctorAvailability,'selected slot is not available request')
 
     if (!doctorAvailability) {
       res.status(400).json({ error: 'Doctor is not available on the selected day.' });
@@ -79,9 +84,10 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     const availableFrom = doctorAvailability.availableFrom.split('-');
     const availableStartTime = availableFrom[0];
     const availableEndTime = availableFrom[1];
-
+console.log(availableStartTime,availableEndTime,'selected slot is not available request')
     // Check if the requested time falls within the available slots
     const requestedTime = time.split('-');
+    console.log(requestedTime,'selected slot is not available request')
     if (requestedTime[0] < availableStartTime || requestedTime[1] > availableEndTime) {
       res.status(400).json({ error: 'Selected time slot is not available.' });
       return;

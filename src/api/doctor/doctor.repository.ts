@@ -26,8 +26,8 @@ export default class DoctorRepository {
       },
     });
   }
-  public async getDoctorAvailability(doctorId: number, date: string) {
-    const day = this.getDayOfWeek(date);
+  public async getDoctorAvailability(doctorId: number, day: string) {
+    // const day = this.getDayOfWeek(date);
     console.log("Fetching availability for doctorId:", doctorId, "on day:", day);
     return await prisma.doctorAvailability.findFirst({
       where: {

@@ -441,9 +441,14 @@ export const getDoctorAvailability = async (req: Request, res: Response): Promis
     }
 
     const date = req.query.date as string;
+    const dateObject = new Date(date);
+
+// Convert the date object to the day of the week
+const day = dateObject.toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); 
+console.log("Day:", day);
 
     // Call the resolver to get availability
-    const availability = await resolver.getDoctorAvailability(doctorId, date);
+    const availability = await resolver.getDoctorAvailability(doctorId, day);
     res.status(200).json(availability);
     return;
   } catch (error) {

@@ -66,13 +66,14 @@ model User {
 }
 
 model DoctorAvailability {
-  id            Int    @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   doctorId      Int
   day           String
   availableFrom String
-  slotDuration  Int    @default(20)
-
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToAvailability")
+  slotDuration  Int      @default(20)
+  date          String? // Adding date column to handle future data
+  isFuture      Boolean? @default(false) // Adding isFuture column to handle future data
+  doctor        Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToAvailability")
 }
 
 model UnavailableDates {
