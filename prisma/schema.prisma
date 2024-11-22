@@ -76,6 +76,9 @@ model DoctorAvailability {
   startDate     String? // Adding startDate column to handle future data
   endDate       String? // Adding endDate column to handle future data
   doctor        Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToAvailability")
+
+  createdAt DateTime  @default(now()) // Track when the record was created
+  updatedAt DateTime? @updatedAt // Track when the record was last updated
 }
 
 model UnavailableDates {

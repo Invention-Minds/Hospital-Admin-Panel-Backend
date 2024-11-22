@@ -72,7 +72,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
     console.log(day,'selected slot is not available request')
-    const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day);
+    const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
     console.log(doctorAvailability,'selected slot is not available request')
 
     if (!doctorAvailability) {
@@ -87,11 +87,11 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 console.log(availableStartTime,availableEndTime,'selected slot is not available request')
     // Check if the requested time falls within the available slots
     const requestedTime = time.split('-');
-    console.log(requestedTime,'selected slot is not available request')
-    if (requestedTime[0] < availableStartTime || requestedTime[1] > availableEndTime) {
-      res.status(400).json({ error: 'Selected time slot is not available.' });
-      return;
-    }
+    // console.log(requestedTime,'selected slot is not available request')
+    // if (requestedTime[0] < availableStartTime || requestedTime[1] > availableEndTime) {
+    //   res.status(400).json({ error: 'Selected time slot is not available.' });
+    //   return;
+    // }
     const userId = req.body.userId || null;
     // Create the appointment with Prisma
     const newAppointment = await resolver.createAppointment({
@@ -139,6 +139,7 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     const userId = req.body.userId || null;
     // Destructure and remove unnecessary nested objects before updating
     const { id, doctor, user, ...updateData } = req.body;
+    console.log("updateData",updateData)
 
     // Include userId if needed
     if (userId) {
