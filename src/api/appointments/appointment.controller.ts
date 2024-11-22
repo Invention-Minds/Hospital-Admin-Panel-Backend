@@ -72,7 +72,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
     console.log(day,'selected slot is not available request')
-    const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
+    const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day);
     console.log(doctorAvailability,'selected slot is not available request')
 
     if (!doctorAvailability) {
