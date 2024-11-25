@@ -37,7 +37,7 @@ export default class DoctorRepository {
     console.log("Fetching availability for doctorId:", doctorId, "on day:", day);
     const dateObject = new Date(date);
     const indianDate = indianTime.toDate();
-    const isFuture = dateObject > new Date();
+    const isFuture = dateObject > indianDate
     const isToday = dateObject.toDateString() === indianDate.toDateString();
     return await prisma.doctorAvailability.findFirst({
       where: {

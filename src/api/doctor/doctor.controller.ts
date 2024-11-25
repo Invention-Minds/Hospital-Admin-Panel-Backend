@@ -159,7 +159,7 @@ export const getDoctors = async (req: Request, res: Response) => {
 
     const indianDate = indianTime.toDate();
     const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
-    const isToday = requestedDate.toDateString() === new Date().toDateString();
+    const isToday = requestedDate.toDateString() === indianDate.toDateString();
     const isFuture = requestedDate > indianDate
 
     const doctors = await prisma.doctor.findMany({
