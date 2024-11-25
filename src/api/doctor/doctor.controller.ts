@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import DoctorResolver from './doctor.resolver';
 import { PrismaClient } from '@prisma/client';
 import DoctorRepository from './doctor.repository';
+import moment from 'moment-timezone';
 
 
 const resolver = new DoctorResolver();
@@ -113,20 +114,156 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
   }
 };
 
+// export const getDoctors = async (req: Request, res: Response) => {
+//   try {
+//     const doctors = await prisma.doctor.findMany({
+//       include: {
+//         availability: true,
+//         department: true, // Include department to get its details
+//       },
+//     });
+//     res.json(doctors);
+//   } catch (error: any) {
+//     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+//   }
+// };
+// export const getDoctors = async (req: Request, res: Response) => {
+//   try {
+//     const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : new Date();
+
+//     const doctors = await prisma.doctor.findMany({
+//       include: {
+//         availability: {
+//           where: {
+//             updatedAt: {
+//               lte: requestedDate, // Get availability up to the requested date
+//             },
+//           },
+//           orderBy: {
+//             updatedAt: 'desc', // Get the most recent availability record for that date
+//           },
+//         },
+//         department: true, // Include department to get its details
+//       },
+//     });
+//     res.json(doctors);
+//   } catch (error: any) {
+//     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+//   }
+// };
 export const getDoctors = async (req: Request, res: Response) => {
   try {
+    // Capture the date from the query parameter, defaulting to the current date if not provided
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
+    const isToday = requestedDate.toDateString() === new Date().toDateString();
+    const isFuture = requestedDate > indianDate
+
     const doctors = await prisma.doctor.findMany({
       include: {
-        availability: true,
+        // availability: {
+        //   where: {
+        //     AND: [
+        //       {
+        //         updatedAt: {
+        //           lte: requestedDate, // Get availability updated on or before the requested date
+        //         },
+        //       },
+        //       {
+        //         OR: [
+        //           {
+        //             updatedAt: null, // Include availability where updatedAt is null (for older records)
+        //           },
+        //           {
+        //             updatedAt: {
+        //               not: null, // Ensure the availability has been updated at least once
+        //             },
+        //           },
+        //         ],
+        //       },
+        //     ],
+        //   },
+        //   orderBy: {
+        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+        //   },
+        // },
+        availability: {
+          where: {
+            OR: [
+              {
+                updatedAt: null, // Include availability where updatedAt is null (for older records)
+              },
+              {
+                updatedAt: {
+                  lte: requestedDate, // Get availability updated on or before the requested date
+                },
+              },
+            ],
+          },
+          orderBy: {
+            updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+          },
+        },
         department: true, // Include department to get its details
       },
     });
+
+    const filteredDoctors = doctors.map((doctor) => {
+      const relevantAvailability = doctor.availability.filter((avail) => {
+        if (isToday) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else if (isFuture) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else {
+          return avail.updatedAt === null || avail.updatedAt <= requestedDate;
+        }
+      }).slice(0, 1); // Take only the most relevant availability
+      console.log("Relevant Availability:", relevantAvailability);
+      return {
+        ...doctor,
+        availability: relevantAvailability,
+      };
+    });
+    console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
+
     res.json(doctors);
   } catch (error: any) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
 
+
+
+
+export const getFutureBookedSlots = async (req: Request, res: Response) => {
+  try {
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
+    const doctorId = parseInt(req.query.doctorId as string);
+
+    const futureBookedSlots = await prisma.bookedSlot.findMany({
+      where: {
+        doctorId: doctorId,
+        date: {
+          gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+        },
+      },
+      orderBy: {
+        date: 'asc', // Order by date in ascending order
+      },
+    });
+
+    res.json(futureBookedSlots);
+  } catch (error: any) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
 
 export const getDoctorById = async (req: Request, res: Response): Promise<Response> => {
   try {
@@ -213,11 +350,11 @@ export const updateDoctor = async (req: Request, res: Response) => {
     });
 
     // Delete and recreate availability entries
-    await prisma.doctorAvailability.deleteMany({
-      where: {
-        doctorId: Number(id),
-      },
-    });
+    // await prisma.doctorAvailability.deleteMany({
+    //   where: {
+    //     doctorId: Number(id),
+    //   },
+    // });
 
     // const availabilityEntries = Object.entries(availabilityDays)
     //   .filter(([day, isAvailable]) => isAvailable)
@@ -227,6 +364,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
     //     slotDuration,
     //     doctorId: Number(id),
     //   }));
+    console.log("availability", availability)
     const availabilityEntries = availability.map((avail: { day: string; availableFrom: string; slotDuration: number }) => ({
       day: avail.day,
       availableFrom: avail.availableFrom,
@@ -448,7 +586,7 @@ const day = dateObject.toLocaleString('en-us', { weekday: 'short' }).toLowerCase
 console.log("Day:", day);
 
     // Call the resolver to get availability
-    const availability = await resolver.getDoctorAvailability(doctorId, day);
+    const availability = await resolver.getDoctorAvailability(doctorId, day, date);
     res.status(200).json(availability);
     return;
   } catch (error) {

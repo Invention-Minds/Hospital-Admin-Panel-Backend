@@ -29,10 +29,10 @@ export default class DoctorResolver {
   public async deleteDoctor(id: number) {
     return await this.repository.deleteDoctor(id);
   }
-  public async getDoctorAvailability(doctorId: number, day: string) {
+  public async getDoctorAvailability(doctorId: number, day: string, date: string) {
     try {
       // Fetch availability details for the specific doctor and day
-      const availability = await this.repository.getDoctorAvailability(doctorId, day);
+      const availability = await this.repository.getDoctorAvailability(doctorId, day, date);
       console.log(availability);
       if (!availability) {
         return null;

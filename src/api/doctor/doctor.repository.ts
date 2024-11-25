@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import moment from 'moment-timezone';
 const prisma = new PrismaClient();
 
 export default class DoctorRepository {
@@ -26,14 +27,67 @@ export default class DoctorRepository {
       },
     });
   }
-  public async getDoctorAvailability(doctorId: number, day: string) {
+  public async getDoctorAvailability(doctorId: number, day: string,date: string) {
     // const day = this.getDayOfWeek(date);
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+   
+    // Store the date and time in two separate variables
+    // const indianDate = indianTime;
     console.log("Fetching availability for doctorId:", doctorId, "on day:", day);
+    const dateObject = new Date(date);
+    const indianDate = indianTime.toDate();
+    const isFuture = dateObject > new Date();
+    const isToday = dateObject.toDateString() === indianDate.toDateString();
     return await prisma.doctorAvailability.findFirst({
       where: {
         doctorId,
         day,
+      //   OR: [
+      //     {
+      //       updatedAt: {
+      //         lte: dateObject, // Get availability up to the requested date
+      //       },
+      //     },
+      //     {
+      //       updatedAt: null, // Include availability where updatedAt is null (for older records)
+      //     },
+      //   ],
+      // },
+      // orderBy: {
+      //   updatedAt: 'desc', // Get the most recent availability record for that date
+      // },
+    //   OR: [
+    //     {
+    //       updatedAt: {
+    //         lte: dateObject, // Get availability up to the requested date
+    //       },
+    //     },
+    //     {
+    //       updatedAt: null, // Include availability where updatedAt is null (for older records)
+    //     },
+    //   ],
+    // },
+    // orderBy: {
+    //   updatedAt: isToday ? 'desc' : 'asc', // For today, get the most recent availability record; otherwise, get past availability
+    // },
+ 
+        OR: [
+          {
+            updatedAt: null, // Include availability where updatedAt is null (for older records)
+          },
+          {
+            updatedAt: {
+              lte: dateObject, // Get availability updated on or before the requested date
+            },
+          },
+        ],
       },
+      orderBy: {
+        updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+      },
+    
+      
     });
   }
 
