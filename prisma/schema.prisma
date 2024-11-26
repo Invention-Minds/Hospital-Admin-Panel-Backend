@@ -48,6 +48,7 @@ model Doctor {
   appointments     Appointment[]        @relation(name: "DoctorAppointments")
   bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
   unavailableSlots UnavailableSlot[]    @relation(name: "DoctorToUnavailableSlot") // Relation to UnavailableSlot
+  extraSlots       ExtraSlot[]
 }
 
 model User {
@@ -179,4 +180,14 @@ model ActiveToken {
   user       User    @relation(fields: [userId], references: [id])
 
   @@map("active_tokens")
+}
+
+model ExtraSlot {
+  id       Int    @id @default(autoincrement())
+  doctorId Int
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+  date     String
+  time     String
+
+  @@index([doctorId, date, time], name: "unique_slot") // Optional: Unique combination of doctor, date, and time
 }

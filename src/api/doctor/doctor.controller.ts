@@ -205,7 +205,9 @@ export const getDoctors = async (req: Request, res: Response) => {
           },
           orderBy: {
             updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+            // updatedAt: isToday || isFuture ? 'desc' : 'asc',
           },
+        
         },
         department: true, // Include department to get its details
       },
@@ -221,13 +223,13 @@ export const getDoctors = async (req: Request, res: Response) => {
           return avail.updatedAt === null || avail.updatedAt <= requestedDate;
         }
       }).slice(0, 1); // Take only the most relevant availability
-      console.log("Relevant Availability:", relevantAvailability);
+      // console.log("Relevant Availability:", relevantAvailability);
       return {
         ...doctor,
         availability: relevantAvailability,
       };
     });
-    console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
+    // console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
 
     res.json(doctors);
   } catch (error: any) {
@@ -264,6 +266,73 @@ export const getFutureBookedSlots = async (req: Request, res: Response) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
+
+
+export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate;
+    const doctorId = parseInt(req.query.doctorId as string);
+    const individualAvailability = req.query.individualAvailability === 'true';
+    const day = Number(req.query.dayOfWeek)
+
+    if (isNaN(doctorId)) {
+      res.status(400).json({ error: 'Invalid doctorId' });
+      return;
+    }
+
+    let futureBookedSlots;
+
+    if (individualAvailability) {
+      console.log("Individual Availability:", individualAvailability);
+      // Individual availability: check booked slots only for the specific day of the week
+      const requestedDayOfWeek = requestedDate.getDay();
+
+      // Fetch all future booked slots for the doctor and filter based on day of the week
+      futureBookedSlots = await prisma.bookedSlot.findMany({
+        where: {
+          doctorId: doctorId,
+          date: {
+            gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+          },
+        },
+        orderBy: {
+          date: 'asc', // Order by date in ascending order
+        },
+      });
+      console.log(futureBookedSlots,"Future Booked Slots:", futureBookedSlots);
+      // Filter booked slots to only include those on the requested day of the week
+      futureBookedSlots = futureBookedSlots.filter((slot) => {
+        const slotDate = new Date(slot.date);
+        console.log(slotDate.getDay(),day)
+        return slotDate.getDay() === day;
+      });
+      console.log("Future Booked Slots:", futureBookedSlots);
+    } else {
+      // General availability: check all future booked slots for the doctor
+      futureBookedSlots = await prisma.bookedSlot.findMany({
+        where: {
+          doctorId: doctorId,
+          date: {
+            gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+          },
+        },
+        orderBy: {
+          date: 'asc', // Order by date in ascending order
+        },
+      });
+    }
+
+    res.json(futureBookedSlots);
+  } catch (error: any) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
+
 
 export const getDoctorById = async (req: Request, res: Response): Promise<Response> => {
   try {
@@ -880,3 +949,39 @@ export const getAvailableDoctorsCount = async (req: Request, res: Response): Pro
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
+export const addExtraSlot = async (req: Request, res: Response): Promise<void> => {
+  try{
+    const { doctorId, date, time } = req.body;
+    const result = await prisma.extraSlot.create({
+      data: {
+        doctorId,
+        date,
+        time,
+      }
+    });
+    res.status(200).json({ success: true, result });
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+
+}
+export const getExtraSlots = async (req: Request, res: Response): Promise<void> => {
+  try{
+  const date = req.query.date;
+  const doctorId = req.params.id;
+    const extraSlots = await prisma.extraSlot.findMany({
+      where: {
+        doctorId: Number(doctorId),
+        date: date as string,
+      },
+      select: {
+        time: true,
+      },
+    });
+    res.status(200).json(extraSlots);
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}

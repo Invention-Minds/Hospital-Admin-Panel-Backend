@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 const router = Router();
 
@@ -18,7 +18,7 @@ router.get('/unavailable-dates', getUnavailableDates); // New endpoint for getti
 router.get('/:id/unavailableSlots', getUnavailableSlots);
 router.get('/unavailableSlotsbyDate/:docId/:date', getUnavailableSlotsByDate)
 router.post('/mark-complete', updateBookedSlot),
-router.get('/futureBookedSlots', getFutureBookedSlots);
+router.get('/futureBookedSlots', getFutureBookedSlotsBoth);
 
 // POST: Add unavailable slots for a specific doctor
 router.post('/unavailableSlots', authenticateToken, addUnavailableSlots);// New endpoint for getting unavailable slots
@@ -30,6 +30,9 @@ router.put('/:id',authenticateToken, updateDoctor);
 router.delete('/:id', authenticateToken,deleteDoctor);
 router.get('/available',authenticateToken, getAvailableDoctors);
 router.get('/available/count',authenticateToken, getAvailableDoctorsCount);
+router.post('/add-extra-slots',authenticateToken, addExtraSlot);
+router.get('/:id/extraslots', getExtraSlots);
+
 
 
 
