@@ -596,25 +596,25 @@ export const deleteDoctor = async (req: Request, res: Response) => {
       return;
     }
 
-    // Step 1: Delete related booked slots
-    await prisma.bookedSlot.deleteMany({
-      where: { doctorId },
-    });
+    // // Step 1: Delete related booked slots
+    // await prisma.bookedSlot.deleteMany({
+    //   where: { doctorId },
+    // });
 
-    // Step 2: Delete related unavailable dates
-    await prisma.unavailableDates.deleteMany({
-      where: { doctorId },
-    });
+    // // Step 2: Delete related unavailable dates
+    // await prisma.unavailableDates.deleteMany({
+    //   where: { doctorId },
+    // });
 
-    // Step 3: Delete related doctor availability
-    await prisma.doctorAvailability.deleteMany({
-      where: { doctorId },
-    });
+    // // Step 3: Delete related doctor availability
+    // await prisma.doctorAvailability.deleteMany({
+    //   where: { doctorId },
+    // });
 
-    // Step 4: Delete related appointments
-    await prisma.appointment.deleteMany({
-      where: { doctorId },
-    });
+    // // Step 4: Delete related appointments
+    // await prisma.appointment.deleteMany({
+    //   where: { doctorId },
+    // });
 
     // Step 5: Finally, delete the doctor
     await prisma.doctor.delete({

@@ -172,7 +172,9 @@ async getUnavailableDoctors(date: string): Promise<number[]> {
     select: { doctorId: true },
   });
   console.log('Unavailable doctors:', unavailableDoctors);
-  return unavailableDoctors.map((doctor) => doctor.doctorId);
+  return unavailableDoctors
+    .filter((doctor) => doctor.doctorId !== null)
+    .map((doctor) => doctor.doctorId as number);
 }
 
 async getAvailableDoctorsCount(date: string): Promise<number> {

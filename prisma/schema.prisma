@@ -38,7 +38,7 @@ model Doctor {
   departmentName   String               @default("Unknown")
   department       Department           @relation(fields: [departmentId], references: [id])
   userId           Int? // Links to the User model
-  user             User?                @relation(fields: [userId], references: [id], name: "DoctorUser") // Corrected relation name
+  user             User?                @relation(fields: [userId], references: [id], name: "DoctorUser", onDelete: SetNull) // Corrected relation name
   availableFrom    String?
   slotDuration     Int?
   createdAt        DateTime             @default(now())
@@ -48,7 +48,7 @@ model Doctor {
   appointments     Appointment[]        @relation(name: "DoctorAppointments")
   bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
   unavailableSlots UnavailableSlot[]    @relation(name: "DoctorToUnavailableSlot") // Relation to UnavailableSlot
-  extraSlots       ExtraSlot[]
+  extraSlots       ExtraSlot[]          @relation(name: "DoctorToExtraSlot") // Relation to ExtraSlot
 }
 
 model User {
@@ -68,7 +68,7 @@ model User {
 
 model DoctorAvailability {
   id            Int      @id @default(autoincrement())
-  doctorId      Int
+  doctorId      Int?
   day           String
   availableFrom String
   slotDuration  Int      @default(20)
@@ -76,7 +76,7 @@ model DoctorAvailability {
   isFuture      Boolean? @default(false) // Adding isFuture column to handle future data
   startDate     String? // Adding startDate column to handle future data
   endDate       String? // Adding endDate column to handle future data
-  doctor        Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToAvailability")
+  doctor        Doctor?  @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToAvailability")
 
   createdAt DateTime  @default(now()) // Track when the record was created
   updatedAt DateTime? @updatedAt // Track when the record was last updated
@@ -84,10 +84,10 @@ model DoctorAvailability {
 
 model UnavailableDates {
   id       Int      @id @default(autoincrement())
-  doctorId Int
+  doctorId Int?
   date     DateTime
 
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToUnavailableDate")
+  doctor Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToUnavailableDate")
 }
 
 model Appointment {
@@ -95,8 +95,8 @@ model Appointment {
   patientName    String
   phoneNumber    String
   email          String
-  doctorId       Int
-  doctor         Doctor            @relation(fields: [doctorId], references: [id], name: "DoctorAppointments")
+  doctorId       Int?
+  doctor         Doctor?           @relation(fields: [doctorId], references: [id], name: "DoctorAppointments", onDelete: SetNull)
   doctorName     String
   department     String
   date           String
@@ -132,8 +132,8 @@ enum AppointmentStatus {
 
 model BookedSlot {
   id        Int      @id @default(autoincrement())
-  doctorId  Int
-  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToBookedSlot")
+  doctorId  Int?
+  doctor    Doctor?  @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToBookedSlot")
   date      String
   time      String
   complete  Boolean? @default(false) // Adding the complete status column
@@ -142,11 +142,11 @@ model BookedSlot {
 
 model UnavailableSlot {
   id       Int    @id @default(autoincrement())
-  doctorId Int
+  doctorId Int?
   date     String // Change from DateTime to String
   time     String // Time in HH:MM format
 
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade, name: "DoctorToUnavailableSlot")
+  doctor Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToUnavailableSlot")
 
   @@unique([doctorId, date, time])
 }
@@ -183,9 +183,9 @@ model ActiveToken {
 }
 
 model ExtraSlot {
-  id       Int    @id @default(autoincrement())
-  doctorId Int
-  doctor   Doctor @relation(fields: [doctorId], references: [id])
+  id       Int     @id @default(autoincrement())
+  doctorId Int?
+  doctor   Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToExtraSlot")
   date     String
   time     String
 
