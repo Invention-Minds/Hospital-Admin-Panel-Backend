@@ -41,6 +41,7 @@ model Doctor {
   user             User?                @relation(fields: [userId], references: [id], name: "DoctorUser", onDelete: SetNull) // Corrected relation name
   availableFrom    String?
   slotDuration     Int?
+  doctorType       String?              @default("Regular")
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   availability     DoctorAvailability[] @relation(name: "DoctorToAvailability")
@@ -52,16 +53,17 @@ model Doctor {
 }
 
 model User {
-  id           Int           @id @default(autoincrement())
-  username     String        @unique
+  id           Int            @id @default(autoincrement())
+  username     String         @unique
   password     String
   role         UserRole
-  createdAt    DateTime      @default(now())
+  createdAt    DateTime       @default(now())
   loggedInDate String?
   loggedInTime String?
-  doctors      Doctor[]      @relation("DoctorUser") // Relation to Doctor model
-  appointments Appointment[] @relation("UserAppointments") // Relation to Appointment model
+  doctors      Doctor[]       @relation("DoctorUser") // Relation to Doctor model
+  appointments Appointment[]  @relation("UserAppointments") // Relation to Appointment model
   activeTokens ActiveToken[] // Relation to the ActiveToken model
+  Notification Notification[]
 
   @@map("users")
 }
@@ -190,4 +192,24 @@ model ExtraSlot {
   time     String
 
   @@index([doctorId, date, time], name: "unique_slot") // Optional: Unique combination of doctor, date, and time
+}
+
+model Notification {
+  id         Int       @id @default(autoincrement())
+  // userId     Int? // Nullable for broadcast notifications
+  // user       User?     @relation(fields: [userId], references: [id])
+  type       String // Type of notification (e.g., 'appointment_request', 'service_package', 'reminder')
+  title      String // Title or short description of the notification
+  message    String // Detailed content of the notification
+  status     String    @default("unread") // 'unread', 'read', 'clicked'
+  entityId   Int? // ID of the related entity (e.g., appointment ID, package request ID)
+  entityType String? // Type of related entity ('appointment', 'service_package')
+  createdAt  DateTime  @default(now()) // Timestamp when the notification was created
+  sentAt     DateTime? // Timestamp when the notification was sent
+  viewedAt   DateTime? // Timestamp when the notification was viewed or clicked
+  isCritical Boolean   @default(false) // Whether the notification is critical
+  expiresAt  DateTime? // Expiration timestamp for the notification
+  targetRole String? // Role of the target user (e.g., 'super_admin', 'admin', 'doctor')
+  User       User?     @relation(fields: [userId], references: [id])
+  userId     Int?
 }
