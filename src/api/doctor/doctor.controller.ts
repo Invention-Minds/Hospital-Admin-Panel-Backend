@@ -21,7 +21,8 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       slotDuration, // Duration of each slot
       unavailableDates, // Dates when doctor is unavailable
       unavailableSlots,
-      availability
+      availability,
+      doctorType
     } = req.body;
     console.log(req.body)
 
@@ -74,6 +75,7 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
         slotDuration,
         departmentId: foundDepartment.id,
         departmentName: foundDepartment.name,
+        doctorType,
         availability: {
           create: availability
         },
@@ -377,7 +379,8 @@ export const updateDoctor = async (req: Request, res: Response) => {
       availabilityDays,
       unavailableDates = [],
       unavailableSlots = [],
-      availability
+      availability,
+      doctorType
     } = req.body;
     const slotDuration = parseInt(req.body.slotDuration);
     let availableFrom = req.body.availableFrom;
@@ -414,6 +417,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
         departmentName: foundDepartment.name,
         availableFrom,
         slotDuration,
+        doctorType,
 
       },
     });

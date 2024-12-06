@@ -29,9 +29,11 @@ export const registerForUpdates = (req: Request, res: Response): void => {
 
 // Notify all connected clients of a new appointment with 'pending' status
 export const notifyPendingAppointments = (newAppointment: any): void => {
+  console.log('Notifying clients of new appointment:', newAppointment);
   clients.forEach(client => {
-    client.write(`data: ${JSON.stringify(newAppointment)}\n\n`);
+    client.write(`data: ${newAppointment}\n\n`);
   });
+  console.log('Clients notified',clients);
 };
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
@@ -51,7 +53,8 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       smsSent,
       emailSent,
       messageSent,
-      prnNumber
+      prnNumber,
+      doctorType
     } = req.body;
     console.log(req.body);
 
@@ -72,19 +75,35 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
     console.log(day,'selected slot is not available request')
-    const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day,date);
-    console.log(doctorAvailability,'selected slot is not available request')
+    // const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day,date);
+    // console.log(doctorAvailability,'selected slot is not available request')
 
-    if (!doctorAvailability) {
-      res.status(400).json({ error: 'Doctor is not available on the selected day.' });
-      return;
-    }
+    // if (!doctorAvailability) {
+    //   res.status(400).json({ error: 'Doctor is not available on the selected day.' });
+    //   return;
+    // }
+    // Check if the doctor is a Visiting Consultant
+if (doctorType === 'Visiting Consultant') {
+  console.log('Skipping availability check for Visiting Consultant.');
+  // Allow the process to continue without checking availability
+} else {
+  // Check availability only for regular doctors
+  const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
 
-    const slotDuration = doctorAvailability.slotDuration;
-    const availableFrom = doctorAvailability.availableFrom.split('-');
-    const availableStartTime = availableFrom[0];
-    const availableEndTime = availableFrom[1];
+  console.log(doctorAvailability, 'selected slot is not available request');
+
+  if (!doctorAvailability) {
+    res.status(400).json({ error: 'Doctor is not available on the selected day.' });
+    return;
+  }
+  const slotDuration = doctorAvailability.slotDuration;
+  const availableFrom = doctorAvailability.availableFrom.split('-');
+  const availableStartTime = availableFrom[0];
+  const availableEndTime = availableFrom[1];
 console.log(availableStartTime,availableEndTime,'selected slot is not available request')
+}
+
+
     // Check if the requested time falls within the available slots
     const requestedTime = time.split('-');
     // console.log(requestedTime,'selected slot is not available request')
@@ -113,6 +132,20 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
     });
     console.log("New Appointment:", newAppointment);
     if (newAppointment.status === 'pending') {
+     
+      const newNotification = await prisma.notification.create({
+        data: {
+
+          type: 'appointment_request',
+          title: 'New Appointment Request',
+          message: `New appointment request received for ${newAppointment.doctorName} on ${newAppointment.date} at ${newAppointment.time}.`,
+          entityId: newAppointment.id,
+          entityType: 'appointment',
+          isCritical: false,
+          targetRole: 'sub_admin',
+        },
+      });
+      console.log("New Notification:", newNotification);
       notifyPendingAppointments(newAppointment);
     }
     if (newAppointment.status === 'confirmed') {
@@ -124,6 +157,14 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
   }
 };
 
+export const getAllNotifications = async (req: Request, res: Response): Promise<void> => {  
+  try {
+    const notifications = await prisma.notification.findMany();
+    res.status(200).json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: 'An error occurred while fetching notifications' });
+  }
+}
 
 export const getAppointments = async (req: Request, res: Response): Promise<void> => {
   try {

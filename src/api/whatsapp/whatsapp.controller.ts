@@ -32,7 +32,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
             "id": "15b0cc79c0da45771662021",
             "msgtype": "1",
             "text": "",
-            "templateinfo": `1495970~${patientName}~${doctorName}~${status}~${date}~${time}`,
+            "templateinfo": `1498900~${patientName}~${doctorName}~${status}~${date}~${time}`,
             "type": "",
             "contenttype": "",
             "filename": "",
@@ -77,7 +77,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
             "id": "15b0cc79c0da45771662022",
             "msgtype": "1",
             "text": "",
-            "templateinfo": `1495969~${doctorName}~${status}~${patientName}~${date}~${time}`,
+            "templateinfo": `1498899~${doctorName}~${status}~${patientName}~${date}~${time}`,
             "type": "",
             "contenttype": "",
             "filename": "",
@@ -310,23 +310,36 @@ export const checkAndSendReminders = async () => {
         });
 
         console.log(appointmentsToday, 'appointmentsToday');
+        // Utility function to convert 12-hour time format to 24-hour format
+        const convertTo24HourFormat = (time: string): { hours: number, minutes: number } => {
+            const period = time.slice(-2); // Extract AM or PM
+            let [hours, minutes] = time.slice(0, -2).split(':').map(Number); // Extract hour and minutes as numbers
+
+            if (period.toLowerCase() === 'pm' && hours < 12) {
+                hours += 12; // Add 12 hours if it's PM and not 12 PM
+            } else if (period.toLowerCase() === 'am' && hours === 12) {
+                hours = 0; // Convert 12 AM to 00 hours
+            }
+
+            return { hours, minutes };
+        };
 
         // Send reminder for today, 4 hours before the appointment
         appointmentsToday.forEach(async (appointment) => {
-            const [startTime, endTime] = appointment.time.split('-');  // Extract start time
-            // const startTimeInMinutes = convertTimeToMinutes(startTime);
-            // const fourHoursInMinutes = convertTimeToMinutes(indianTimePlus4Str);
-            // const fiveHoursInMinutes = convertTimeToMinutes(indianTimePlusHoursStr);
-            const startTimeHour = parseInt(startTime.split(':')[0]); // Extract hour from start time
-            console.log(indianTimePlus4Str, 'four', indianTimePlusHoursStr, 'five');
-            console.log(Number(indianTimePlus4Str.split(':')[0]));
+            const startTime = appointment.time.trim(); // Example format: '01:15 PM'
 
+            // Convert start time to 24-hour format
+            const { hours: startTimeHour, minutes: startTimeMinute } = convertTo24HourFormat(startTime);
+            console.log(startTimeHour, 'startTimeHour');
 
+            // Extract hours for checking
             const fourHoursLater = Number(indianTimePlus4Str.split(':')[0]); // Extract hour for 4 hours later
             const fiveHoursLater = Number(indianTimePlusHoursStr.split(':')[0]); // Extract hour for 5 hours later
-            // const reminderTime = calculateReminderTime(startTime);  // Calculate 4 hours before the start time
-            // console.log('Start time:', startTime);
-            console.log(startTimeHour, fiveHoursLater, fourHoursLater);
+
+            // Log debug information (optional)
+            console.log(indianTimePlus4Str, 'four', indianTimePlusHoursStr, 'five');
+            console.log('Start time hour:', startTimeHour, 'Four hours later:', fourHoursLater, 'Five hours later:', fiveHoursLater);
+
 
             if (startTimeHour >= fourHoursLater && startTimeHour < fiveHoursLater) {
                 console.log('Sending reminder for 4 hours before appointment:', appointment.patientName);
@@ -429,7 +442,7 @@ export const sendAppointmentReminders = async (req: Request, res: Response) => {
 
 export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
     try {
-        const {patientName,service,patientPhoneNumber} =req.body;
+        const { patientName, service, patientPhoneNumber } = req.body;
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
             "Content-Type": "application/json",
@@ -457,7 +470,7 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
                 }
             ]
         });
-        
+
         const data = {
             "apiver": "1.0",
             "whatsapp": {
@@ -481,112 +494,113 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Error sending WhatsApp message:', error);
         res.status(500).json({ error: 'Internal server error' });
-    }}
+    }
+}
 
-    export const sendDoctorMessage = async () => {
-        try {
-          const indianTime = moment.tz("Asia/Kolkata");
-          const tomorrow = indianTime.clone().add(1, 'day').format('YYYY-MM-DD');
-      
-          // Fetch all doctors who have appointments tomorrow
-          const appointmentsTomorrow = await prisma.appointment.findMany({
+export const sendDoctorMessage = async () => {
+    try {
+        const indianTime = moment.tz("Asia/Kolkata");
+        const tomorrow = indianTime.clone().add(1, 'day').format('YYYY-MM-DD');
+
+        // Fetch all doctors who have appointments tomorrow
+        const appointmentsTomorrow = await prisma.appointment.findMany({
             where: {
-              date: tomorrow,
-              status: 'confirmed',
+                date: tomorrow,
+                status: 'confirmed',
             },
             select: {
-              doctorId: true,
-              doctorName: true,
-              date: true,
+                doctorId: true,
+                doctorName: true,
+                date: true,
             },
-          });
-      
-          // Get doctor phone numbers from the doctor table
-          const doctorIds = [...new Set(appointmentsTomorrow.map(app => app.doctorId).filter(id => id !== null))];
-          const doctors = await prisma.doctor.findMany({
+        });
+
+        // Get doctor phone numbers from the doctor table
+        const doctorIds = [...new Set(appointmentsTomorrow.map(app => app.doctorId).filter(id => id !== null))];
+        const doctors = await prisma.doctor.findMany({
             where: {
-              id: { in: doctorIds },
+                id: { in: doctorIds },
             },
             select: {
-              id: true,
-              phone_number: true,
+                id: true,
+                phone_number: true,
             },
-          });
-      
-          // Create a map to get the phone number by doctor ID
-          const doctorPhoneMap = new Map(doctors.map(doctor => [doctor.id, doctor.phone_number]));
-      
-          // Create a map to store the appointment count per doctor
-          const doctorAppointmentsMap = new Map();
-      
-          // Group appointments by doctor ID
-          appointmentsTomorrow.forEach(appointment => {
+        });
+
+        // Create a map to get the phone number by doctor ID
+        const doctorPhoneMap = new Map(doctors.map(doctor => [doctor.id, doctor.phone_number]));
+
+        // Create a map to store the appointment count per doctor
+        const doctorAppointmentsMap = new Map();
+
+        // Group appointments by doctor ID
+        appointmentsTomorrow.forEach(appointment => {
             if (appointment.doctorId !== null) {
-              if (!doctorAppointmentsMap.has(appointment.doctorId)) {
-                doctorAppointmentsMap.set(appointment.doctorId, {
-                  doctorName: appointment.doctorName,
-                  appointments: [],
-                });
-              }
-              doctorAppointmentsMap.get(appointment.doctorId).appointments.push(appointment);
+                if (!doctorAppointmentsMap.has(appointment.doctorId)) {
+                    doctorAppointmentsMap.set(appointment.doctorId, {
+                        doctorName: appointment.doctorName,
+                        appointments: [],
+                    });
+                }
+                doctorAppointmentsMap.get(appointment.doctorId).appointments.push(appointment);
             }
-          });
-      
-          // Send message to each doctor
-          for (const [doctorId, { doctorName, appointments }] of doctorAppointmentsMap) {
+        });
+
+        // Send message to each doctor
+        for (const [doctorId, { doctorName, appointments }] of doctorAppointmentsMap) {
             const appointmentCount = appointments.length;
             const doctorPhoneNumber = doctorPhoneMap.get(doctorId);
-      
-            if (doctorPhoneNumber) {
-              const message = `Namaste Dr. ${doctorName}, you have ${appointmentCount} appointment(s) scheduled for tomorrow, ${tomorrow}. Please check your schedule for more details.`;
-      
-              const url = process.env.WHATSAPP_API_URL;
-              const headers = {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`,
-              };
-              const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-              console.log('message:', message);
-      
-            const messages = [
-                // Message for Patient
-                {
-                    "coding": "1",
-                    "id": "15b0cc79c0da45771662021",
-                    "msgtype": "1",
-                    "text": "",
-                    "templateinfo": `1495858~${doctorName}~${appointmentCount}~${tomorrow}`,
-                    "addresses": [
-                        {
-                            "to": doctorPhoneNumber,
-                            "from": fromPhoneNumber,
-                        }
-                    ]
-                },
-                // Message for Doctor
-            ];
 
-            const data = {
-                "apiver": "1.0",
-                "whatsapp": {
-                    "ver": "2.0",
-                    "dlr": {
-                        "url": ""
+            if (doctorPhoneNumber) {
+                const message = `Namaste Dr. ${doctorName}, you have ${appointmentCount} appointment(s) scheduled for tomorrow, ${tomorrow}. Please check your schedule for more details.`;
+
+                const url = process.env.WHATSAPP_API_URL;
+                const headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`,
+                };
+                const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+                console.log('message:', message);
+
+                const messages = [
+                    // Message for Patient
+                    {
+                        "coding": "1",
+                        "id": "15b0cc79c0da45771662021",
+                        "msgtype": "1",
+                        "text": "",
+                        "templateinfo": `1495858~${doctorName}~${appointmentCount}~${tomorrow}`,
+                        "addresses": [
+                            {
+                                "to": doctorPhoneNumber,
+                                "from": fromPhoneNumber,
+                            }
+                        ]
                     },
-                    "messages": messages
+                    // Message for Doctor
+                ];
+
+                const data = {
+                    "apiver": "1.0",
+                    "whatsapp": {
+                        "ver": "2.0",
+                        "dlr": {
+                            "url": ""
+                        },
+                        "messages": messages
+                    }
+                };
+
+                try {
+                    await axios.post(url!, data, { headers });
+                    console.log(`WhatsApp message sent successfully to ${doctorName}`);
+                } catch (error) {
+                    console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
                 }
-            };
-      
-            try {
-              await axios.post(url!, data, { headers });
-              console.log(`WhatsApp message sent successfully to ${doctorName}`);
-            } catch (error) {
-                console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
             }
-          }
-        }     
+        }
     }
-    catch(error){
+    catch (error) {
         console.error('Error sending WhatsApp message:', error);
         // res.status(500).json({ error: 'Internal server error' });
     }
@@ -594,6 +608,6 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
 cron.schedule('0 21 * * *', async () => {
     console.log('Running scheduled task to send doctor appointment reminders');
     await sendDoctorMessage();
-  }, {
+}, {
     timezone: 'Asia/Kolkata',
-  });
+});

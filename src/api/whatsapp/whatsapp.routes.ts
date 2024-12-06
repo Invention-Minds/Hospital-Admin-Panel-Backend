@@ -7,7 +7,7 @@ const router = Router();
 
 // Define the route for sending WhatsApp messages
 router.post('/send', sendWhatsAppMessage);
-router.post('/remainder', sendDoctorMessage)
+router.post('/remainder', checkAndSendReminders)
 router.post('/send-receive-message',sendWhatsAppChatbot)
 
 export default router;  // Make sure this line is present
