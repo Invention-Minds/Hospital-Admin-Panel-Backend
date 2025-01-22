@@ -14,6 +14,10 @@ import emailRoutes from './api/email/email.routes';
 import patientRoutes from './api/patient/patient.routes';
 import smsRoutes from './api/sms/sms.routes';
 import uploadRoutes from './api/upload/upload.routes';
+import serviceRoutes from './api/services/services.routes';
+import estimationRoutes from './api/estimation/estimation.routes';
+import channelRoutes from './api/channel/channel.routes';
+import { channel } from 'diagnostics_channel';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -26,7 +30,7 @@ app.use(express.json());
 app.use(helmet());
 
 app.use(cors({
-  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/'], 
+  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -41,7 +45,10 @@ app.use('/api/email', emailRoutes);
 app.use('/api/login', loginRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/sms', smsRoutes);
-app.use('/api/storage',uploadRoutes)
+app.use('/api/storage',uploadRoutes);
+app.use('/api/services', serviceRoutes);
+app.use('/api/estimation', estimationRoutes);
+app.use('/api/channel', channelRoutes);
 
 // Sample route to check server status
 app.get('/', (req, res) => {

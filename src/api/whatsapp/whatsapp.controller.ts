@@ -1,7 +1,11 @@
 
 
 import { Request, Response } from 'express';
+
+import { notifyPendingAppointments } from './../appointments/appointment.controller';
 import axios from 'axios';
+import https from 'https';
+import { parse, isAfter, isBefore,subHours, setMinutes, setSeconds } from 'date-fns';
 import * as dotenv from 'dotenv';
 import * as cron from 'node-cron';
 import { PrismaClient } from '@prisma/client';
@@ -11,6 +15,9 @@ import { start } from 'repl';
 // import { utcToZonedTime, format } from 'date-fns-tz';
 dotenv.config();
 const prisma = new PrismaClient();
+const httpsAgent = new https.Agent({
+     rejectUnauthorized: false 
+    });
 
 export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     console.log('req.body:', req.body);
@@ -20,115 +27,166 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     const url = process.env.WHATSAPP_API_URL;
     const headers = {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}` // Replace with your actual token
-    };
+        apikey: process.env.WHATSAPP_AUTH_TOKEN,
+      };
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-    const messages = [];
+    let payload = {};
 
     // Message for Patient (regardless of the status)
     if (status !== 'received') {
-        messages.push({
-            "coding": "1",
-            "id": "15b0cc79c0da45771662021",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1498900~${patientName}~${doctorName}~${status}~${date}~${time}`,
-            "type": "",
-            "contenttype": "",
-            "filename": "",
-            "mediadata": "",
-            "b_urlinfo": "",
-            "addresses": [
-                {
-                    "seq": "6310710c80900d37f7b9-20220901",
-                    "to": patientPhoneNumber,
-                    "from": fromPhoneNumber,
-                    "tag": ""
-                }
-            ]
-        });
+        // messages.push({
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662021",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1498900~${patientName}~${doctorName}~${status}~${date}~${time}`,
+        //     "type": "",
+        //     "contenttype": "",
+        //     "filename": "",
+        //     "mediadata": "",
+        //     "b_urlinfo": "",
+        //     "addresses": [
+        //         {
+        //             "seq": "6310710c80900d37f7b9-20220901",
+        //             "to": patientPhoneNumber,
+        //             "from": fromPhoneNumber,
+        //             "tag": ""
+        //         }
+        //     ]
+        // });
+        // payload = {
+        //     from: fromPhoneNumber,
+        //     to: patientPhoneNumber,
+        //     type: "template",
+        //     message: {
+        //       templateid: "674445", // Replace with the actual template ID
+        //       placeholders:[patientName, doctorName, status, date, time], // Dynamic placeholders
+        //     },
+        //   };
+        //   console.log(payload, 'payload for patient');
     }
     if (status === 'received') {
-        messages.push({
-            "coding": "1",
-            "id": "15b0cc79c0da45771662022",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1495968~${patientName}~${doctorName}`,
-            "type": "",
-            "contenttype": "",
-            "filename": "",
-            "mediadata": "",
-            "b_urlinfo": "",
-            "addresses": [
-                {
-                    "seq": "6310710c80900d37f7b9-20220902",
-                    "to": patientPhoneNumber,
-                    "from": fromPhoneNumber,
-                    "tag": ""
-                }
-            ]
-        });
+        // messages.push({
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662022",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1495968~${patientName}~${doctorName}`,
+        //     "type": "",
+        //     "contenttype": "",
+        //     "filename": "",
+        //     "mediadata": "",
+        //     "b_urlinfo": "",
+        //     "addresses": [
+        //         {
+        //             "seq": "6310710c80900d37f7b9-20220902",
+        //             "to": patientPhoneNumber,
+        //             "from": fromPhoneNumber,
+        //             "tag": ""
+        //         }
+        //     ]
+        // });
+        payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: patientPhoneNumber, // Recipient's WhatsApp number
+            type: "template", // Type of the message
+            message: {
+              templateid: "674495", // Replace with the actual template ID
+              placeholders: [patientName,doctorName], // Dynamic placeholders
+            },
+          };
+          
     }
     // Message for Doctor (only if the status is 'confirmed')
     if (status === 'confirmed' || status === 'cancelled' || status === 'rescheduled') {
-        messages.push({
-            "coding": "1",
-            "id": "15b0cc79c0da45771662022",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1498899~${doctorName}~${status}~${patientName}~${date}~${time}`,
-            "type": "",
-            "contenttype": "",
-            "filename": "",
-            "mediadata": "",
-            "b_urlinfo": "",
-            "addresses": [
-                {
-                    "seq": "6310710c80900d37f7b9-20220902",
-                    "to": doctorPhoneNumber,
-                    "from": fromPhoneNumber,
-                    "tag": ""
-                }
-            ]
-        });
+        // messages.push({
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662022",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1498899~${doctorName}~${status}~${patientName}~${date}~${time}`,
+        //     "type": "",
+        //     "contenttype": "",
+        //     "filename": "",
+        //     "mediadata": "",
+        //     "b_urlinfo": "",
+        //     "addresses": [
+        //         {
+        //             "seq": "6310710c80900d37f7b9-20220902",
+        //             "to": doctorPhoneNumber,
+        //             "from": fromPhoneNumber,
+        //             "tag": ""
+        //         }
+        //     ]
+        // });
+        payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: doctorPhoneNumber, // Recipient's WhatsApp number
+            type: "template", // Type of the message
+            message: {
+              templateid: "674491", // Replace with the actual template ID
+              placeholders: [doctorName, status, patientName, date, time], // Dynamic placeholders
+            },
     }
+    let patientPayload = {
+        from: fromPhoneNumber,
+        to: patientPhoneNumber,
+        type: "template",
+        message: {
+          templateid: "674445", // Replace with the actual template ID
+          placeholders:[patientName, doctorName, status, date, time], // Dynamic placeholders
+        },
+      };
+      const patientResponse = await axios.post(url!, patientPayload, { headers });
+      res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
+    //   console.log(patientResponse, 'payload for patient');
+    console.log(payload, 'payload for doctor');
+}
     if (status === 'completed') {
-        messages.push({
-            "coding": "1",
-            "id": "15b0cc79c0da45771662022",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1489098`,
-            "type": "",
-            "contenttype": "",
-            "filename": "",
-            "mediadata": "",
-            "b_urlinfo": "",
-            "addresses": [
-                {
-                    "seq": "6310710c80900d37f7b9-20220902",
-                    "to": patientPhoneNumber,
-                    "from": fromPhoneNumber,
-                    "tag": ""
-                }
-            ]
-        });
+        // messages.push({
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662022",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1489098`,
+        //     "type": "",
+        //     "contenttype": "",
+        //     "filename": "",
+        //     "mediadata": "",
+        //     "b_urlinfo": "",
+        //     "addresses": [
+        //         {
+        //             "seq": "6310710c80900d37f7b9-20220902",
+        //             "to": patientPhoneNumber,
+        //             "from": fromPhoneNumber,
+        //             "tag": ""
+        //         }
+        //     ]
+        // });
+        payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: patientPhoneNumber, // Recipient's WhatsApp number
+            type: "template", // Type of the message
+            message: {
+              templateid: "682641", // Replace with the actual template ID
+              placeholders: [], // Dynamic placeholders
+            },
+          };
     }
 
-    const data = {
-        "apiver": "1.0",
-        "whatsapp": {
-            "ver": "2.0",
-            "dlr": {
-                "url": ""
-            },
-            "messages": messages
-        }
-    };
+    // const data = {
+    //     "apiver": "1.0",
+    //     "whatsapp": {
+    //         "ver": "2.0",
+    //         "dlr": {
+    //             "url": ""
+    //         },
+    //         "messages": messages
+    //     }
+    // };
 
     try {
-        const response = await axios.post(url!, data, { headers });
+        const response = await axios.post(url!, payload, { headers});
         res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: response.data });
     } catch (error) {
         res.status(500).json({
@@ -137,6 +195,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         });
     }
 };
+
 function formatDate(date: Date): string {
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
@@ -190,41 +249,64 @@ export const checkAndSendReminders = async () => {
                 const url = process.env.WHATSAPP_API_URL;
                 const headers = {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`
-                };
+                    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+                  };
                 const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
-                const messages = [
-                    // Message for Patient
-                    {
-                        "coding": "1",
-                        "id": "15b0cc79c0da45771662021",
-                        "msgtype": "1",
-                        "text": "",
-                        "templateinfo": `1489537~${appointment.patientName}~${appointment.doctorName}~${appointment.date}~${appointment.time}`,
-                        "addresses": [
-                            {
-                                "to": appointment.phoneNumber,
-                                "from": fromPhoneNumber,
-                            }
-                        ]
-                    },
-                    // Message for Doctor
-                ];
+                // const messages = [
+                //     // Message for Patient
+                //     {
+                //         "coding": "1",
+                //         "id": "15b0cc79c0da45771662021",
+                //         "msgtype": "1",
+                //         "text": "",
+                //         "templateinfo": `1489537~${appointment.patientName}~${appointment.doctorName}~${appointment.date}~${appointment.time}`,
+                //         "addresses": [
+                //             {
+                //                 "to": appointment.phoneNumber,
+                //                 "from": fromPhoneNumber,
+                //             }
+                //         ]
+                //     },
+                //     // Message for Doctor
+                // ];
 
-                const data = {
-                    "apiver": "1.0",
-                    "whatsapp": {
-                        "ver": "2.0",
-                        "dlr": {
-                            "url": ""
-                        },
-                        "messages": messages
-                    }
-                };
+                // const data = {
+                //     "apiver": "1.0",
+                //     "whatsapp": {
+                //         "ver": "2.0",
+                //         "dlr": {
+                //             "url": ""
+                //         },
+                //         "messages": messages
+                //     }
+                // };
+                const payload = {
+                    from: fromPhoneNumber, // Sender's WhatsApp number
+                    to: appointment.phoneNumber, // Recipient's WhatsApp number
+                    type: "template", // Type of the message
+                    message: {
+                      templateid: "674507", // Replace with the actual template ID
+                      placeholders: [appointment.patientName,appointment.doctorName, appointment.date, appointment.time], // Dynamic placeholders
+                    },
+                  };
+                  
 
                 try {
-                    await axios.post(url!, data, { headers });
+                    const response = await axios.post(url!, payload, { headers });
+                    if(response.data.code === '200'){
+                      console.log({
+                          message: 'WhatsApp message sent successfully',
+                          data: response.data, // Optional: Include response data
+                      });
+                    }
+                    else{
+                      console.log({
+                          message: 'Failed to send',
+                          data: response.data
+                      })
+                    }
+                    console.log(payload);
                     let success = 'true'
                     if (success === 'true') {
                         const apiKey = process.env.SMS_API_KEY;
@@ -327,7 +409,7 @@ export const checkAndSendReminders = async () => {
         // Send reminder for today, 4 hours before the appointment
         appointmentsToday.forEach(async (appointment) => {
             const startTime = appointment.time.trim(); // Example format: '01:15 PM'
-
+            console.log(startTime, 'startTime');
             // Convert start time to 24-hour format
             const { hours: startTimeHour, minutes: startTimeMinute } = convertTo24HourFormat(startTime);
             console.log(startTimeHour, 'startTimeHour');
@@ -344,44 +426,67 @@ export const checkAndSendReminders = async () => {
             if (startTimeHour >= fourHoursLater && startTimeHour < fiveHoursLater) {
                 console.log('Sending reminder for 4 hours before appointment:', appointment.patientName);
                 // Send a message to the patient
-                const url = process.env.WHATSAPP_API_URL;
+               const url = process.env.WHATSAPP_API_URL;
                 const headers = {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`
-                };
+                    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+                  };
                 const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
-                const messages = [
-                    // Message for Patient
-                    {
-                        "coding": "1",
-                        "id": "15b0cc79c0da45771662021",
-                        "msgtype": "1",
-                        "text": "",
-                        "templateinfo": `1489438~${appointment.patientName}~${appointment.doctorName}~${appointment.date}~${appointment.time}`,
-                        "addresses": [
-                            {
-                                "to": appointment.phoneNumber,
-                                "from": fromPhoneNumber,
-                            }
-                        ]
-                    },
-                    // Message for Doctor
-                ];
+                // const messages = [
+                //     // Message for Patient
+                //     {
+                //         "coding": "1",
+                //         "id": "15b0cc79c0da45771662021",
+                //         "msgtype": "1",
+                //         "text": "",
+                //         "templateinfo": `1489438~${appointment.patientName}~${appointment.doctorName}~${appointment.date}~${appointment.time}`,
+                //         "addresses": [
+                //             {
+                //                 "to": appointment.phoneNumber,
+                //                 "from": fromPhoneNumber,
+                //             }
+                //         ]
+                //     },
+                //     // Message for Doctor
+                // ];
 
-                const data = {
-                    "apiver": "1.0",
-                    "whatsapp": {
-                        "ver": "2.0",
-                        "dlr": {
-                            "url": ""
-                        },
-                        "messages": messages
-                    }
-                };
+                // const data = {
+                //     "apiver": "1.0",
+                //     "whatsapp": {
+                //         "ver": "2.0",
+                //         "dlr": {
+                //             "url": ""
+                //         },
+                //         "messages": messages
+                //     }
+                // };
+                const payload1 = {
+                    from: fromPhoneNumber, // Sender's WhatsApp number
+                    to: appointment.phoneNumber, // Recipient's WhatsApp number
+                    type: "template", // Type of the message
+                    message: {
+                      templateid: "674503", // Replace with the actual template ID
+                      placeholders: [appointment.patientName,appointment.doctorName,appointment.date,appointment.time], // Dynamic placeholders
+                    },
+                  };
+                  
 
                 try {
-                    await axios.post(url!, data, { headers });
+                    const response = await axios.post(url!, payload1, { headers });
+                    if(response.data.code === '200'){
+                      console.log({
+                          message: 'WhatsApp message sent successfully',
+                          data: response.data, // Optional: Include response data
+                      });
+                    }
+                    else{
+                      console.log({
+                          message: 'Failed to send',
+                          data: response.data
+                      })
+                    }
+                    console.log('WhatsApp message(s) sent successfully', payload1);
                     console.log('WhatsApp message(s) sent successfully');
                     let success = 'true'
                     if (success === 'true') {
@@ -425,16 +530,39 @@ export const checkAndSendReminders = async () => {
     }
 };
 
-cron.schedule('0 * * * *', () => {
-    // Get the current time in Indian Standard Time (IST)
-    const currentIST = moment().tz('Asia/Kolkata');
+// export const CornSchedular = async (req: Request, res: Response) => { 
+// cron.schedule('0 * * * *', () => {
+//     // Get the current time in Indian Standard Time (IST)
+//     const currentIST = moment().tz('Asia/Kolkata');
 
-    // Log the current IST time
-    console.log(`Cron job started at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+//     // Log the current IST time
+//     console.log(`Cron job started at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
-    // Use the IST time in your logic
-    checkAndSendReminders(); // Modify the function to accept the current IST if necessary
-});
+//     // Use the IST time in your logic
+//     checkAndSendReminders(); // Modify the function to accept the current IST if necessary
+//     remainderForAdmin();
+// });
+// };
+export const CornSchedular = async (req: Request, res: Response) => {
+    try {
+        // Get the current time in Indian Standard Time (IST)
+        const currentIST = moment().tz('Asia/Kolkata');
+    
+        // Log the current IST time
+        console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+    
+        // Run the required tasks
+        await checkAndSendReminders();
+        await remainderForAdmin();
+        await reminderForServices();
+    
+        // Send a response back to Cloud Scheduler
+        res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+      } catch (error) {
+        console.error('Error executing hourly task:', error);
+        res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+      }
+}
 
 export const sendAppointmentReminders = async (req: Request, res: Response) => {
     res.status(200).json({ message: 'Reminder job is running in the background' });
@@ -446,43 +574,53 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}` // Replace with your actual token
-        };
+            apikey: process.env.WHATSAPP_AUTH_TOKEN,
+          };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-        const messages = [];
-        messages.push({
-            "coding": "1",
-            "id": "15b0cc79c0da45771662021",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1490445~${patientName}~${service}`,
-            "type": "",
-            "contenttype": "",
-            "filename": "",
-            "mediadata": "",
-            "b_urlinfo": "",
-            "addresses": [
-                {
-                    "seq": "6310710c80900d37f7b9-20220901",
-                    "to": patientPhoneNumber,
-                    "from": fromPhoneNumber,
-                    "tag": ""
-                }
-            ]
-        });
+        // const messages = [];
+        // messages.push({
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662021",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1490445~${patientName}~${service}`,
+        //     "type": "",
+        //     "contenttype": "",
+        //     "filename": "",
+        //     "mediadata": "",
+        //     "b_urlinfo": "",
+        //     "addresses": [
+        //         {
+        //             "seq": "6310710c80900d37f7b9-20220901",
+        //             "to": patientPhoneNumber,
+        //             "from": fromPhoneNumber,
+        //             "tag": ""
+        //         }
+        //     ]
+        // });
 
-        const data = {
-            "apiver": "1.0",
-            "whatsapp": {
-                "ver": "2.0",
-                "dlr": {
-                    "url": ""
-                },
-                "messages": messages
-            }
-        };
+        // const data = {
+        //     "apiver": "1.0",
+        //     "whatsapp": {
+        //         "ver": "2.0",
+        //         "dlr": {
+        //             "url": ""
+        //         },
+        //         "messages": messages
+        //     }
+        // };
+        const payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: patientPhoneNumber, // Recipient's WhatsApp number
+            type: "template", // Type of the message
+            message: {
+              templateid: "674511", // Replace with the actual template ID
+              placeholders: [patientName, service], // Dynamic placeholders
+            },
+          };
+          
         try {
-            const response = await axios.post(url!, data, { headers });
+            const response = await axios.post(url!, payload, { headers });
             res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: response.data });
         } catch (error) {
             res.status(500).json({
@@ -514,7 +652,7 @@ export const sendDoctorMessage = async () => {
                 date: true,
             },
         });
-
+        console.log('Appointments for tomorrow:', appointmentsTomorrow);
         // Get doctor phone numbers from the doctor table
         const doctorIds = [...new Set(appointmentsTomorrow.map(app => app.doctorId).filter(id => id !== null))];
         const doctors = await prisma.doctor.findMany({
@@ -552,47 +690,59 @@ export const sendDoctorMessage = async () => {
             const doctorPhoneNumber = doctorPhoneMap.get(doctorId);
 
             if (doctorPhoneNumber) {
+                console.log("doctor Message")
                 const message = `Namaste Dr. ${doctorName}, you have ${appointmentCount} appointment(s) scheduled for tomorrow, ${tomorrow}. Please check your schedule for more details.`;
 
                 const url = process.env.WHATSAPP_API_URL;
                 const headers = {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`,
-                };
+                    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+                  };
                 const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
                 console.log('message:', message);
 
-                const messages = [
-                    // Message for Patient
-                    {
-                        "coding": "1",
-                        "id": "15b0cc79c0da45771662021",
-                        "msgtype": "1",
-                        "text": "",
-                        "templateinfo": `1495858~${doctorName}~${appointmentCount}~${tomorrow}`,
-                        "addresses": [
-                            {
-                                "to": doctorPhoneNumber,
-                                "from": fromPhoneNumber,
-                            }
-                        ]
-                    },
-                    // Message for Doctor
-                ];
+                // const messages = [
+                //     // Message for Patient
+                //     {
+                //         "coding": "1",
+                //         "id": "15b0cc79c0da45771662021",
+                //         "msgtype": "1",
+                //         "text": "",
+                //         "templateinfo": `1495858~${doctorName}~${appointmentCount}~${tomorrow}`,
+                //         "addresses": [
+                //             {   
+                //                 "seq": "6310710c80900d37f7b9-20220901",
+                //                 "to": doctorPhoneNumber,
+                //                 "from": fromPhoneNumber,
+                //             }
+                //         ]
+                //     },
+                //     // Message for Doctor
+                // ];
 
-                const data = {
-                    "apiver": "1.0",
-                    "whatsapp": {
-                        "ver": "2.0",
-                        "dlr": {
-                            "url": ""
-                        },
-                        "messages": messages
-                    }
-                };
+                // const data = {
+                //     "apiver": "1.0",
+                //     "whatsapp": {
+                //         "ver": "2.0",
+                //         "dlr": {
+                //             "url": ""
+                //         },
+                //         "messages": messages
+                //     }
+                // };
+                const payload = {
+                    from: fromPhoneNumber, // Sender's WhatsApp number
+                    to: doctorPhoneNumber, // Recipient's WhatsApp number
+                    type: "template", // Type of the message
+                    message: {
+                      templateid: "674515", // Replace with the actual template ID
+                      placeholders: [doctorName, appointmentCount, tomorrow], // Dynamic placeholders
+                    },
+                  };
+                  
 
                 try {
-                    await axios.post(url!, data, { headers });
+                    await axios.post(url!, payload, { headers });
                     console.log(`WhatsApp message sent successfully to ${doctorName}`);
                 } catch (error) {
                     console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
@@ -611,3 +761,303 @@ cron.schedule('0 21 * * *', async () => {
 }, {
     timezone: 'Asia/Kolkata',
 });
+
+
+
+function formatTime(date: Date): string {
+    return `${date.getHours()}:${date.getMinutes()} ${date.getHours() >= 12 ? 'PM' : 'AM'}`;
+  }
+export const remainderForAdmin = async () => {
+    try{
+        const usEasternTime = moment().tz('America/New_York');
+        const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+    
+        const indianDate = indianTime.toDate();
+        const currentTime = indianDate;
+        const oneHourAgo = subHours(currentTime, 1); // One hour ago
+
+    // Get the hour range to check appointments
+    const startHour = setMinutes(setSeconds(oneHourAgo, 0), 0); // Start of the previous hour (e.g., 4:00 PM if current is 5:00 PM)
+    const endHour = setMinutes(setSeconds(currentTime, 0), 0); // Start of the current hour (e.g., 5:00 PM)
+
+    const pendingRequests = await prisma.appointment.findMany({
+        where: {
+          status: 'pending',
+        },
+      });
+      console.log('Pending Requests:', pendingRequests);
+
+    if(pendingRequests.length > 0){
+        const newNotification = await prisma.notification.create({
+            data: {
+              type: 'appointment_request',
+              title: 'Remainder for Pending Request',
+              message: `${pendingRequests.length} appointment requests are pending. Kindly check`,
+              entityType: 'remainder',
+              isCritical: false,
+              targetRole: 'sub_admin', // Associate the notification with the specific receptionist
+            },
+          });
+            notifyPendingAppointments(newNotification)  
+    }
+
+    // Fetch confirmed appointments for today that fall within the previous hour
+    const pendingAppointments = await prisma.appointment.findMany({
+      where: {
+        date: {
+          equals: currentTime.toISOString().split('T')[0], // Appointments for today
+        },
+        status: 'confirmed',
+        time: {
+      
+          lt: formatTime(endHour),    // Less than start of the current hour
+        },
+      },
+    });
+    console.log('Pending Appointments:', pendingAppointments);
+       // Step 4: If there are pending appointments, create a notification for sub-admin
+    if (pendingAppointments.length > 0) {
+        const receptionists = await prisma.user.findMany({
+            where: {
+              role: 'sub_admin',
+              isReceptionist: true, // Assuming `isReceptionist` is a boolean column in the `user` table
+            },
+          });
+        
+          if (receptionists.length === 0) {
+            console.log('No receptionists found to send the notification');
+            return;
+          }
+        //   for (const receptionist of receptionists) {
+            const newNotification = await prisma.notification.create({
+              data: {
+                type: 'appointment_remainder',
+                title: 'Remainder',
+                message: `${pendingAppointments.length} appointments require action. Please mark them as complete or cancel`,
+                entityType: 'remainder',
+                isCritical: false,
+                targetRole: 'sub_admin' // Associate the notification with the specific receptionist
+              },
+            });
+            notifyPendingAppointments(newNotification)
+            console.log(`Notification sent to receptionist: `, newNotification);
+          
+        
+      } else {
+        console.log('No confirmed appointments found for the upcoming hour.');
+      }
+    }
+    catch (error) {
+        console.error('Error sending Notification message:', error);
+        // res.status(500).json({ error: 'Internal server error' });
+    }
+}
+export const reminderForServices = async () => {
+    try {
+        const usEasternTime = moment().tz('America/New_York');
+        const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+    
+        const indianDate = indianTime.toDate();
+        const currentTime = indianDate;
+        const oneHourAgo = subHours(currentTime, 1); // One hour ago
+
+        // Get the hour range to check services
+        const startHour = setMinutes(setSeconds(oneHourAgo, 0), 0); // Start of the previous hour (e.g., 4:00 PM if current is 5:00 PM)
+        const endHour = setMinutes(setSeconds(currentTime, 0), 0); // Start of the current hour (e.g., 5:00 PM)
+
+        // Fetch pending services
+        const pendingServices = await prisma.service.findMany({
+            where: {
+                appointmentStatus: 'pending',
+            },
+        });
+
+        console.log('Pending Services:', pendingServices);
+
+        if (pendingServices.length > 0) {
+            const newNotification = await prisma.notification.create({
+                data: {
+                    type: 'service_request',
+                    title: 'Reminder for Pending Service Requests',
+                    message: `${pendingServices.length} service requests are pending. Kindly check.`,
+                    entityType: 'reminder',
+                    isCritical: false,
+                    targetRole: 'sub_admin',
+                },
+            });
+            notifyPendingAppointments(newNotification);
+        }
+        console.log('Notification sent for pending service requests.', currentTime.toISOString().split('T')[0], formatTime(endHour));
+        // Fetch confirmed services for today that fall within the previous hour
+        const confirmedServices = await prisma.service.findMany({
+            where: {
+                appointmentDate: {
+                    equals: currentTime.toISOString().split('T')[0], // Services for today
+                },
+                appointmentStatus: {
+                    in: ['Confirm', 'confirmed'], // Matches either 'Confirm' or 'confirmed'
+                },
+                appointmentTime: {
+                    lt: formatTime(endHour), // Less than the start of the current hour
+                },
+            },
+        });
+
+        console.log('Confirmed Services:', confirmedServices);
+
+        // If there are confirmed services, create a notification for sub-admin
+        if (confirmedServices.length > 0) {
+            const subAdmins = await prisma.user.findMany({
+                where: {
+                    role: 'sub_admin',
+                    isReceptionist: true
+                },
+            });
+
+            if (subAdmins.length === 0) {
+                console.log('No sub-admins found to send the notification');
+                return;
+            }
+
+            // for (const subAdmin of subAdmins) {
+                const newNotificationforRemainder = await prisma.notification.create({
+                    data: {
+                        type: 'service_reminder',
+                        title: 'Reminder',
+                        message: `${confirmedServices.length} services require action. Please mark them as complete or cancel.`,
+                        entityType: 'reminder',
+                        isCritical: false,
+                        targetRole: 'sub_admin' // Associate the notification with the specific sub-admin
+                    },
+                });
+                notifyPendingAppointments(newNotificationforRemainder);
+                console.log(`Notification sent to sub-admin: `, newNotificationforRemainder);
+            
+        } else {
+            console.log('No confirmed services found for the upcoming hour.');
+        }
+    } catch (error) {
+        console.error('Error sending service reminder notification:', error);
+    }
+};
+
+export const sendServiceWhatsappMessage = async (req: Request, res: Response) => {
+    try {
+      const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = req.body;
+        let payload = {};
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+      // API endpoint
+      const url = process.env.WHATSAPP_API_URL;
+        
+      const name = `${firstName} ${lastName}`;
+      if(appointmentStatus === 'Confirm' || appointmentStatus === 'confirmed' || appointmentStatus === 'rescheduled' ){
+      // Prepare the payload
+       payload = {
+        from: fromPhoneNumber, // Sender's WhatsApp number
+        to: phoneNumber, // Recipient's WhatsApp number
+        type: "template", // Message type
+        message: {
+          templateid: "682645", // Template ID
+          placeholders: [name, packageName,appointmentStatus, appointmentDate, appointmentTime], // Placeholders for the template
+        },
+      };
+    }
+    else if(appointmentStatus === 'cancelled' || appointmentStatus === 'Cancel' || appointmentStatus === 'Cancelled'){
+        const time = appointmentStatus === 'pending' ? '' : appointmentTime;
+
+        payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: phoneNumber, // Recipient's WhatsApp number
+            type: "template", // Message type
+            message: {
+              templateid: "688775", // Template ID
+              placeholders: [name, packageName, appointmentDate], // Placeholders for the template
+            },
+          };
+    }
+    else{
+        payload={
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: phoneNumber, // Recipient's WhatsApp number
+            type: "template", // Message type
+            message: {
+              templateid: "682649", // Template ID
+              placeholders: [name, packageName], // Placeholders for the template
+            },
+          };
+        
+
+    }
+      // API key for authorization
+      const headers = {
+        "Content-Type": "application/json",
+        apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+      };
+  
+      // Send the POST request
+      const response = await axios.post(url!, payload, { headers });
+  
+      // Log the response
+      console.log('WhatsApp message sent successfully:1', response.data);
+  
+      // Send a success response
+      res.status(200).json({
+        status: "success",
+        message: "WhatsApp message sent successfully.2",
+        data: response.data,
+      });
+    } catch (error) {
+      console.error('Error sending WhatsApp message:', error);
+  
+      // Send an error response
+     res.status(500).json({
+        status: "error",
+        message: "Failed to send WhatsApp message."
+      });
+    }
+  };
+
+  export const sendAdminMessage = async (req: Request, res: Response) => {
+    try{
+        const { doctorName, startDate, endDate, adminPhoneNumber } = req.body;
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        const url = process.env.WHATSAPP_API_URL;
+        const payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: adminPhoneNumber, // Recipient's WhatsApp number
+            type: "template", // Type of the message
+            message: {
+              templateid: "701223", // Replace with the actual template ID
+              placeholders: [doctorName, startDate, endDate], // Dynamic placeholders
+            },
+          };
+          
+
+          const headers = {
+            "Content-Type": "application/json",
+            apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+          };
+          const response = await axios.post(url!, payload, { headers });
+          if(response.data.code === '200'){
+            res.status(200).json({
+                message: 'WhatsApp message sent successfully',
+                data: response.data, // Optional: Include response data
+            });
+          }
+          else{
+            res.status(500).json({
+                message: 'Failed to send',
+                data: response.data
+            })
+          }
+         
+  
+          // Log the response
+          console.log('WhatsApp message sent successfully:1', response.data);
+        
+    }
+    catch (error) {
+        console.error('Error sending WhatsApp message:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+  }

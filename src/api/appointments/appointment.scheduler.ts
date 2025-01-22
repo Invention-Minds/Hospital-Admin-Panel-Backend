@@ -118,41 +118,49 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.WHATSAPP_AUTH_TOKEN}`
+          apikey: process.env.WHATSAPP_AUTH_TOKEN,
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
-        const messages = [
-          // Message for Patient
-          {
-            "coding": "1",
-            "id": "15b0cc79c0da45771662021",
-            "msgtype": "1",
-            "text": "",
-            "templateinfo": `1489098`,
-            "addresses": [
-              {
-                "to": appointment.phoneNumber,
-                "from": fromPhoneNumber,
-              }
-            ]
+        // const messages = [
+        //   // Message for Patient
+        //   {
+        //     "coding": "1",
+        //     "id": "15b0cc79c0da45771662021",
+        //     "msgtype": "1",
+        //     "text": "",
+        //     "templateinfo": `1489098`,
+        //     "addresses": [
+        //       {
+        //         "to": appointment.phoneNumber,
+        //         "from": fromPhoneNumber,
+        //       }
+        //     ]
+        //   },
+        //   // Message for Doctor
+        // ];
+
+        // const data = {
+        //   "apiver": "1.0",
+        //   "whatsapp": {
+        //     "ver": "2.0",
+        //     "dlr": {
+        //       "url": ""
+        //     },
+        //     "messages": messages
+        //   }
+        // };
+        const payload = {
+          from: fromPhoneNumber, // Sender's WhatsApp number
+          to: appointment.phoneNumber, // Recipient's WhatsApp number
+          type: "template", // Type of the message
+          message: {
+            templateid: "682641", // Replace with the actual template ID
+            placeholders: [], // Dynamic placeholders
           },
-          // Message for Doctor
-        ];
-
-        const data = {
-          "apiver": "1.0",
-          "whatsapp": {
-            "ver": "2.0",
-            "dlr": {
-              "url": ""
-            },
-            "messages": messages
-          }
         };
-
         try {
-          await axios.post(url!, data, { headers });
+          await axios.post(url!, payload, { headers });
           let success = 'true'
           if (success === 'true') {
             const apiKey = process.env.SMS_API_KEY;

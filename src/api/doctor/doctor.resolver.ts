@@ -43,6 +43,8 @@ export default class DoctorResolver {
         availableFrom: availability.availableFrom,
         slotDuration: availability.slotDuration,
       };
+     
+      
     } catch (error) {
       console.error('Error fetching doctor availability:', error);
       throw new Error('Unable to fetch doctor availability.');

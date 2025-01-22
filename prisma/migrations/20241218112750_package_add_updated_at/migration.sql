@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Service` MODIFY `packageId` INTEGER NOT NULL DEFAULT 0;

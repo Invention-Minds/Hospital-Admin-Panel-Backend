@@ -28,12 +28,12 @@ export const registerForUpdates = (req: Request, res: Response): void => {
 
 
 // Notify all connected clients of a new appointment with 'pending' status
-export const notifyPendingAppointments = (newAppointment: any): void => {
-  console.log('Notifying clients of new appointment:', newAppointment);
+export const notifyPendingAppointments = (newNotification: any): void => {
+  console.log('Notifying clients of new appointment:', newNotification);
   clients.forEach(client => {
-    client.write(`data: ${newAppointment}\n\n`);
+    client.write(`data: ${JSON.stringify(newNotification)}\n\n`);
   });
-  console.log('Clients notified',clients);
+  // console.log('Clients notified',clients);
 };
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
@@ -89,6 +89,7 @@ if (doctorType === 'Visiting Consultant') {
 } else {
   // Check availability only for regular doctors
   const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
+  
 
   console.log(doctorAvailability, 'selected slot is not available request');
 
@@ -138,7 +139,7 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
 
           type: 'appointment_request',
           title: 'New Appointment Request',
-          message: `New appointment request received for ${newAppointment.doctorName} on ${newAppointment.date} at ${newAppointment.time}.`,
+          message: `Appointment received for ${newAppointment.doctorName} on ${newAppointment.date} at ${newAppointment.time}.`,
           entityId: newAppointment.id,
           entityType: 'appointment',
           isCritical: false,
@@ -146,8 +147,11 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
         },
       });
       console.log("New Notification:", newNotification);
-      notifyPendingAppointments(newAppointment);
+      notifyPendingAppointments(newNotification);
+      res.status(201).json(newAppointment);
+
     }
+    
     if (newAppointment.status === 'confirmed') {
       await doctorRepository.addBookedSlot(doctorId, date, time);
       res.status(201).json(newAppointment);
@@ -165,6 +169,46 @@ export const getAllNotifications = async (req: Request, res: Response): Promise<
     res.status(500).json({ error: 'An error occurred while fetching notifications' });
   }
 }
+// Delete a notification by ID
+export const deleteNotification = async (req: Request, res: Response): Promise<void> => {
+  const notificationId = parseInt(req.params.id, 10);
+
+  try {
+    await prisma.notification.delete({
+      where: {
+        id: notificationId,
+      },
+    });
+    res.status(200).json({ message: 'Notification deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'An error occurred while deleting the notification' });
+  }
+};
+export const getNotificationsByRole = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.query.userId); // Get user ID from query params
+    const isReceptionist = req.query.isReceptionist === 'true'; // Check if the user is a receptionist
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        OR: [
+          { type: 'appointment_request' }, // Everyone gets appointment requests
+          ...(isReceptionist
+            ? [{ type: 'appointment_remainder' }] // Receptionists also get remainders
+            : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' }, // Sort by most recent
+    });
+
+    res.status(200).json(notifications);
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+};
+
 
 export const getAppointments = async (req: Request, res: Response): Promise<void> => {
   try {

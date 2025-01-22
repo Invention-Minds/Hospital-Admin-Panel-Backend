@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 const router = Router();
 
@@ -9,6 +9,7 @@ const router = Router();
 // Define routes for doctors
 router.post('/',authenticateToken, createDoctor);  // Changed from '/doctors' to '/'
 router.get('/', getDoctors);      // Changed from '/doctors' to '/'
+router.get('/get-doctor-details',authenticateToken,getDoctorDetails)
 router.get('/availability',getDoctorAvailability);
 router.get('/booked-slots',getBookedSlots);
 router.post('/booked-slots',authenticateToken, addBookedSlot);

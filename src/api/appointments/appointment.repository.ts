@@ -78,7 +78,8 @@ export default class AppointmentRepository {
     return [...adminAppointments, ...userAppointments];
   }
   async findAppointmentsByDoctorUserId(userId: number) {
-    const doctor = await prisma.doctor.findFirst({ where: { userId } });
+    const doctor = await prisma.doctor.findFirst({ where: { id: userId } });
+    console.log(doctor);
     if (!doctor) return [];
     return await prisma.appointment.findMany({ where: { doctorId: doctor.id }, include: { doctor: true, user: true } });
   }

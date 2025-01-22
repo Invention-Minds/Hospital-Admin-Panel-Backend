@@ -41,12 +41,14 @@ const generateToken = (user: any) => {
 export const userLogin = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
-    const { username, password } = req.body;
-    const role = extractRoleFromUsername(username);  // Extract role
-    const user = await loginUser(username, password);
+    const {password,employeeId ,username} = req.body;
+    // const role = extractRoleFromUsername(username);  // Extract role
+    const user = await loginUser(password, username);
+    console.log(user)
 
     if (user) {
-      const role = extractRoleFromUsername(user.username); // Extract role
+      // const role = extractRoleFromUsername(user.username); // Extract role
+      const role = user.role;
       const token = generateToken(user); // Generate JWT token
       const usEasternTime = moment.tz("America/New_York");
 
@@ -97,7 +99,7 @@ export const userLogin = async (req: Request, res: Response) => {
     throw createTokenError; // Rethrow to handle in the main catch block
   }
   console.log("tokenGeneratedAt", generatedDate, generatedTime);
-      res.status(200).json({ token,generatedDate,generatedTime, user: { userId: user.id, username: user.username, role } }); // Send token and user data
+      res.status(200).json({ token,generatedDate,generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist } }); // Send token and user data
 
       
     } else {
@@ -119,21 +121,62 @@ export const getAllUsers = async (req: Request, res: Response) => {
 }
 
 
-export const userRegister = async (req: Request, res: Response) => {
+export const userRegister = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { username, password } = req.body;
-    const role = extractRoleFromUsername(username);  // Extract role from username
-    const newUser = await createUser(username, password, role);
+    const { username, password, isReceptionist, employeeId, role } = req.body;
+    // const { username, password, isReceptionist, role } = req.body;
+    // const { username, password } = req.body;
+    // const role = extractRoleFromUsername(username); 
+    const existingUser = await prisma.user.findFirst({
+      where: { username, role },
+    });
+
+    if (existingUser) {
+      res.status(400).json({
+        error: `The username "${username}" is already taken for the role "${role}".`,
+      });
+      return; // Ensure the function stops execution after sending a response
+    }
+
+    const newUser = await createUser(username, password, role, isReceptionist, employeeId);
     res.status(201).json(newUser);
   } catch (error) {
+    console.error('Error during user registration:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+
+
+// export const userRegister = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     const { username, password, isReceptionist } = req.body;
+//     const role = extractRoleFromUsername(username);
+//     const existingUser = await prisma.user.findFirst({
+//       where: { username, role },
+//     });
+
+//     if (existingUser) {
+//         return res.status(400).json({
+//         error: `The username "${username}" is already taken for the role "${role}".`,
+//       });
+
+//     }
+//     const newUser = await createUser(username, password, role,isReceptionist);
+//     res.status(201).json(newUser);
+//   } catch (error) {
+//     console.error('Error during user registration:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// };
+
+
 
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
     const { username, newPassword } = req.body;
+
     await resetPassword(username, newPassword);
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
@@ -191,7 +234,7 @@ export const deleteUserByUsername = async (req: Request, res: Response): Promise
       return;
     }
 
-    await loginRepository.deleteUserByUsername(username); // Call delete function from the repository
+    await loginRepository.deleteUserByUsername(userId); // Call delete function from the repository
     res.status(200).json({ message: `User with username ${username} has been deleted successfully.` });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });

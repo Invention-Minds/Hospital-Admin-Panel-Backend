@@ -1,9 +1,3 @@
-// // This is your Prisma schema file,
-// // learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
@@ -23,9 +17,10 @@ model Hospital {
 }
 
 model Department {
-  id      Int      @id @default(autoincrement())
-  name    String   @unique
-  doctors Doctor[]
+  id         Int          @id @default(autoincrement())
+  name       String       @unique
+  doctors    Doctor[]
+  Estimation Estimation[]
 }
 
 model Doctor {
@@ -36,60 +31,71 @@ model Doctor {
   qualification    String
   departmentId     Int
   departmentName   String               @default("Unknown")
-  department       Department           @relation(fields: [departmentId], references: [id])
-  userId           Int? // Links to the User model
-  user             User?                @relation(fields: [userId], references: [id], name: "DoctorUser", onDelete: SetNull) // Corrected relation name
+  userId           Int?
   availableFrom    String?
   slotDuration     Int?
-  doctorType       String?              @default("Regular")
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
-  availability     DoctorAvailability[] @relation(name: "DoctorToAvailability")
-  unavailableDates UnavailableDates[]   @relation(name: "DoctorToUnavailableDate")
-  appointments     Appointment[]        @relation(name: "DoctorAppointments")
-  bookedSlots      BookedSlot[]         @relation(name: "DoctorToBookedSlot")
-  unavailableSlots UnavailableSlot[]    @relation(name: "DoctorToUnavailableSlot") // Relation to UnavailableSlot
-  extraSlots       ExtraSlot[]          @relation(name: "DoctorToExtraSlot") // Relation to ExtraSlot
+  doctorType       String?              @default("Regular")
+  bookedSlots      BookedSlot[]         @relation("DoctorToBookedSlot")
+  department       Department           @relation(fields: [departmentId], references: [id])
+  user             User?                @relation("DoctorUser", fields: [userId], references: [id])
+  availability     DoctorAvailability[] @relation("DoctorToAvailability")
+  extraSlots       ExtraSlot[]          @relation("DoctorToExtraSlot")
+  unavailableDates UnavailableDates[]   @relation("DoctorToUnavailableDate")
+  unavailableSlots UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
+  appointments     Appointment[]        @relation("DoctorAppointments")
+  Estimation       Estimation[]
+  Channel          Channel[]
+  DoctorAssignment DoctorAssignment[]
+  roomNo           String?
+
+  @@index([departmentId], map: "Doctor_departmentId_fkey")
+  @@index([userId], map: "Doctor_userId_fkey")
 }
 
 model User {
-  id           Int            @id @default(autoincrement())
-  username     String         @unique
-  password     String
-  role         UserRole
-  createdAt    DateTime       @default(now())
-  loggedInDate String?
-  loggedInTime String?
-  doctors      Doctor[]       @relation("DoctorUser") // Relation to Doctor model
-  appointments Appointment[]  @relation("UserAppointments") // Relation to Appointment model
-  activeTokens ActiveToken[] // Relation to the ActiveToken model
-  Notification Notification[]
+  id             Int            @id @default(autoincrement())
+  username       String
+  password       String
+  role           UserRole
+  createdAt      DateTime       @default(now())
+  loggedInDate   String?
+  loggedInTime   String?
+  employeeId     String?        @unique
+  isReceptionist Boolean?       @default(false)
+  doctors        Doctor[]       @relation("DoctorUser")
+  Notification   Notification[]
+  activeTokens   ActiveToken[]
+  appointments   Appointment[]  @relation("UserAppointments")
 
   @@map("users")
 }
 
 model DoctorAvailability {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   doctorId      Int?
   day           String
   availableFrom String
-  slotDuration  Int      @default(20)
-  date          String? // Adding date column to handle future data
-  isFuture      Boolean? @default(false) // Adding isFuture column to handle future data
-  startDate     String? // Adding startDate column to handle future data
-  endDate       String? // Adding endDate column to handle future data
-  doctor        Doctor?  @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToAvailability")
+  slotDuration  Int       @default(20)
+  date          String?
+  isFuture      Boolean?  @default(false)
+  endDate       String?
+  startDate     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime? @updatedAt
+  doctor        Doctor?   @relation("DoctorToAvailability", fields: [doctorId], references: [id])
 
-  createdAt DateTime  @default(now()) // Track when the record was created
-  updatedAt DateTime? @updatedAt // Track when the record was last updated
+  @@index([doctorId], map: "DoctorAvailability_doctorId_fkey")
 }
 
 model UnavailableDates {
   id       Int      @id @default(autoincrement())
   doctorId Int?
   date     DateTime
+  doctor   Doctor?  @relation("DoctorToUnavailableDate", fields: [doctorId], references: [id])
 
-  doctor Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToUnavailableDate")
+  @@index([doctorId], map: "UnavailableDates_doctorId_fkey")
 }
 
 model Appointment {
@@ -98,7 +104,6 @@ model Appointment {
   phoneNumber    String
   email          String
   doctorId       Int?
-  doctor         Doctor?           @relation(fields: [doctorId], references: [id], name: "DoctorAppointments", onDelete: SetNull)
   doctorName     String
   department     String
   date           String
@@ -106,59 +111,49 @@ model Appointment {
   requestVia     String?
   smsSent        Boolean?          @default(false)
   emailSent      Boolean?          @default(false)
-  messageSent    Boolean?          @default(false)
   status         AppointmentStatus @default(pending)
   created_at     DateTime          @default(now())
   updated_at     DateTime          @updatedAt
   userId         Int?
-  user           User?             @relation(fields: [userId], references: [id], name: "UserAppointments")
-  lockedBy       Int? // Stores the user ID who locked the appointment
-  lockExpiresAt  DateTime? // Stores the expiration of the lock
+  lockedBy       Int?
+  lockExpiresAt  DateTime?
   patientId      Int?
   prnNumber      Int?
-  patient        Patient?          @relation(fields: [patientId], references: [id], name: "AppointmentToPatient")
   checkedIn      Boolean?          @default(false)
   remainder1Sent Boolean?          @default(false)
   remainder2Sent Boolean?          @default(false)
+  messageSent    Boolean?          @default(false)
+  doctor         Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  patient        Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
+  user           User?             @relation("UserAppointments", fields: [userId], references: [id])
+  checkedOut     Boolean?          @default(false)
 
+  @@index([doctorId], map: "appointments_doctorId_fkey")
+  @@index([patientId], map: "appointments_patientId_fkey")
+  @@index([userId], map: "appointments_userId_fkey")
   @@map("appointments")
-}
-
-enum AppointmentStatus {
-  pending
-  confirmed
-  cancelled
-  completed
-  rescheduled
 }
 
 model BookedSlot {
   id        Int      @id @default(autoincrement())
   doctorId  Int?
-  doctor    Doctor?  @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToBookedSlot")
   date      String
   time      String
-  complete  Boolean? @default(false) // Adding the complete status column
   createdAt DateTime @default(now())
+  complete  Boolean? @default(false)
+  doctor    Doctor?  @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
+
+  @@index([doctorId], map: "BookedSlot_doctorId_fkey")
 }
 
 model UnavailableSlot {
-  id       Int    @id @default(autoincrement())
+  id       Int     @id @default(autoincrement())
   doctorId Int?
-  date     String // Change from DateTime to String
-  time     String // Time in HH:MM format
-
-  doctor Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToUnavailableSlot")
+  time     String
+  date     String
+  doctor   Doctor? @relation("DoctorToUnavailableSlot", fields: [doctorId], references: [id])
 
   @@unique([doctorId, date, time])
-}
-
-enum UserRole {
-  super_admin
-  sub_admin
-  admin
-  doctor
-  unknown
 }
 
 model Patient {
@@ -169,7 +164,7 @@ model Patient {
   email        String
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
-  appointments Appointment[] @relation(name: "AppointmentToPatient")
+  appointments Appointment[] @relation("AppointmentToPatient")
 }
 
 model ActiveToken {
@@ -178,38 +173,209 @@ model ActiveToken {
   token      String  @unique @db.VarChar(500)
   loggedInAt String
   lastActive String
-  isActive   Boolean @default(true) // Field to mark if the session is active or not
+  isActive   Boolean @default(true)
   user       User    @relation(fields: [userId], references: [id])
 
+  @@index([userId], map: "active_tokens_userId_fkey")
   @@map("active_tokens")
 }
 
 model ExtraSlot {
   id       Int     @id @default(autoincrement())
   doctorId Int?
-  doctor   Doctor? @relation(fields: [doctorId], references: [id], onDelete: SetNull, name: "DoctorToExtraSlot")
   date     String
   time     String
+  doctor   Doctor? @relation("DoctorToExtraSlot", fields: [doctorId], references: [id])
 
-  @@index([doctorId, date, time], name: "unique_slot") // Optional: Unique combination of doctor, date, and time
+  @@index([doctorId, date, time], map: "unique_slot")
 }
 
 model Notification {
   id         Int       @id @default(autoincrement())
-  // userId     Int? // Nullable for broadcast notifications
-  // user       User?     @relation(fields: [userId], references: [id])
-  type       String // Type of notification (e.g., 'appointment_request', 'service_package', 'reminder')
-  title      String // Title or short description of the notification
-  message    String // Detailed content of the notification
-  status     String    @default("unread") // 'unread', 'read', 'clicked'
-  entityId   Int? // ID of the related entity (e.g., appointment ID, package request ID)
-  entityType String? // Type of related entity ('appointment', 'service_package')
-  createdAt  DateTime  @default(now()) // Timestamp when the notification was created
-  sentAt     DateTime? // Timestamp when the notification was sent
-  viewedAt   DateTime? // Timestamp when the notification was viewed or clicked
-  isCritical Boolean   @default(false) // Whether the notification is critical
-  expiresAt  DateTime? // Expiration timestamp for the notification
-  targetRole String? // Role of the target user (e.g., 'super_admin', 'admin', 'doctor')
-  User       User?     @relation(fields: [userId], references: [id])
+  type       String
+  title      String
+  message    String
+  status     String    @default("unread")
+  entityId   Int?
+  entityType String?
+  createdAt  DateTime  @default(now())
+  sentAt     DateTime?
+  viewedAt   DateTime?
+  isCritical Boolean   @default(false)
+  expiresAt  DateTime?
+  targetRole String?
   userId     Int?
+  User       User?     @relation(fields: [userId], references: [id])
+
+  @@index([userId], map: "Notification_userId_fkey")
+}
+
+model Service {
+  id                Int            @id @default(autoincrement())
+  pnrNumber         String?
+  firstName         String
+  lastName          String?
+  phoneNumber       String
+  email             String?
+  appointmentDate   String
+  appointmentTime   String?
+  repeatChecked     Boolean        @default(false)
+  daysInterval      Int?
+  numberOfTimes     Int?
+  requestVia        String
+  appointmentStatus String         @default("pending")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  checkedIn         Boolean?       @default(false)
+  emailSent         Boolean?       @default(false)
+  messageSent       Boolean?       @default(false)
+  smsSent           Boolean?       @default(false)
+  packageId         Int            @default(0)
+  packageName       String
+  package           Package?       @relation(fields: [packageId], references: [id])
+  repeatedDates     RepeatedDate[]
+  lockedBy          Int?
+  userId            Int?
+  username          String?
+  role              UserRole?
+}
+
+model RepeatedDate {
+  id        Int     @id @default(autoincrement())
+  date      String
+  serviceId Int
+  service   Service @relation(fields: [serviceId], references: [id])
+
+  @@index([serviceId], map: "RepeatedDate_serviceId_fkey")
+}
+
+model Package {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  services Service[] // Back relation to Service
+}
+
+enum AppointmentStatus {
+  pending
+  confirmed
+  cancelled
+  completed
+  rescheduled
+}
+
+enum UserRole {
+  super_admin
+  sub_admin
+  admin
+  doctor
+  unknown
+}
+
+model Estimation {
+  id           Int      @id @default(autoincrement())
+  doctorId     Int
+  departmentId Int
+  estimation   String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  doctor     Doctor     @relation(fields: [doctorId], references: [id])
+  department Department @relation(fields: [departmentId], references: [id])
+}
+
+model Channel {
+  id                Int                @id @default(autoincrement())
+  name              String // Channel name or identifier
+  channelId         Int                @unique
+  doctorId          Int? // Doctor ID
+  doctors           Doctor?            @relation(fields: [doctorId], references: [id]) // Relation with Doctor model
+  doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment") // Opposite relation to DoctorAssignment
+}
+
+model DoctorAssignment {
+  id             Int     @id @default(autoincrement())
+  channelId      Int
+  doctorId       Int
+  departmentName String
+  channel        Channel @relation("ChannelToDoctorAssignment", fields: [channelId], references: [channelId]) // Relation to Channel
+  doctor         Doctor  @relation(fields: [doctorId], references: [id]) // Relation to Doctor
+
+  @@index([channelId])
+  @@index([doctorId])
+}
+
+model EstimationDetails {
+  id                      Int            @id @default(autoincrement()) // Unique Number
+  estimationId            String         @unique // Unique Number
+  patientName             String // String
+  patientPhoneNumber      String // String
+  patientUHID             String? // String
+  ageOfPatient            Int? // Number
+  genderOfPatient         String? // String
+  consultantId            Int // Number
+  consultantName          String // String
+  estimationName          String // String
+  estimationPreferredDate String // String
+  remarks                 String? // String (Optional)
+  totalDaysStay           Int? // Number
+  icuStay                 Int? // Number (Optional)
+  wardStay                Int? // Number (Optional)
+  roomType                String? // String (Optional)
+  inclusions              Inclusion[] // Related Table
+  exclusions              Exclusion[] // Related Table
+  estimatedDate           String? // String
+  estimationCost          Int? // Number
+  discountPercentage      Int? // Number
+  totalEstimationAmount   Int? // Number
+  advanceAmountPaid       Int? // Number
+  receiptNumber           String? // String
+  followUpDates           FollowUpDate[] // Separate Table
+  employeeId              String? // String
+  approverId              String? // String
+  patientSign             String? // Sign
+  employeeSign            String? // Sign
+  approverSign            String? // Sign
+  approvedDateAndTime     DateTime? // Date
+  estimationCreatedTime   DateTime? // String
+  messageSentDateAndTime  DateTime? // Date
+  pdfLink                 String? // String
+  pacDone                 Boolean? // Boolean
+  statusOfEstimation      String? // String
+  ageBucketOfSurgery      Int? // Number
+  estimationType          String // String
+  messageSent             Boolean?
+
+  @@map("estimation_details")
+}
+
+model FollowUpDate {
+  id                Int                @id @default(autoincrement())
+  remarks           String // Remarks or comments
+  date              String // Follow-up date
+  estimationId      String // Relation to the Estimation table
+  EstimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+
+  @@map("follow_up_date")
+}
+
+model Inclusion {
+  id                Int                @id @default(autoincrement()) // Primary key
+  description       String // Inclusion description
+  estimationId      String // Foreign key to EstimationDetails
+  estimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+
+  @@map("inclusions")
+}
+
+model Exclusion {
+  id                Int                @id @default(autoincrement()) // Primary key
+  description       String // Exclusion description
+  estimationId      String // Foreign key to EstimationDetails
+  estimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+
+  @@map("exclusions")
 }

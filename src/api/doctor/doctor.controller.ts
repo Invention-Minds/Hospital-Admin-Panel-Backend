@@ -212,6 +212,8 @@ export const getDoctors = async (req: Request, res: Response) => {
         
         },
         department: true, // Include department to get its details
+        unavailableDates: true,
+        bookedSlots: true,
       },
     });
 
@@ -239,7 +241,117 @@ export const getDoctors = async (req: Request, res: Response) => {
   }
 };
 
+export const getDoctorDetails = async (req: Request, res: Response) => {
+  try {
+    // Capture the date from the query parameter, defaulting to the current date if not provided
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
 
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
+    console.log("Requested Date:", requestedDate);
+    const formattedDate = requestedDate.toISOString().split('T')[0]; // Convert to "YYYY-MM-DD"
+    console.log("Formatted Date:", formattedDate);
+
+    const isToday = requestedDate.toDateString() === indianDate.toDateString();
+    const isFuture = requestedDate > indianDate
+    const today = new Date();
+    const startOfToday = new Date(today.setHours(0, 0, 0, 0));
+const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+
+    const doctors = await prisma.doctor.findMany({
+      include: {
+        // availability: {
+        //   where: {
+        //     AND: [
+        //       {
+        //         updatedAt: {
+        //           lte: requestedDate, // Get availability updated on or before the requested date
+        //         },
+        //       },
+        //       {
+        //         OR: [
+        //           {
+        //             updatedAt: null, // Include availability where updatedAt is null (for older records)
+        //           },
+        //           {
+        //             updatedAt: {
+        //               not: null, // Ensure the availability has been updated at least once
+        //             },
+        //           },
+        //         ],
+        //       },
+        //     ],
+        //   },
+        //   orderBy: {
+        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+        //   },
+        // },
+        availability: {
+          where: {
+            OR: [
+              {
+                updatedAt: null, // Include availability where updatedAt is null (for older records)
+              },
+              {
+                updatedAt: {
+                  lte: requestedDate, // Get availability updated on or before the requested date
+                },
+              },
+            ],
+          },
+          orderBy: {
+            updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+            // updatedAt: isToday || isFuture ? 'desc' : 'asc',
+          },
+        
+        },
+        department: true, // Include department to get its details
+        unavailableDates: true,
+        bookedSlots: {
+          where: {
+            date: formattedDate, // Fetch only slots for the requested date
+          },
+        },
+        extraSlots: {
+          where: {
+            date: formattedDate, // Fetch only extra slots for the requested date
+          },
+        },
+        unavailableSlots: {
+          where: {
+            date: formattedDate, // Fetch only unavailable slots for the requested date
+          },
+          select: {
+            time: true,
+          },
+        },
+      },
+    });
+    // console.log(doctors,"doctors")
+    const filteredDoctors = doctors.map((doctor) => {
+      const relevantAvailability = doctor.availability.filter((avail) => {
+        if (isToday) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else if (isFuture) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else {
+          return avail.updatedAt === null || avail.updatedAt <= requestedDate;
+        }
+      }).slice(0, 1); // Take only the most relevant availability
+      // console.log("Relevant Availability:", relevantAvailability);
+      return {
+        ...doctor,
+        availability: relevantAvailability,
+      };
+    });
+    // console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
+
+    res.json(doctors);
+  } catch (error: any) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+}
 
 
 export const getFutureBookedSlots = async (req: Request, res: Response) => {
@@ -380,7 +492,9 @@ export const updateDoctor = async (req: Request, res: Response) => {
       unavailableDates = [],
       unavailableSlots = [],
       availability,
-      doctorType
+      doctorType,
+      userId,
+      roomNo
     } = req.body;
     const slotDuration = parseInt(req.body.slotDuration);
     let availableFrom = req.body.availableFrom;
@@ -418,6 +532,8 @@ export const updateDoctor = async (req: Request, res: Response) => {
         availableFrom,
         slotDuration,
         doctorType,
+        userId,
+        roomNo
 
       },
     });

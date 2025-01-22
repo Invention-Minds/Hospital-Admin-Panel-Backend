@@ -3,7 +3,8 @@ import {
     createAppointment, getAppointments, updateAppointment, deleteAppointment, getTotalAppointments,
     getPendingAppointments, getAppointmentsByUser, getDoctorReport, lockAppointment, unlockAppointment, scheduleCompletion,registerForUpdates,checkInAppointment,
     getAppointmentsBySlot,
-    getAllNotifications
+    getAllNotifications,
+    deleteNotification
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -17,7 +18,7 @@ router.get('/total', authenticateToken, getTotalAppointments);
 router.get('/pending', authenticateToken, getPendingAppointments);
 router.get('/by-user', authenticateToken, getAppointmentsByUser);
 // router.get('/by-role',authenticateToken,);
-router.get('/by-doctor', authenticateToken, getDoctorReport);
+router.get('/by-doctor', getDoctorReport);
 router.get('/slotsbyappointments',authenticateToken,getAppointmentsBySlot)
 // router.put('/lock/:id', lockAppointment);
 // router.put('/unlock/:id', unlockAppointment);
@@ -29,7 +30,7 @@ router.put('/:id/unlock', authenticateToken, unlockAppointment);
 router.put('/:id/schedule-completion', scheduleCompletion);
 router.put('/:id/checkin', authenticateToken, checkInAppointment);
 router.get('/notifications', getAllNotifications);
-
+router.delete('/notifications/:id', deleteNotification);
 
 
 export default router;
