@@ -3,6 +3,7 @@ import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import AppointmentRepository from './appointment.repository';
 import { PrismaClient } from '@prisma/client';
+import moment from 'moment-timezone';
 
 const prisma = new PrismaClient();
 
@@ -351,6 +352,11 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
 // Controller function to handle the check-in action
 export const checkInAppointment = async (req: Request, res: Response) => {
   const { id } = req.params;
+  const usEasternTime = moment.tz("America/New_York");
+
+  // Convert US Eastern Time to Indian Standard Time (IST)
+  const indianTime = usEasternTime.clone().tz("Asia/Kolkata").toDate();
+  console.log(indianTime, 'indianTime')
 
   try {
     // Update the checkedIn status for the specified appointment
@@ -360,6 +366,7 @@ export const checkInAppointment = async (req: Request, res: Response) => {
       },
       data: {
         checkedIn: true,
+        checkedInTime: indianTime
       },
     });
 

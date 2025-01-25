@@ -99,34 +99,40 @@ model UnavailableDates {
 }
 
 model Appointment {
-  id             Int               @id @default(autoincrement())
-  patientName    String
-  phoneNumber    String
-  email          String
-  doctorId       Int?
-  doctorName     String
-  department     String
-  date           String
-  time           String
-  requestVia     String?
-  smsSent        Boolean?          @default(false)
-  emailSent      Boolean?          @default(false)
-  status         AppointmentStatus @default(pending)
-  created_at     DateTime          @default(now())
-  updated_at     DateTime          @updatedAt
-  userId         Int?
-  lockedBy       Int?
-  lockExpiresAt  DateTime?
-  patientId      Int?
-  prnNumber      Int?
-  checkedIn      Boolean?          @default(false)
-  remainder1Sent Boolean?          @default(false)
-  remainder2Sent Boolean?          @default(false)
-  messageSent    Boolean?          @default(false)
-  doctor         Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
-  patient        Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
-  user           User?             @relation("UserAppointments", fields: [userId], references: [id])
-  checkedOut     Boolean?          @default(false)
+  id                  Int               @id @default(autoincrement())
+  patientName         String
+  phoneNumber         String
+  email               String
+  doctorId            Int?
+  doctorName          String
+  department          String
+  date                String
+  time                String
+  requestVia          String?
+  smsSent             Boolean?          @default(false)
+  emailSent           Boolean?          @default(false)
+  status              AppointmentStatus @default(pending)
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+  userId              Int?
+  lockedBy            Int?
+  lockExpiresAt       DateTime?
+  patientId           Int?
+  prnNumber           Int?
+  checkedIn           Boolean?          @default(false)
+  remainder1Sent      Boolean?          @default(false)
+  remainder2Sent      Boolean?          @default(false)
+  messageSent         Boolean?          @default(false)
+  doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
+  user                User?             @relation("UserAppointments", fields: [userId], references: [id])
+  checkedOut          Boolean?          @default(false)
+  checkedInTime       DateTime?
+  checkedOutTime      DateTime?
+  waitingTime         String?
+  endConsultation     Boolean?
+  postPond            Boolean?
+  endConsultationTime DateTime?
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -276,12 +282,13 @@ enum UserRole {
 }
 
 model Estimation {
-  id           Int      @id @default(autoincrement())
-  doctorId     Int
-  departmentId Int
-  estimation   String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             Int      @id @default(autoincrement())
+  doctorId       Int
+  departmentId   Int
+  estimation     String
+  estimationType String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   doctor     Doctor     @relation(fields: [doctorId], references: [id])
   department Department @relation(fields: [departmentId], references: [id])
@@ -313,7 +320,7 @@ model EstimationDetails {
   estimationId            String         @unique // Unique Number
   patientName             String // String
   patientPhoneNumber      String // String
-  patientUHID             String? // String
+  patientUHID             Int? // String
   ageOfPatient            Int? // Number
   genderOfPatient         String? // String
   consultantId            Int // Number

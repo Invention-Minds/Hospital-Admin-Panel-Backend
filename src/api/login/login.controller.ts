@@ -43,7 +43,7 @@ export const userLogin = async (req: Request, res: Response) => {
     console.log(req.body);
     const {password,employeeId ,username} = req.body;
     // const role = extractRoleFromUsername(username);  // Extract role
-    const user = await loginUser(password, username);
+    const user = await loginUser(password, employeeId);
     console.log(user)
 
     if (user) {

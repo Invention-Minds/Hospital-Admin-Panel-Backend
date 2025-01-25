@@ -5,9 +5,9 @@ import bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
-export const loginUser = async (password: string, username: string) => {
-  const user = await loginRepository.findUserByUsername(username);
-  // const user = await loginRepository.findUserByEmployeeId(employeeId)
+export const loginUser = async (password: string, employeeId: string) => {
+  // const user = await loginRepository.findUserByUsername(username);
+  const user = await loginRepository.findUserByEmployeeId(employeeId)
   console.log("user", user);
   if (user && bcrypt.compareSync(password, user.password)) {
     return {
