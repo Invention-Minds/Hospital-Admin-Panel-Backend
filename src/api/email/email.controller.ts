@@ -331,3 +331,36 @@ Team Rashtrotthana
   }
 };
 
+export const sendEmailForApprover = async (req: Request, res: Response) => {
+  try {
+    const { pdfLink, estimationId, patientName, to } = req.body
+    const emailContent = {
+      subject: ` Estimation Document of ${patientName}] `,
+      text: `
+
+      Dear Team,
+
+      Namaste!
+      Please find the attached document with the details of the approved estimation for the treatment of ${patientName}. The estimation can be accessed through the link below:
+      Doc: ${pdfLink}
+      Thank you!
+
+      Regards,
+      Team Rashtrotthana
+    `,
+    };
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: Array.isArray(to) ? to.join(', ') : to,
+      subject: emailContent.subject,
+      text: emailContent.text,
+    };
+    const info = await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: 'Health Checkup Confirmation Email sent successfully', info });
+
+  }
+  catch (error) {
+    console.error('Error sending health checkup confirmation email:', error);
+    res.status(500).json({ message: 'Failed to send health checkup confirmation email' });
+  }
+}

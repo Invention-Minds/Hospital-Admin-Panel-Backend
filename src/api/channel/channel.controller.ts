@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { notifyRemoveChannels } from '../appointments/appointment.controller';
 
 const prisma = new PrismaClient();
 
@@ -22,6 +23,27 @@ export const getChannels = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Internal server error' });
       }
 };
+
+export const getChannelsByDoctor = async (req: Request, res: Response) => {
+  const {doctorId} = req.params;
+  try{
+    const channel = await prisma.doctorAssignment.findFirst({
+      where: {doctorId: parseInt(doctorId)},
+      select:{
+        channelId: true
+      }
+    })
+    if (!channel) {
+      res.status(404).json({ message: 'Channel not found' });
+      return;
+   }
+   res.status(200).json(channel);
+  }
+  catch (error) {
+    console.error('Error fetching channel by doctor:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+}
 
 export const getDoctorsByChannel = async (req: Request, res: Response) => {
     const { channelId } = req.params;
@@ -99,7 +121,7 @@ export const assignDoctorToChannel = async (req: Request, res: Response) => {
           departmentName,
         },
       });
-  
+      notifyRemoveChannels(channelId)
       res.status(201).json({ message: 'Doctor assigned successfully', newAssignment });
     } catch (error) {
       console.error('Error assigning doctor to channel:', error);
@@ -127,7 +149,11 @@ export const removeDoctorFromChannel = async (req: Request, res: Response) => {
       await prisma.doctorAssignment.delete({
         where: { id: assignment.id },
       });
-  
+      await prisma.doctor.update({
+        where: { id: doctorId },
+        data: { roomNo: "" }, // Set room number to empty
+      });
+      notifyRemoveChannels(channelId)
       res.status(200).json({ message: 'Doctor removed successfully' });
     } catch (error) {
       console.error('Error removing doctor from channel:', error);

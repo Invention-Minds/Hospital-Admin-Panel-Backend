@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { loginUser, createUser, resetPassword, changePassword } from './login.resolver';
+import { loginUser, createUser, resetPassword, changePassword, loginDoctor } from './login.resolver';
 import { UserRole } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import loginRepository from './login.repository';
@@ -41,9 +41,28 @@ const generateToken = (user: any) => {
 export const userLogin = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
-    const {password,employeeId ,username} = req.body;
-    // const role = extractRoleFromUsername(username);  // Extract role
-    const user = await loginUser(password, employeeId);
+    const { password, employeeId, phoneNumber } = req.body;
+    let doctors;
+    let user;
+    if (phoneNumber) {
+      const doctor = await prisma.doctor.findFirst({
+        where: { phone_number: phoneNumber },  // Check if phone number exists
+        select: { userId: true },           // Get only userId
+      });
+
+      if (doctor && doctor.userId) {
+        // doctors = await prisma.user.findUnique({
+        //   where: { id: doctor.userId }, // Fetch the corresponding user
+        // });
+        user = await loginDoctor(password, doctor.userId)
+      }
+
+    }
+
+    if (employeeId) {
+      user = await loginUser(password, employeeId);
+    }
+
     console.log(user)
 
     if (user) {
@@ -82,26 +101,26 @@ export const userLogin = async (req: Request, res: Response) => {
         loggedInAt: generatedDate,
         lastActive: generatedTime,
       });
-  // Create an active token
-  try {
-    await prisma.activeToken.create({
-      data: {
-        userId: user.id,
-        token: token,
-        loggedInAt: generatedDate,
-        lastActive: generatedTime,
-        isActive: true,
-      },
-    });
-    console.log("Token created successfully:", generatedDate, generatedTime);
-  } catch (createTokenError) {
-    console.error('Error creating active token:', createTokenError);
-    throw createTokenError; // Rethrow to handle in the main catch block
-  }
-  console.log("tokenGeneratedAt", generatedDate, generatedTime);
-      res.status(200).json({ token,generatedDate,generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist } }); // Send token and user data
+      // Create an active token
+      try {
+        await prisma.activeToken.create({
+          data: {
+            userId: user.id,
+            token: token,
+            loggedInAt: generatedDate,
+            lastActive: generatedTime,
+            isActive: true,
+          },
+        });
+        console.log("Token created successfully:", generatedDate, generatedTime);
+      } catch (createTokenError) {
+        console.error('Error creating active token:', createTokenError);
+        throw createTokenError; // Rethrow to handle in the main catch block
+      }
+      console.log("tokenGeneratedAt", generatedDate, generatedTime);
+      res.status(200).json({ token, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType } }); // Send token and user data
 
-      
+
     } else {
       res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -123,7 +142,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
 
 export const userRegister = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { username, password, isReceptionist, employeeId, role } = req.body;
+    const { username, password, isReceptionist, employeeId, role, subAdminType, adminType } = req.body;
     // const { username, password, isReceptionist, role } = req.body;
     // const { username, password } = req.body;
     // const role = extractRoleFromUsername(username); 
@@ -138,7 +157,7 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
       return; // Ensure the function stops execution after sending a response
     }
 
-    const newUser = await createUser(username, password, role, isReceptionist, employeeId);
+    const newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType);
     res.status(201).json(newUser);
   } catch (error) {
     console.error('Error during user registration:', error);
@@ -175,9 +194,9 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
-    const { username, newPassword } = req.body;
+    const { employeeId, newPassword } = req.body;
 
-    await resetPassword(username, newPassword);
+    await resetPassword(employeeId, newPassword);
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -195,11 +214,11 @@ export const userChangePassword = async (req: Request, res: Response) => {
 };
 export const getUserDetails = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user?.id;  // Assuming user ID is stored in the request after authentication
+    const userId = parseInt(req.query.userId as string);  // Assuming user ID is stored in the request after authentication
 
-    if (typeof userId !== 'number') {
-      res.status(401).json({ error: 'Unauthorized: User ID not found' });
-      return; // Ensure to return after sending a response
+    if (isNaN(userId)) {
+      res.status(400).json({ error: 'Bad Request: Invalid User ID' });
+      return;
     }
 
     const user = await loginRepository.findUserById(userId);
@@ -207,7 +226,7 @@ export const getUserDetails = async (req: Request, res: Response): Promise<void>
 
     if (user) {
       const role = extractRoleFromUsername(user.username); // Extract role from username if needed
-      res.status(200).json({ userId: user.id, username: user.username, role}); // Include userId in the response
+      res.status(200).json({ userId: user.id, username: user.username, role, user }); // Include userId in the response
     }
     else {
       res.status(404).json({ error: 'User not found' });

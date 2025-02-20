@@ -4,6 +4,7 @@ import { notifyPendingAppointments } from '../appointments/appointment.controlle
 import nodemailer from 'nodemailer';
 import cron from 'node-cron';
 import { sendServiceWhatsappMessage } from '../whatsapp/whatsapp.controller';
+import { updateEstimation } from '../whatsapp/whatsapp.controller';
 import axios from 'axios';
 
 const repository = new ServiceRepository();
@@ -167,33 +168,40 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
 export const updateService = async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { repeatedDates, ...formData } = req.body;
+      const { repeatedDates,package: packageDate, ...formData } = req.body;
       console.log(id,formData,repeatedDates)
+      const serviceId = Number(id);
+      if (isNaN(serviceId)) {
+         res.status(400).json({ message: 'Invalid service ID' });
+         return
+      }
+  
   
       // Start a transaction to ensure consistency
       const result = await prisma.$transaction(async (prisma) => {
         // Step 1: Update the Service table
         const updatedService = await prisma.service.update({
-          where: { id: Number(id) },
+          where: { id: serviceId },
           data: { ...formData },
         });
-        console.log(updatedService);
+        console.log(updatedService, 'service');
   
         // Step 2: If repeatedDates exist, delete old ones and add new ones
         if (repeatedDates && repeatedDates.length > 0) {
-          // Delete old repeated dates
+          // Step 1: Delete old repeated dates
           await prisma.repeatedDate.deleteMany({
             where: { serviceId: Number(id) },
           });
-  
-          // Add new repeated dates
+        
+          // Step 2: Add new repeated dates
           await prisma.repeatedDate.createMany({
-            data: repeatedDates.map((date: string) => ({
-              serviceId: Number(id),
-              date: date
+            data: repeatedDates.map((date: { id: number, date: string, serviceId: number }) => ({
+              serviceId: date.serviceId,  // Get serviceId from the repeatedDates object
+              date: date.date             // Get date from the repeatedDates object
             })),
           });
         }
+        
   
         return updatedService;
       });
@@ -262,7 +270,7 @@ export const callRepeatedAppointments = async (req: Request, res: Response) => {
   try {
       // Get the current time in Indian Standard Time (IST)
 
-  
+      await updateEstimation();
       // Run the required tasks
       await processRepeatedAppointments();
   

@@ -4,6 +4,7 @@ import DoctorRepository from '../doctor/doctor.repository';
 import AppointmentRepository from './appointment.repository';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
+import axios from 'axios';
 
 const prisma = new PrismaClient();
 
@@ -28,14 +29,45 @@ export const registerForUpdates = (req: Request, res: Response): void => {
 };
 
 
+
 // Notify all connected clients of a new appointment with 'pending' status
 export const notifyPendingAppointments = (newNotification: any): void => {
   console.log('Notifying clients of new appointment:', newNotification);
   clients.forEach(client => {
+    client.write(`event: appointment\n`);
     client.write(`data: ${JSON.stringify(newNotification)}\n\n`);
   });
   // console.log('Clients notified',clients);
 };
+export const notifyRemoveChannels = (removedId: any): void => {
+  console.log('Notifying clients of remove doctor:', removedId);
+  clients.forEach(client => {
+    client.write(`event: channelRemoval\n`);
+    client.write(`data: ${JSON.stringify(removedId)}\n\n`);
+  });
+};
+export const notifyDoctor = (doctorId: any): void => {
+  console.log('Notifying clients of checkin appt doctor:', doctorId);
+  clients.forEach(client => {
+    client.write(`event: loadDoctor\n`);
+    client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
+  });
+};
+
+export const messageSent = (doctorId: any): void => {
+  console.log('Notifying clients of message doctor:', doctorId);
+  clients.forEach(client => {
+    client.write(`event: messageSent\n`);
+    client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
+  });
+}
+export const adminAlertSent = (doctorId: any): void => {
+  console.log('Notifying clients of message doctor:', doctorId);
+  clients.forEach(client => {
+    client.write(`event: adminAlertSent\n`);
+    client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
+  });
+}
 
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -55,27 +87,30 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       emailSent,
       messageSent,
       prnNumber,
-      doctorType
+      doctorType,
+      age,
+      gender,
+      serviceId
     } = req.body;
-    console.log(req.body);
+    console.log(req.body, 'request');
 
     // Convert the date to "YYYY-MM-DD" format
     let date = new Date(req.body.date).toISOString().split('T')[0];
-    console.log(date,'selected slot is not available')
+    console.log(date, 'selected slot is not available')
 
     // Ensure the status field matches Prisma enum
     const bookedSlots = await doctorRepository.getBookedSlots(doctorId, date);
     const nonCompleteBookedSlots = bookedSlots.filter(slot => !slot.complete);
-    console.log(nonCompleteBookedSlots,'selected slot is not available oncomplete')
+    console.log(nonCompleteBookedSlots, 'selected slot is not available oncomplete')
     const isSlotAvailable = !nonCompleteBookedSlots.some(slot => slot.time === time);
-    console.log(isSlotAvailable,'selected slot is not available on slot')
+    console.log(isSlotAvailable, 'selected slot is not available on slot')
     if (!isSlotAvailable) {
       res.status(400).json({ error: 'Selected slot is not available' });
       return;
     }
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
-    console.log(day,'selected slot is not available request')
+    console.log(day, 'selected slot is not available request')
     // const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day,date);
     // console.log(doctorAvailability,'selected slot is not available request')
 
@@ -84,26 +119,26 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     //   return;
     // }
     // Check if the doctor is a Visiting Consultant
-if (doctorType === 'Visiting Consultant') {
-  console.log('Skipping availability check for Visiting Consultant.');
-  // Allow the process to continue without checking availability
-} else {
-  // Check availability only for regular doctors
-  const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
-  
+    if (doctorType === 'Visiting Consultant') {
+      console.log('Skipping availability check for Visiting Consultant.');
+      // Allow the process to continue without checking availability
+    } else {
+      // Check availability only for regular doctors
+      const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
 
-  console.log(doctorAvailability, 'selected slot is not available request');
 
-  if (!doctorAvailability) {
-    res.status(400).json({ error: 'Doctor is not available on the selected day.' });
-    return;
-  }
-  const slotDuration = doctorAvailability.slotDuration;
-  const availableFrom = doctorAvailability.availableFrom.split('-');
-  const availableStartTime = availableFrom[0];
-  const availableEndTime = availableFrom[1];
-console.log(availableStartTime,availableEndTime,'selected slot is not available request')
-}
+      console.log(doctorAvailability, 'selected slot is not available request');
+
+      if (!doctorAvailability) {
+        res.status(400).json({ error: 'Doctor is not available on the selected day.' });
+        return;
+      }
+      const slotDuration = doctorAvailability.slotDuration;
+      const availableFrom = doctorAvailability.availableFrom.split('-');
+      const availableStartTime = availableFrom[0];
+      const availableEndTime = availableFrom[1];
+      console.log(availableStartTime, availableEndTime, 'selected slot is not available request')
+    }
 
 
     // Check if the requested time falls within the available slots
@@ -130,11 +165,14 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
       emailSent,
       messageSent,
       userId,
-      prnNumber
+      prnNumber,
+      age,
+      gender,
+      serviceId
     });
     console.log("New Appointment:", newAppointment);
     if (newAppointment.status === 'pending') {
-     
+
       const newNotification = await prisma.notification.create({
         data: {
 
@@ -152,17 +190,108 @@ console.log(availableStartTime,availableEndTime,'selected slot is not available 
       res.status(201).json(newAppointment);
 
     }
-    
+
     if (newAppointment.status === 'confirmed') {
       await doctorRepository.addBookedSlot(doctorId, date, time);
       res.status(201).json(newAppointment);
     }
+
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+export const createNewAppointment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Check if request contains an array of appointments
+    const appointments = Array.isArray(req.body) ? req.body : [req.body];
+    console.log(appointments)
+
+    // Process each appointment individually
+    const newAppointments = await Promise.all(
+      appointments.map(async (appointment) => {
+        const {
+          patientName,
+          phoneNumber,
+          doctorName,
+          doctorId,
+          department,
+          date,
+          time,
+          status,
+          email,
+          requestVia,
+          smsSent,
+          emailSent,
+          messageSent,
+          prnNumber,
+          doctorType,
+          age,
+          gender,
+          serviceId
+        } = appointment;
+
+
+
+        await doctorRepository.addBookedSlot(doctorId, date, time);
+        // 🔹 Create the appointment
+
+        try{
+          const url = process.env.WHATSAPP_API_URL;
+        const headers = {
+          "Content-Type": "application/json",
+          apikey: process.env.WHATSAPP_AUTH_TOKEN,
+        };
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        const patientPayload = {
+          from: fromPhoneNumber,
+          to: phoneNumber,
+          type: "template",
+          message: {
+            templateid: "718883", // Replace with the actual template ID
+            placeholders: [patientName, doctorName, status, date, time], // Dynamic placeholders
+          },
+        };
+        const patientResponse = await axios.post(url!, patientPayload, { headers });
+
+        }
+        catch(error){
+          res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+        }
+        return await resolver.createAppointment({
+          patientName,
+          phoneNumber,
+          doctorName,
+          doctorId,
+          department,
+          date,
+          time,
+          status,
+          email,
+          messageSent,
+          emailSent,
+          smsSent: true,
+          userId: appointment.userId || null,
+          prnNumber,
+          age,
+          gender,
+          serviceId,
+          requestVia: 'Walk-In'
+        });
+
+
+      })
+      
+    );
+   
+    res.status(201).json(newAppointments);
+    
+
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
 
-export const getAllNotifications = async (req: Request, res: Response): Promise<void> => {  
+export const getAllNotifications = async (req: Request, res: Response): Promise<void> => {
   try {
     const notifications = await prisma.notification.findMany();
     res.status(200).json(notifications);
@@ -225,7 +354,7 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     const userId = req.body.userId || null;
     // Destructure and remove unnecessary nested objects before updating
     const { id, doctor, user, ...updateData } = req.body;
-    console.log("updateData",updateData)
+    console.log("updateDatsa", updateData)
 
     // Include userId if needed
     if (userId) {
@@ -238,6 +367,29 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
+
+export const updateExtraWaitingTime = async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const { waitingTime } = req.body;
+  console.log(waitingTime)
+  try {
+    // Update the checkedIn status for the specified appointment
+    const updatedAppointment = await prisma.appointment.update({
+      where: {
+        id: Number(id),
+      },
+      data: {
+        extraWaitingTime: waitingTime
+      },
+    });
+
+    res.status(200).json({ message: 'Appointment checked in successfully', updatedAppointment });
+  } catch (error) {
+    console.error('Error updating check-in status:', error);
+    res.status(500).json({ error: 'An error occurred while updating the check-in status' });
+  }
+}
+
 
 export const deleteAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -308,7 +460,7 @@ export const lockAppointment = async (req: Request, res: Response): Promise<void
     const appointmentId = Number(req.params.id);
     const userId = req.body.userId;
     const userIdNum = Number(userId);
-    console.log(appointmentId,userId)
+    console.log(appointmentId, userId)
     const appointment = await appointmentRepository.getAppointmentById(appointmentId);
     if (!appointment) {
       res.status(404).json({ message: 'Appointment not found' });
@@ -320,10 +472,10 @@ export const lockAppointment = async (req: Request, res: Response): Promise<void
     //   return;
     // }
     const lockedAppointment = await resolver.lockAppointment(appointmentId, userIdNum);
-console.log(lockedAppointment,"locked")
+    console.log(lockedAppointment, "locked")
     if (!lockedAppointment) {
-       res.status(409).json({ message: 'Appointment is currently locked by another user.' });
-       return;
+      res.status(409).json({ message: 'Appointment is currently locked by another user.' });
+      return;
     }
 
     res.status(200).json(lockedAppointment);
@@ -341,7 +493,7 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
       res.status(400).json({ message: 'Invalid delay minutes' });
       return;
     }
-    console.log(appointmentId,delayMinutes)
+    console.log(appointmentId, delayMinutes)
     await resolver.scheduleAppointmentCompletion(appointmentId, delayMinutes);
     res.status(200).json({ message: 'Appointment completion scheduled successfully' });
   } catch (error) {
@@ -352,11 +504,23 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
 // Controller function to handle the check-in action
 export const checkInAppointment = async (req: Request, res: Response) => {
   const { id } = req.params;
+  const { username } = req.body;
   const usEasternTime = moment.tz("America/New_York");
+
+  console.log(id,username)
 
   // Convert US Eastern Time to Indian Standard Time (IST)
   const indianTime = usEasternTime.clone().tz("Asia/Kolkata").toDate();
   console.log(indianTime, 'indianTime')
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: Number(id) },
+    include: { doctor: true }, // Fetch doctor details
+  });
+
+  if (!appointment) {
+    res.status(404).json({ error: "Appointment not found" });
+    return
+  }
 
   try {
     // Update the checkedIn status for the specified appointment
@@ -366,10 +530,11 @@ export const checkInAppointment = async (req: Request, res: Response) => {
       },
       data: {
         checkedIn: true,
-        checkedInTime: indianTime
+        checkedInTime: new Date(),
+        checkedInBy: username
       },
     });
-
+    notifyDoctor(appointment.doctorId);
     res.status(200).json({ message: 'Appointment checked in successfully', updatedAppointment });
   } catch (error) {
     console.error('Error updating check-in status:', error);
@@ -408,5 +573,316 @@ export const getAppointmentsBySlot = async (req: Request, res: Response): Promis
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
+export const bulkUpdateAppointments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentsToUpdate = req.body; // The array of appointments to update
+    console.log(appointmentsToUpdate, 'appointments')
+    if (appointmentsToUpdate.length === 0) {
+      res.status(400).json({ error: 'No appointments selected for update.' });
+      return;
+    }
+    const doctorName = appointmentsToUpdate[0].doctorName
+    const doctorId = appointmentsToUpdate[0].doctorId
+    const doctor = await prisma.doctor.findFirst({ where: { id: doctorId } });
+    const updatePromises = appointmentsToUpdate.map((appointment: { id: number }) =>
+      prisma.appointment.update({
+        where: { id: appointment.id },
+        data: {
+          isCloseOPD: true,
+          isCloseOPDTime: new Date(), // Set current time
+        }
+      })
+
+    );
+
+    // Wait for all update promises to resolve
+    await Promise.all(updatePromises)
+
+    const url = process.env.WHATSAPP_API_URL_BULK;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+    const whatsappPayload = {
+      from: fromPhoneNumber,
+      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      to:['919342287945'],
+      type: "template",
+      message: {
+        templateid: "738055", // Replace with actual template ID
+        placeholders: [doctorName, appointmentsToUpdate.length,doctor?.roomNo], // Dynamic placeholders
+      },
+    };
+    try {
+      const response = await axios.post(url!, whatsappPayload, { headers });
+      if (response.data.code === "200") {
+        console.log(`WhatsApp message sent successfully to `);
+      } else {
+        console.log(`Failed to send WhatsApp message to `, response.data);
+      }
+    } catch (error) {
+      console.error("Error sending WhatsApp message:", error);
+    }
+    res.status(200).json({ message: 'Appointments updated successfully', updatePromises });
+
+  } catch (error) {
+    console.error('Error updating appointments:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+// export const bulkUpdateAccepted = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     const appointmentsToUpdate = req.body; // The array of appointments to update
+//     console.log(appointmentsToUpdate,'appointments of accept')
+//     if (appointmentsToUpdate.length === 0) {
+//        res.status(400).json({ error: 'No appointments selected for update.' });
+//        return;
+//     }
+//     const timeGap = app
+//     const updatePromises = appointmentsToUpdate.map((appointment: { id: number }) => 
+//       prisma.appointment.update({
+//         where: { id: appointment.id },
+//         data: {
+//           isAccepted: true,
+//           isAcceptedCloseTime: new Date(), // Set current time
+//           status: 'pending'
+//         }
+//       })
+//     );
+
+//     // Wait for all update promises to resolve
+//     await Promise.all(updatePromises)
+
+//     res.status(200).json({ message: 'Appointments updated successfully', updatePromises });
+//   } catch (error) {
+//     console.error('Error updating appointments:', error);
+//     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+//   }
+// };
+
+export const bulkUpdateAccepted = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentsToUpdate = req.body; // The array of appointments to update
+    console.log(appointmentsToUpdate, 'appointments of accept');
+
+    if (appointmentsToUpdate.length === 0) {
+      res.status(400).json({ error: 'No appointments selected for update.' });
+      return;
+    }
+
+    const updatePromises = appointmentsToUpdate.map(async (appointment: { id: number }) => {
+      // Fetch the current appointment data to get `isCloseOPDTime`
+      const existingAppointment = await prisma.appointment.findUnique({
+        where: { id: appointment.id },
+        select: { isCloseOPDTime: true }, // Fetch only the required field
+      });
+
+      if (!existingAppointment || !existingAppointment.isCloseOPDTime) {
+        console.warn(`Appointment ID ${appointment.id} has no isCloseOPDTime`);
+        return null; // Skip update if isCloseOPDTime is missing
+      }
+
+      const isAcceptedCloseTime = new Date();
+      const timeGap = isAcceptedCloseTime.getTime() - new Date(existingAppointment.isCloseOPDTime).getTime();
+
+      return prisma.appointment.update({
+        where: { id: appointment.id },
+        data: {
+          isAccepted: true,
+          isAcceptedCloseTime,
+          timeGap: timeGap.toString(), // Store the time difference
+        },
+      });
+    });
+
+    // Wait for all update promises to resolve
+    const results = await Promise.all(updatePromises);
+
+    res.status(200).json({ message: 'Appointments updated successfully', results });
+  } catch (error) {
+    console.error('Error updating appointments:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+// export const bulkUpdateCancel = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     const appointmentsToUpdate = req.body; // The array of appointments to update
+//     console.log(appointmentsToUpdate, 'appointments of accept');
+
+//     if (appointmentsToUpdate.length === 0) {
+//       res.status(400).json({ error: 'No appointments selected for update.' });
+//       return;
+//     }
+
+//     const updatePromises = appointmentsToUpdate.map(async (appointment: { id: number }) => {
+//       // Fetch the current appointment data to get `isCloseOPDTime`
+//       const existingAppointment = await prisma.appointment.findUnique({
+//         where: { id: appointment.id },
+//       });
+
+//       if (!existingAppointment) {
+//         console.warn(`Appointment ID ${appointment.id} has no cancelled`);
+//         return null; // Skip update if isCloseOPDTime is missing
+//       }
 
 
+//       return prisma.appointment.update({
+//         where: { id: appointment.id },
+//         data: {
+//           status: 'cancelled'
+//         },
+//       });
+//     });
+
+//     // Wait for all update promises to resolve
+//     const results = await Promise.all(updatePromises);
+
+//     res.status(200).json({ message: 'Appointments updated successfully', results });
+//   } catch (error) {
+//     console.error('Error updating appointments:', error);
+//     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+//   }
+// };
+
+export const bulkUpdateCancel = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentsToUpdate = req.body; // Array of appointments to update
+    console.log(appointmentsToUpdate, 'appointments for cancellation');
+
+    if (appointmentsToUpdate.length === 0) {
+      res.status(400).json({ error: 'No appointments selected for update.' });
+      return;
+    }
+
+    const url = process.env.WHATSAPP_API_URL;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+    const updatePromises = appointmentsToUpdate.map(async (appointment: { id: number, doctorId: number, date: string, time: string }) => {
+      // Fetch appointment details to get the patient and doctor info
+      const existingAppointment = await prisma.appointment.findUnique({
+        where: { id: appointment.id },
+        include: { doctor: true }, // Fetch doctor details
+      });
+
+      if (!existingAppointment) {
+        console.warn(`Appointment ID ${appointment.id} not found`);
+        return null;
+      }
+
+      const { doctorId, date, time, phoneNumber, patientName, doctor } = existingAppointment;
+
+      // **Cancel the booked slot**
+      await prisma.bookedSlot.deleteMany({
+        where: { doctorId, date, time },
+      });
+
+      console.log(`Slot cancelled for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
+
+      // **Update appointment status to "cancelled"**
+      await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { status: "cancelled" },
+      });
+
+      console.log(`Updated appointment status to cancelled for Appointment ID: ${appointment.id}`);
+
+      // **Send WhatsApp message to patient**
+      const patientMessagePayload = {
+        from: fromPhoneNumber,
+        to: phoneNumber, // Patient's WhatsApp number
+        type: "template",
+        message: {
+          templateid: "674445", // Replace with actual template ID
+          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", date, time], // Dynamic placeholders
+        },
+      };
+
+      try {
+        const patientResponse = await axios.post(url!, patientMessagePayload, { headers });
+        if (patientResponse.data.code === "200") {
+          console.log(`WhatsApp message sent successfully to Patient: ${phoneNumber}`);
+        } else {
+          console.log(`Failed to send WhatsApp message to Patient: ${phoneNumber}`, patientResponse.data);
+        }
+      } catch (error) {
+        console.error("Error sending WhatsApp message to Patient:", error);
+      }
+
+      // **Send WhatsApp message to doctor**
+      if (doctor?.phone_number) {
+        const doctorMessagePayload = {
+          from: fromPhoneNumber,
+          to: doctor.phone_number, // Doctor's WhatsApp number
+          type: "template",
+          message: {
+            templateid: "674491", // Replace with actual doctor template ID
+            placeholders: [doctor.name, "cancelled", patientName, date, time], // Dynamic placeholders
+          },
+        };
+
+        try {
+          const doctorResponse = await axios.post(url!, doctorMessagePayload, { headers });
+          if (doctorResponse.data.code === "200") {
+            console.log(`WhatsApp message sent successfully to Doctor: ${doctor.phone_number}`);
+          } else {
+            console.log(`Failed to send WhatsApp message to Doctor: ${doctor.phone_number}`, doctorResponse.data);
+          }
+        } catch (error) {
+          console.error("Error sending WhatsApp message to Doctor:", error);
+        }
+      }
+
+      // **Insert slot into unavailableSlot table**
+      await prisma.unavailableSlot.create({
+        data: {
+          doctorId: Number(doctorId),
+          date: date,
+          time: time,
+        },
+      });
+
+      console.log(`Slot added to unavailableSlot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
+
+      return appointment.id; // Return the appointment ID after processing
+    });
+
+    // Wait for all update promises to resolve
+    await Promise.all(updatePromises);
+
+    res.status(200).json({ message: 'Appointments cancelled successfully' });
+
+  } catch (error) {
+    console.error('Error cancelling appointments:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+
+
+};
+export const getAppointmentByServiceId = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { serviceId, date } = req.query
+    const queryDate: string = typeof date === "string" ? date : moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Format: "2025-02-13"
+
+    console.log(`📌 Fetching Appointments for Service ID: ${serviceId} on ${queryDate}`);
+
+    // Fetch today's appointments based on serviceId
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        serviceId: Number(serviceId), // Match service ID
+        date: queryDate, // Match today's date in YYYY-MM-DD format
+      },
+    });
+
+    console.log("✅ Appointments Retrieved:", appointments);
+
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}

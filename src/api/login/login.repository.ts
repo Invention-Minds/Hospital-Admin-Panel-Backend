@@ -21,14 +21,16 @@ class AppointmentRepository {
     })
   }
 
-  async createUser(username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string) {
+  async createUser(username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, adminType: string, subAdminType: string) {
     return prisma.user.create({
       data: {
         username,
         password,
         role,
         isReceptionist,
-        employeeId
+        employeeId,
+        adminType,
+        subAdminType
       },
     });
   }

@@ -49,6 +49,8 @@ model Doctor {
   Channel          Channel[]
   DoctorAssignment DoctorAssignment[]
   roomNo           String?
+  ExtraSlotCount   ExtraSlotCount[]
+  SentMessage      SentMessage[]
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -64,6 +66,8 @@ model User {
   loggedInTime   String?
   employeeId     String?        @unique
   isReceptionist Boolean?       @default(false)
+  subAdminType   String?
+  adminType      String?
   doctors        Doctor[]       @relation("DoctorUser")
   Notification   Notification[]
   activeTokens   ActiveToken[]
@@ -133,6 +137,19 @@ model Appointment {
   endConsultation     Boolean?
   postPond            Boolean?
   endConsultationTime DateTime?
+  extraWaitingTime    Int?
+  checkedInBy         String?
+  isTransfer          Boolean?
+  isCloseOPD          Boolean?
+  isCloseOPDTime      DateTime?
+  isAccepted          Boolean?
+  isAcceptedCloseTime DateTime?
+  timeGap             String?
+  type                String?
+  age                 String?
+  gender              String?
+  serviceId           Int?
+  nameChangedBy       String?
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -168,9 +185,32 @@ model Patient {
   name         String
   phoneNumber  String
   email        String
+  age          Int?
+  gender       Int?
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
   appointments Appointment[] @relation("AppointmentToPatient")
+}
+
+model PatientDetails {
+  id              Int       @id @default(autoincrement())
+  prn             Int       @unique
+  name            String
+  foreignNational Boolean?
+  contactNo       String?
+  mobileNo        String?
+  email           String?
+  age             String?
+  gender          String?
+  address         String?
+  country         String?
+  state           String?
+  district        String?
+  city            String?
+  area            String?
+  pin             String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime?
 }
 
 model ActiveToken {
@@ -244,6 +284,7 @@ model Service {
   userId            Int?
   username          String?
   role              UserRole?
+  checkedInTime     DateTime?
 }
 
 model RepeatedDate {
@@ -261,6 +302,7 @@ model Package {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  deptIds     String?
 
   services Service[] // Back relation to Service
 }
@@ -303,6 +345,17 @@ model Channel {
   doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment") // Opposite relation to DoctorAssignment
 }
 
+model ExtraSlotCount {
+  id               Int      @id @default(autoincrement())
+  doctorId         Int
+  doctor           Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  date             String
+  extraHoursBefore String
+  extraHoursAfter  String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
 model DoctorAssignment {
   id             Int     @id @default(autoincrement())
   channelId      Int
@@ -343,9 +396,9 @@ model EstimationDetails {
   followUpDates           FollowUpDate[] // Separate Table
   employeeId              String? // String
   approverId              String? // String
-  patientSign             String? // Sign
-  employeeSign            String? // Sign
-  approverSign            String? // Sign
+  patientSign             String?        @db.Text // Sign
+  employeeSign            String?        @db.Text // Sign
+  approverSign            String?        @db.Text // Sign
   approvedDateAndTime     DateTime? // Date
   estimationCreatedTime   DateTime? // String
   messageSentDateAndTime  DateTime? // Date
@@ -355,6 +408,32 @@ model EstimationDetails {
   ageBucketOfSurgery      Int? // Number
   estimationType          String // String
   messageSent             Boolean?
+  signatureOf             String?
+  employeeName            String?
+  approverName            String?
+  cancellerName           String?
+  cancellerId             String?
+  feedback                String?
+  attenderName            String?
+  lockedBy                Int?
+  userId                  Int?
+  surgeryTime             String?
+  cancellationDateAndTime DateTime?
+  confirmedDateAndTime    DateTime?
+  completedDateAndTime    DateTime?
+  overDueDateAndTIme      DateTime?
+  estimationStatus        String?
+  pacAmountPaid           String?
+  pacReceiptNumber        String?
+  submittedDateAndTime    DateTime?
+  staffRemarks            String?
+  patientRemarks          String?
+  surgeryPackage          String?
+  implants                String?
+  instrumentals           String?
+  procedures              String?
+  multipleSurgeries       String?
+  multipleEstimationCost  String?
 
   @@map("estimation_details")
 }
@@ -385,4 +464,26 @@ model Exclusion {
   estimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
 
   @@map("exclusions")
+}
+
+model Maintenance {
+  id        Int      @id @default(autoincrement())
+  isActive  Boolean  @default(false) // TRUE means maintenance is ON
+  message   String   @default("The system is under maintenance. Please try again later.")
+  updatedAt DateTime @updatedAt
+
+  @@map("maintenance")
+}
+
+model SentMessage {
+  id        Int      @id @default(autoincrement())
+  doctorId  Int
+  alertType String   @db.VarChar(50) // Type of alert (e.g., "lateLogin", "adminAlert")
+  sentAt    DateTime @default(now()) // Timestamp when the message was sent
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, alertType, sentAt], map: "unique_daily_alert") // Ensures only one alert per doctor per day
+  @@index([doctorId], map: "sentMessages_doctorId_fkey")
+  @@map("sent_messages") // Actual DB table name
 }

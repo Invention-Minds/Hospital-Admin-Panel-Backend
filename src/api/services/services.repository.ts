@@ -47,7 +47,7 @@ export class ServiceRepository {
   // Get All Services
   async getAllServices() {
     return await prisma.service.findMany({
-      include: { repeatedDates: true },
+      include: { repeatedDates: true, package : true },
     });
   }
 

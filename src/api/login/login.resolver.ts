@@ -15,24 +15,43 @@ export const loginUser = async (password: string, employeeId: string) => {
       username: user.username,
       role: user.role,
       isReceptionist: user.isReceptionist,
-      employeeId: user.employeeId
+      employeeId: user.employeeId,
+      subAdminType: user.subAdminType,
+      adminType: user.adminType
+    };
+  }
+  return null;
+};
+export const loginDoctor = async (password: string, userId: number) => {
+  // const user = await loginRepository.findUserByUsername(username);
+  const user = await loginRepository.findUserById(userId)
+  console.log("user", user);
+  if (user && bcrypt.compareSync(password, user.password)) {
+    return {
+      id: user.id,           // Include id in the returned user object
+      username: user.username,
+      role: user.role,
+      isReceptionist: user.isReceptionist,
+      employeeId: user.employeeId,
+      subAdminType: user.subAdminType,
+      adminType: user.adminType
     };
   }
   return null;
 };
 
-export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string) => {
+export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, subAdminType: string, adminType:string) => {
   const hashedPassword = bcrypt.hashSync(password, 10);
-  return loginRepository.createUser(username, hashedPassword, role, isReceptionist, employeeId);  // Pass role here
+  return loginRepository.createUser(username, hashedPassword, role, isReceptionist, employeeId, subAdminType, adminType);  // Pass role here
 };
 // export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean) => {
 //   const hashedPassword = bcrypt.hashSync(password, 10);
 //   return loginRepository.createUser(username, hashedPassword, role, isReceptionist);  // Pass role here
 // };
 
-export const resetPassword = async (username: string, newPassword: string) => {
+export const resetPassword = async (employeeId: string, newPassword: string) => {
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
-  const user = await loginRepository.findUserByUsername(username);
+  const user = await loginRepository.findUserByEmployeeId(employeeId);
   const userId = user!.id;
   return await loginRepository.updatePasswordByUserId(userId, hashedPassword);
 };

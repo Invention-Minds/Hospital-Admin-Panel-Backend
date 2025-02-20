@@ -7,22 +7,25 @@ export class PatientRepository {
     this.prisma = new PrismaClient();
   }
 
-  async createPatient(data: { name: string; phoneNumber: string; email: string; prn: number }) {
-    return this.prisma.patient.create({ data });
+  async createPatient(data: { name: string; mobileNo: string; email: string; prn: number }) {
+    return this.prisma.patientDetails.create({ data });
   }
 
   async getPatientById(id: number) {
-    return this.prisma.patient.findFirst({ where: { id } });
+    return this.prisma.patientDetails.findFirst({ where: { id } });
   }
 
-  async updatePatient(id: number, data: { name: string; phoneNumber: string; email: string; prn: number }) {
-    return this.prisma.patient.update({ where: { id }, data });
+  async updatePatient(id: number, data: { name: string; mobileNo: string; email: string; prn: number }) {
+    return this.prisma.patientDetails.update({ where: { id }, data });
   }
 
   async deletePatient(id: number) {
-    return this.prisma.patient.delete({ where: { id } });
+    return this.prisma.patientDetails.delete({ where: { id } });
   }
-  async getPatientByPhoneNumber(phoneNumber: string) {
-    return this.prisma.patient.findFirst({ where: { phoneNumber } });
+  async getPatientByMobileNumber(mobileNo: string) {
+    return this.prisma.patientDetails.findFirst({ where: { mobileNo } });
+  }
+  async getAllPatients(){
+    return this.prisma.patientDetails.findMany()
   }
 }

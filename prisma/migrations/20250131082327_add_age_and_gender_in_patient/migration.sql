@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `Patient` ADD COLUMN `age` INTEGER NULL,
+    ADD COLUMN `gender` INTEGER NULL;

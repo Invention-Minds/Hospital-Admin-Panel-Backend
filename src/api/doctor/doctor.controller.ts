@@ -326,6 +326,11 @@ const endOfToday = new Date(today.setHours(23, 59, 59, 999));
             time: true,
           },
         },
+        ExtraSlotCount:{
+          where:{
+            date: formattedDate,
+          }
+        }
       },
     });
     // console.log(doctors,"doctors")
@@ -1104,4 +1109,17 @@ export const getExtraSlots = async (req: Request, res: Response): Promise<void> 
   catch(error){
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
+}
+
+export const getDoctorByUserId = async (req: Request, res: Response): Promise<void> =>{
+  try{
+  const {userId} = req.params;
+      const extraSlots = await prisma.doctor.findFirst({
+        where: { userId: Number(userId) },
+      });
+      res.status(200).json(extraSlots);
+    }
+    catch(error){
+      res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    }
 }

@@ -11,11 +11,11 @@ export class PatientResolver {
     return this.patientRepository.getPatientById(id);
   }
 
-  async createPatient(data: { name: string; phoneNumber: string; email: string; prn: number }) {
+  async createPatient(data: { name: string; mobileNo: string; email: string; prn: number }) {
     return this.patientRepository.createPatient(data);
   }
 
-  async updatePatient(id: number, data: { name: string; phoneNumber: string; email: string; prn: number }) {
+  async updatePatient(id: number, data: { name: string; mobileNo: string; email: string; prn: number }) {
     return this.patientRepository.updatePatient(id, data);
   }
 

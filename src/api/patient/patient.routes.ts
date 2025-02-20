@@ -8,5 +8,6 @@ router.post('/', (req, res) => patientController.createPatient(req, res));
 router.get('/:id', (req, res) => patientController.getPatient(req, res));
 router.put('/:id', (req, res) => patientController.updatePatient(req, res));
 router.delete('/:id', (req, res) => patientController.deletePatient(req, res));
+router.get('/', (req,res) => patientController.getPatients(req,res));
 
 export default router;
