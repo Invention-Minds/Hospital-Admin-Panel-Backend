@@ -27,6 +27,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   console.log('req.body:', req.body);
   const { patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status, requestVia } = req.body;
   console.log(patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status);
+  // const date = formatDateYear(date)
 
   const url = process.env.WHATSAPP_API_URL;
   const headers = {
@@ -129,7 +130,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       type: "template", // Type of the message
       message: {
         templateid: "674491", // Replace with the actual template ID
-        placeholders: [doctorName, status, patientName, date, time], // Dynamic placeholders
+        placeholders: [doctorName, status, patientName, formatDateYear(new Date(date)), time], // Dynamic placeholders
       },
     }
     let patientPayload = {}
@@ -140,7 +141,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         type: "template",
         message: {
           templateid: "718883", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, date, time], // Dynamic placeholders
+          placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
       const patientResponse = await axios.post(url!, patientPayload, { headers });
@@ -152,13 +153,13 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         type: "template",
         message: {
           templateid: "674445", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, date, time], // Dynamic placeholders
+          placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
       const patientResponse = await axios.post(url!, patientPayload, { headers });
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
     }
-    
+
 
     //   console.log(patientResponse, 'payload for patient');
     console.log(payload, 'payload for doctor');
@@ -222,6 +223,12 @@ function formatDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
   const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
   return `${year}-${month}-${day}`;
+}
+function formatDateYear(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+  const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+  return `${day}-${month}-${year}`;
 }
 // // Function to check appointments and send reminders
 export const checkAndSendReminders = async () => {
@@ -309,7 +316,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "674507", // Replace with the actual template ID
-            placeholders: [appointment.patientName, appointment.doctorName, appointment.date, appointment.time], // Dynamic placeholders
+            placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
 
@@ -334,7 +341,7 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${appointment.patientName}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${appointment.date} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${appointment.patientName}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -489,7 +496,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "674503", // Replace with the actual template ID
-            placeholders: [appointment.patientName, appointment.doctorName, appointment.date, appointment.time], // Dynamic placeholders
+            placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
 
@@ -515,7 +522,7 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${appointment.patientName}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${appointment.date} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${appointment.patientName}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -660,7 +667,7 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
 export const sendDoctorMessage = async () => {
   try {
     const indianTime = moment.tz("Asia/Kolkata");
-    const tomorrow = indianTime.clone().add(1, 'day').format('YYYY-MM-DD');
+    const tomorrow = indianTime.clone().add(1, 'day').format('DD-MM-YYYY');
 
     // Fetch all doctors who have appointments tomorrow
     const appointmentsTomorrow = await prisma.appointment.findMany({
@@ -777,16 +784,70 @@ export const sendDoctorMessage = async () => {
     // res.status(500).json({ error: 'Internal server error' });
   }
 }
-// cron.schedule('0 21 * * *', async () => {
-//   console.log('Running scheduled task to send doctor appointment reminders');
-//   await sendDoctorMessage();
-//   await markComplete();
-//   await ScreenshotController.captureDashboard();
-// }, {
-//   timezone: 'Asia/Kolkata',
-// });
 
+export const timeNineRemainder = async (req: Request, res: Response) => {
+  // cron.schedule('0 21 * * *', async () => {
+  //   console.log('Running scheduled task to send doctor appointment reminders and screenshot');
+  //   await sendDoctorMessage();
+  //   await ScreenshotController.captureDashboard();
+  // }, {
+  //   timezone: 'Asia/Kolkata',
+  // });
+  try {
+    // Get the current time in Indian Standard Time (IST)
+    const currentIST = moment().tz('Asia/Kolkata');
 
+    // Log the current IST time
+    console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+
+    // Run the required tasks
+    // await markComplete()
+    await sendDoctorMessage();
+    await ScreenshotController.captureDashboard();
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
+}
+
+export const timeElevenRemainder = async (req: Request, res: Response) => {
+  try {
+    // Get the current time in Indian Standard Time (IST)
+    const currentIST = moment().tz('Asia/Kolkata');
+
+    // Log the current IST time
+    console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+
+    // Run the required tasks
+    await markComplete()
+
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
+}
+export const timeThreeRemainder = async (req: Request, res: Response) => {
+  try {
+    // Get the current time in Indian Standard Time (IST)
+    const currentIST = moment().tz('Asia/Kolkata');
+
+    // Log the current IST time
+    console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+
+    // Run the required tasks
+    await markComplete()
+
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
+}
 
 function formatTime(date: Date): string {
   return `${date.getHours()}:${date.getMinutes()} ${date.getHours() >= 12 ? 'PM' : 'AM'}`;
@@ -832,7 +893,7 @@ export const remainderForAdmin = async () => {
           equals: currentTime.toISOString().split('T')[0], // Appointments for today
         },
         checkedIn: false,
-        status:'confirmed',
+        status: 'confirmed',
         time: {
 
           lt: formatTime(endHour),    // Less than start of the current hour
@@ -986,7 +1047,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         type: "template", // Message type
         message: {
           templateid: "682645", // Template ID
-          placeholders: [name, packageName, appointmentStatus, appointmentDate, appointmentTime], // Placeholders for the template
+          placeholders: [name, packageName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
         },
       };
     }
@@ -999,7 +1060,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         type: "template", // Message type
         message: {
           templateid: "688775", // Template ID
-          placeholders: [name, packageName, appointmentDate], // Placeholders for the template
+          placeholders: [name, packageName, formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
     }
@@ -1047,7 +1108,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
 
 export const sendAdminMessage = async (req: Request, res: Response) => {
   try {
-    const { doctorName,departmentName, startDate, endDate, adminPhoneNumber } = req.body;
+    const { doctorName, departmentName, startDate, endDate, adminPhoneNumber } = req.body;
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const url = process.env.WHATSAPP_API_URL_BULK;
     const payload = {
@@ -1056,7 +1117,7 @@ export const sendAdminMessage = async (req: Request, res: Response) => {
       type: "template", // Type of the message
       message: {
         templateid: "738057", // Replace with the actual template ID
-        placeholders: [doctorName,departmentName, startDate, endDate], // Dynamic placeholders
+        placeholders: [doctorName, departmentName, formatDateYear(startDate), endDate], // Dynamic placeholders
       },
     };
 
@@ -1101,6 +1162,7 @@ export const markComplete = async () => {
       where: {
         date: indianDate, // Appointments for today
         checkedOut: true, // Only checked out appointments
+        status: 'confirmed'
       },
     });
 
@@ -1338,9 +1400,9 @@ export const updateEstimation = async () => {
 //      res.status(500).json({ error: "Internal server error" });
 //   }
 // };
-export const waitingTimeMessage = async (req: Request, res: Response) => {
+export const waitingTimeMessage = async (adminPhoneNumbers: string[], doctorPhoneNumber: string, noOfPatients: number, doctorName: string, waitingMultiplier: number) => {
   try {
-    const { adminPhoneNumbers, doctorPhoneNumber, noOfPatients, doctorName, waitingMultiplier } = req.body;
+    // const { adminPhoneNumbers, doctorPhoneNumber, noOfPatients, doctorName, waitingMultiplier } = req.body;
     console.log('Doctor:', doctorPhoneNumber, 'Admins:', adminPhoneNumbers);
 
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
@@ -1422,14 +1484,14 @@ export const waitingTimeMessage = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error("❌ Error sending WhatsApp message:", error);
-    res.status(500).json({ error: "Internal server error" });
+    // res.status(500).json({ error: "Internal server error" });
   }
 };
 
 
 export const loginRemainder = async (req: Request, res: Response) => {
   try {
-    const { doctorPhoneNumber, noOfPatients, doctorName,doctorId } = req.body;
+    const { doctorPhoneNumber, noOfPatients, doctorName, doctorId } = req.body;
 
 
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
@@ -1464,7 +1526,7 @@ export const loginRemainder = async (req: Request, res: Response) => {
 
 export const adminDoctorLateLogin = async (req: Request, res: Response) => {
   try {
-    const { adminPhoneNumber, noOfPatients, doctorName,doctorId } = req.body;
+    const { adminPhoneNumber, noOfPatients, doctorName, doctorId } = req.body;
 
 
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
@@ -1506,7 +1568,7 @@ export const individualComplete = async (req: Request, res: Response) => {
     const indianDate = indianTime.format('YYYY-MM-DD'); // Format as YYYY-MM-DD
 
     // Find appointments for today where `checkedOut` is true
-    const checkedOutAppointments  = Array.isArray(appointment)? appointment : [appointment];
+    const checkedOutAppointments = Array.isArray(appointment) ? appointment : [appointment];
 
     if (checkedOutAppointments.length === 0) {
       console.log('No appointments found for today with checkedOut: true');
@@ -1516,7 +1578,7 @@ export const individualComplete = async (req: Request, res: Response) => {
 
     // Update the status of these appointments to "Complete"
     await Promise.all(
-      checkedOutAppointments.map(async (appointment:any ) => {
+      checkedOutAppointments.map(async (appointment: any) => {
         await prisma.appointment.update({
           where: { id: appointment.id },
           data: { status: 'completed' },
@@ -1625,385 +1687,674 @@ export const individualComplete = async (req: Request, res: Response) => {
 //   }
 // };
 
-const cancelExpiredAppointments = async () => {
-  try {
-    // Get current time in IST
-    const currentTimeIST = moment().tz("Asia/Kolkata");
-    console.log("⏰ Current IST Time:", currentTimeIST.format("YYYY-MM-DD HH:mm:ss"));
+export const cancelExpiredAppointments = async () => {
 
-    // **Step 1: Fetch Expired Appointments (Older than 30 mins)**
-    const expiredAppointments = await prisma.appointment.findMany({
-      where: {
-        checkedIn: false,
-        checkedOut: false,
-        status: 'confirmed',
-        date: currentTimeIST.format("YYYY-MM-DD"), // Only today's date
-      },
-      include: { doctor: true }, // Fetch doctor details
+  // Get current time in IST
+  const currentTimeIST = moment().tz("Asia/Kolkata");
+  console.log("⏰ Current IST Time:", currentTimeIST.format("YYYY-MM-DD HH:mm:ss"));
+
+  // **Step 1: Fetch Expired Appointments (Older than 30 mins)**
+  const expiredAppointments = await prisma.appointment.findMany({
+    where: {
+      checkedIn: false,
+      checkedOut: false,
+      status: 'confirmed',
+      date: currentTimeIST.format("YYYY-MM-DD"), // Only today's date
+    },
+    include: { doctor: true }, // Fetch doctor details
+  });
+  // const thresholdTime = currentTimeIST.subtract(30, "minutes").format("HH:mm:ss");
+  // const currentTimeIST = moment().tz("Asia/Kolkata"); // Get current IST time
+  const thresholdTime = moment().tz("Asia/Kolkata").subtract(30, "minutes"); // Subtract 30 mins from current time
+  
+  const filteredAppointments = expiredAppointments.filter((appt) => {
+    // Ensure appointment date and time are correctly parsed together
+    const appointmentTime = moment.tz(`${appt.date} ${appt.time}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
+  
+    console.log(`📅 Appointment Time: ${appointmentTime.format("YYYY-MM-DD hh:mm A")}`);
+    console.log(`⏳ Threshold Time: ${thresholdTime.format("YYYY-MM-DD hh:mm A")}`);
+    console.log(`🕒 Current Time: ${currentTimeIST.format("YYYY-MM-DD hh:mm A")}`);
+  
+    // Only cancel if the appointment time is *before* the threshold and is still today's appointment
+    return appointmentTime.isBefore(thresholdTime) && appointmentTime.isSame(currentTimeIST, "day");
+  });
+  
+  console.log(filteredAppointments)
+
+  if (filteredAppointments.length === 0) {
+    console.log("✅ No expired appointments to cancel.");
+    return;
+  }
+
+  console.log(`⚠️ Found ${filteredAppointments.length} expired appointments. Cancelling...`);
+
+  const whatsappUrl = process.env.WHATSAPP_API_URL;
+  const smsApiKey = process.env.SMS_API_KEY;
+  const smsApiUrl = process.env.SMS_API_URL;
+  const smsSender = process.env.SMS_SENDER;
+  const smsDltEntityId = process.env.DLT_ENTITY_ID;
+  const smsPatientTemplateId = process.env.SMS_DLT_TE_ID_FOR_PATIENT;
+  const smsDoctorTemplateId = process.env.SMS_DLT_TE_ID_FOR_DOCTOR;
+
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+  };
+  const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+  const cancelPromises = filteredAppointments.map(async (appointment) => {
+    const { id, doctorId, date, time, phoneNumber, patientName, doctor } = appointment;
+
+    // **Step 2: Delete Booked Slot**
+    await prisma.bookedSlot.deleteMany({
+      where: { doctorId, date, time },
     });
-    // const thresholdTime = currentTimeIST.subtract(30, "minutes").format("HH:mm:ss");
-    const thresholdTime = moment().tz("Asia/Kolkata").subtract(30, "minutes"); // Keep full DateTime format
+    console.log(`🗑️ Deleted booked slot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
 
-    const filteredAppointments = expiredAppointments.filter((appt) => {
-      const appointmentTime = moment(`${appt.date} ${appt.time}`, "YYYY-MM-DD hh:mm A"); // Convert to full DateTime
-      return appointmentTime.isBefore(thresholdTime);
+    // **Step 3: Update Appointment Status to "Cancelled"**
+    await prisma.appointment.update({
+      where: { id },
+      data: { status: "cancelled" },
     });
-    
-    console.log(filteredAppointments)
+    console.log(`❌ Updated appointment status to cancelled for Appointment ID: ${id}`);
 
-    if (filteredAppointments.length === 0) {
-      console.log("✅ No expired appointments to cancel.");
-      return;
+    // **Step 4: Send WhatsApp message to Patient**
+    if (phoneNumber) {
+      const patientMessagePayload = {
+        from: fromPhoneNumber,
+        to: phoneNumber, // Patient's WhatsApp number
+        type: "template",
+        message: {
+          templateid: "674445", // Replace with actual template ID
+          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time],
+        },
+      };
+
+      try {
+        const patientResponse = await axios.post(whatsappUrl!, patientMessagePayload, { headers });
+        console.log(
+          patientResponse.data.code === "200"
+            ? `✅ WhatsApp message sent successfully to Patient: ${phoneNumber}`
+            : `⚠️ Failed to send WhatsApp message to Patient: ${phoneNumber}`,
+          patientResponse.data
+        );
+      } catch (error) {
+        console.error("❌ Error sending WhatsApp message to Patient:", error);
+      }
     }
 
-    console.log(`⚠️ Found ${filteredAppointments.length} expired appointments. Cancelling...`);
+    // **Step 5: Send WhatsApp message to Doctor**
+    if (doctor?.phone_number) {
+      const doctorMessagePayload = {
+        from: fromPhoneNumber,
+        to: doctor.phone_number, // Doctor's WhatsApp number
+        type: "template",
+        message: {
+          templateid: "674491", // Replace with actual doctor template ID
+          placeholders: [doctor.name, "cancelled", patientName, formatDateYear(new Date(date)), time],
+        },
+      };
 
-    const whatsappUrl = process.env.WHATSAPP_API_URL;
-    const smsApiKey = process.env.SMS_API_KEY;
-    const smsApiUrl = process.env.SMS_API_URL;
-    const smsSender = process.env.SMS_SENDER;
-    const smsDltEntityId = process.env.DLT_ENTITY_ID;
-    const smsPatientTemplateId = process.env.SMS_DLT_TE_ID_FOR_PATIENT;
-    const smsDoctorTemplateId = process.env.SMS_DLT_TE_ID_FOR_DOCTOR;
+      try {
+        const doctorResponse = await axios.post(whatsappUrl!, doctorMessagePayload, { headers });
+        console.log(
+          doctorResponse.data.code === "200"
+            ? `✅ WhatsApp message sent successfully to Doctor: ${doctor.phone_number}`
+            : `⚠️ Failed to send WhatsApp message to Doctor: ${doctor.phone_number}`,
+          doctorResponse.data
+        );
+      } catch (error) {
+        console.error("❌ Error sending WhatsApp message to Doctor:", error);
+      }
+    }
+    const status = 'cancelled'
+    // **Step 6: Send SMS to Patient**
+    if (phoneNumber) {
+      const patientMessage = `Hello ${patientName}, your appointment with ${doctor?.name} is ${status} on ${formatDateYear(new Date(date))} at ${time}. For any questions, contact 97420 20123. hank You! Regards, Rashtrotthana Team`;
+      const smsUrlPatient = `${smsApiUrl}/${smsSender}/${phoneNumber}/${encodeURIComponent(patientMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsPatientTemplateId}`;
 
+      try {
+        const smsResponsePatient = await axios.get(smsUrlPatient);
+        console.log(`📩 SMS sent successfully to Patient: ${phoneNumber}`, smsResponsePatient.data);
+      } catch (error) {
+        console.error(`❌ Error sending SMS to Patient: ${phoneNumber}`, error);
+      }
+    }
+
+    // **Step 7: Send SMS to Doctor**
+    if (doctor?.phone_number) {
+      const doctorMessage = `Hi ${doctor.name}, you have a ${status} appointment with ${patientName} on ${formatDateYear(new Date(date))} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
+      const smsUrlDoctor = `${smsApiUrl}/${smsSender}/${doctor.phone_number}/${encodeURIComponent(doctorMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsDoctorTemplateId}`;
+
+      try {
+        const smsResponseDoctor = await axios.get(smsUrlDoctor);
+        console.log(`📩 SMS sent successfully to Doctor: ${doctor.phone_number}`, smsResponseDoctor.data);
+      } catch (error) {
+        console.error(`❌ Error sending SMS to Doctor: ${doctor.phone_number}`, error);
+      }
+    }
+
+    // **Step 8: Insert into `unavailableSlot` table**
+    // await prisma.unavailableSlot.create({
+    //   data: {
+    //     doctorId: Number(doctorId),
+    //     date: date,
+    //     time: time,
+    //   },
+    // });
+
+    // console.log(`📌 Slot added to unavailableSlot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
+
+    return id; // Return the appointment ID after processing
+  });
+
+  // Wait for all updates to complete
+  await Promise.all(cancelPromises);
+
+  console.log("✅ All expired appointments cancelled successfully.");
+
+};
+
+// Schedule the cron job every 5 minutes
+
+
+export const doctorAvailability = async (req: Request, res: Response) => {
+  try {
+    // Get the current time in Indian Standard Time (IST)
+    const currentIST = moment().tz('Asia/Kolkata');
+
+    // Log the current IST time
+    console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+
+    // await cancelExpiredAppointments();
+    await checkDoctorAvailability();
+
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
+}
+
+async function checkDoctorAvailability() {
+  console.log("⏳ Running Doctor Availability Check...");
+
+  const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+  console.log(todayDate)
+
+  // Get all doctors
+  const doctors = await prisma.doctor.findMany({
+    include: {
+      availability: {
+        where: {
+          OR: [
+            {
+              updatedAt: null, // Include availability where updatedAt is null (for older records)
+            },
+            {
+              updatedAt: {
+                lte: new Date(), // Get availability updated on or before the requested date
+              },
+            },
+          ],
+        },
+        orderBy: {
+          updatedAt: 'desc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+          // updatedAt: isToday || isFuture ? 'desc' : 'asc',
+        },
+      }, unavailableDates: true
+    },
+  });
+
+  // console.log(doctors)
+
+  for (const doctor of doctors) {
+    if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+      continue; // Skip invalid doctors
+    }
+    // console.log(doctor)
+    // ✅ Check if the doctor is unavailable today
+    const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
+      moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
+    );
+    // console.log(isUnavailableToday)
+    if (isUnavailableToday) {
+      console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
+      continue; // Skip processing for this doctor
+    }
+
+
+    const allUpdatedAtNull = doctor.availability.every((avail: any) => !avail.updatedAt);
+    // console.log(allUpdatedAtNull)
+
+    // Step 2: Calculate the latest timestamp if any `updatedAt` is not null
+    let latestTimestamp: string | null = null;
+    if (!allUpdatedAtNull) {
+      const maxTimestamp = doctor.availability
+        .filter((avail: any) => avail.updatedAt) // Filter entries with non-null `updatedAt`
+        .map((avail: any) => new Date(avail.updatedAt).getTime()) // Convert to timestamp
+        .reduce((max: any, curr: any) => Math.max(max, curr), 0); // Find the max timestamp
+
+      // Convert the max timestamp back to an ISO string
+      latestTimestamp = new Date(maxTimestamp).toISOString();
+      console.log(latestTimestamp, 'latest')
+    }
+
+    const latestAvailability = allUpdatedAtNull
+      ? doctor.availability // If all are null, consider all availability as the latest
+      : doctor.availability.filter((avail: any) => {
+        // console.log("🔍 Checking Availability:", avail.updatedAt, "===", latestTimestamp);
+        return new Date(avail.updatedAt).toISOString() === latestTimestamp;
+      });
+
+    const today = new Date().toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
+    const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === today);
+
+    if (!todayAvailability || !todayAvailability.availableFrom) {
+      // console.log('skip')
+      continue; // Skip if doctor is not available today
+    }
+    // ✅ Get first available slot time
+    const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
+    const firstAvailableTime = firstSlot?.split("-")[0].trim();
+    console.log(firstAvailableTime, 'first')
+    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
+
+    // Convert 24-hour format (HH:mm) to 12-hour format (hh:mm A)
+    const formattedTime = moment(firstAvailableTime, "HH:mm").format("hh:mm A");
+
+    // Construct availableTime in Asia/Kolkata timezone
+    const availableTime = moment.tz(`${todayDate} ${formattedTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
+
+    // Get current IST time
+    const currentTime = moment().tz("Asia/Kolkata");
+
+    // // Compare only the minute-level precision
+    // if (currentTime.isSame(availableTime, 'minute')) {
+    //   console.log("🔔 Notification Triggered! It's time.");
+    // } else {
+    //   console.log("⏳ Not yet time for notification.");
+    // }
+
+    // const availableTime = moment.tz(`${todayDate} ${firstAvailableTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
+    console.log(availableTime, doctor.id)
+
+    // ✅ Fetch doctor's appointments
+    const appointments = await prisma.appointment.findMany({
+      where: { doctorId: doctor.id, date: todayDate, status: "confirmed", checkedIn: true },
+    });
+    console.log(appointments)
+
+    // ✅ If appointments exist, check doctor's login status
+    // if (appointments.length > 0) {
+    const user = await prisma.user.findUnique({ where: { id: doctor.userId } });
+
+    if (user && user.loggedInDate === todayDate) {
+      console.log(`✅ Dr. ${doctor.name} is already logged in.`);
+      continue;
+    }
+
+    // ✅ Send a login reminder 5 minutes before shift
+    const notificationTime = availableTime.clone().subtract(5, "minutes");
+    // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+    if (currentTime.isSame(availableTime, 'minute')) {
+      const sentAlert = await prisma.sentMessage.findFirst({
+        where: {
+          doctorId: doctor.id,
+          alertType: "lateLogin",
+          sentAt: {
+            gte: moment().tz("Asia/Kolkata").startOf("day").toISOString(),  // ✅ Reset every day
+            lte: moment().tz("Asia/Kolkata").toISOString(),  // ✅ Only check today
+          },
+        },
+      });
+
+      if (!sentAlert) {
+        console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
+
+        await sendMessageToDoctor(doctor.phone_number, appointments.length, doctor.name, doctor.id);
+      } else {
+        console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
+      }
+    }
+
+
+    // ✅ Check waiting time for first appointment
+    if (appointments.length > 0) {
+      const firstAppointment = appointments[0];
+      console.log(firstAppointment)
+
+
+      // const adminPhoneNumbers = ["919880544866", "916364833988"]
+      const adminPhoneNumbers = ["919342287945", "919342287945"];
+      const now = moment().tz("Asia/Kolkata").toDate();
+
+      const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
+
+      if (!firstAppointment.checkedOut && now.getTime() > thresholdTime.toDate().getTime()) {
+        console.warn(`⏳ Alert: First checked-in patient for Dr. ${doctor.name} has exceeded waiting time!`);
+        await sendAdminAlertMessage(adminPhoneNumbers, appointments.length, doctor.name, doctor.id);
+      }
+
+    }
+  }
+
+  console.log("✅ Doctor Availability Check Completed.");
+}
+
+
+const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number, doctorName: string, doctorId: number) => {
+  try {
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    const url = process.env.WHATSAPP_API_URL;
     const headers = {
       "Content-Type": "application/json",
       apikey: process.env.WHATSAPP_AUTH_TOKEN,
     };
-    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    let doctorPayload = {}
+    if (noOfPatients > 0) {
+      doctorPayload = {
+        from: fromPhoneNumber,
+        to: doctorPhoneNumber,
+        type: "template",
+        message: {
+          templateid: "731635", // Ensure this template ID is valid for Doctors
+          placeholders: [doctorName, noOfPatients],
+        },
+      };
+    } else {
+      doctorPayload = {
+        from: fromPhoneNumber,
+        to: doctorPhoneNumber,
+        type: "template",
+        message: {
+          templateid: "743637", // Ensure this template ID is valid for Doctors
+          placeholders: [doctorName],
+        },
+      };
+    }
 
-    const cancelPromises = filteredAppointments.map(async (appointment) => {
-      const { id, doctorId, date, time, phoneNumber, patientName, doctor } = appointment;
+    const doctorResponse = await axios.post(url!, doctorPayload, { headers });
+    console.log(`✅ Message sent to Doctor: ${doctorPhoneNumber}`, doctorResponse.data);
 
-      // **Step 2: Delete Booked Slot**
-      await prisma.bookedSlot.deleteMany({
-        where: { doctorId, date, time },
-      });
-      console.log(`🗑️ Deleted booked slot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
-
-      // **Step 3: Update Appointment Status to "Cancelled"**
-      await prisma.appointment.update({
-        where: { id },
-        data: { status: "cancelled" },
-      });
-      console.log(`❌ Updated appointment status to cancelled for Appointment ID: ${id}`);
-
-      // **Step 4: Send WhatsApp message to Patient**
-      if (phoneNumber) {
-        const patientMessagePayload = {
-          from: fromPhoneNumber,
-          to: phoneNumber, // Patient's WhatsApp number
-          type: "template",
-          message: {
-            templateid: "674445", // Replace with actual template ID
-            placeholders: [patientName, doctor?.name || "Doctor", "cancelled", date, time],
-          },
-        };
-
-        try {
-          const patientResponse = await axios.post(whatsappUrl!, patientMessagePayload, { headers });
-          console.log(
-            patientResponse.data.code === "200"
-              ? `✅ WhatsApp message sent successfully to Patient: ${phoneNumber}`
-              : `⚠️ Failed to send WhatsApp message to Patient: ${phoneNumber}`,
-            patientResponse.data
-          );
-        } catch (error) {
-          console.error("❌ Error sending WhatsApp message to Patient:", error);
-        }
-      }
-
-      // **Step 5: Send WhatsApp message to Doctor**
-      if (doctor?.phone_number) {
-        const doctorMessagePayload = {
-          from: fromPhoneNumber,
-          to: doctor.phone_number, // Doctor's WhatsApp number
-          type: "template",
-          message: {
-            templateid: "674491", // Replace with actual doctor template ID
-            placeholders: [doctor.name, "cancelled", patientName, date, time],
-          },
-        };
-
-        try {
-          const doctorResponse = await axios.post(whatsappUrl!, doctorMessagePayload, { headers });
-          console.log(
-            doctorResponse.data.code === "200"
-              ? `✅ WhatsApp message sent successfully to Doctor: ${doctor.phone_number}`
-              : `⚠️ Failed to send WhatsApp message to Doctor: ${doctor.phone_number}`,
-            doctorResponse.data
-          );
-        } catch (error) {
-          console.error("❌ Error sending WhatsApp message to Doctor:", error);
-        }
-      }
-      const status = 'cancelled'
-      // **Step 6: Send SMS to Patient**
-      if (phoneNumber) {
-        const patientMessage = `Hello ${patientName}, your appointment with ${doctor?.name} is ${status} on ${date} at ${time}. For any questions, contact 97420 20123. hank You! Regards, Rashtrotthana Team`;
-        const smsUrlPatient = `${smsApiUrl}/${smsSender}/${phoneNumber}/${encodeURIComponent(patientMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsPatientTemplateId}`;
-
-        try {
-          const smsResponsePatient = await axios.get(smsUrlPatient);
-          console.log(`📩 SMS sent successfully to Patient: ${phoneNumber}`, smsResponsePatient.data);
-        } catch (error) {
-          console.error(`❌ Error sending SMS to Patient: ${phoneNumber}`, error);
-        }
-      }
-
-      // **Step 7: Send SMS to Doctor**
-      if (doctor?.phone_number) {
-        const doctorMessage = `Hi ${doctor.name}, you have a ${status} appointment with ${patientName} on ${date} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
-        const smsUrlDoctor = `${smsApiUrl}/${smsSender}/${doctor.phone_number}/${encodeURIComponent(doctorMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsDoctorTemplateId}`;
-
-        try {
-          const smsResponseDoctor = await axios.get(smsUrlDoctor);
-          console.log(`📩 SMS sent successfully to Doctor: ${doctor.phone_number}`, smsResponseDoctor.data);
-        } catch (error) {
-          console.error(`❌ Error sending SMS to Doctor: ${doctor.phone_number}`, error);
-        }
-      }
-
-      // **Step 8: Insert into `unavailableSlot` table**
-      // await prisma.unavailableSlot.create({
-      //   data: {
-      //     doctorId: Number(doctorId),
-      //     date: date,
-      //     time: time,
-      //   },
-      // });
-
-      // console.log(`📌 Slot added to unavailableSlot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
-
-      return id; // Return the appointment ID after processing
+    // ✅ Log the message as sent
+    await prisma.sentMessage.create({
+      data: { doctorId, alertType: "lateLogin", sentAt: new Date() },
     });
 
-    // Wait for all updates to complete
-    await Promise.all(cancelPromises);
-
-    console.log("✅ All expired appointments cancelled successfully.");
-  } catch (error) {
-    console.error("❌ Error canceling expired appointments:", error);
+  } catch (err: any) {
+    console.error(`❌ Failed to send message to Doctor: ${doctorPhoneNumber}`, err.response?.data || err);
   }
 };
+const sendAdminAlertMessage = async (adminPhoneNumbers: string[], noOfPatients: number, doctorName: string, doctorId: number) => {
+  try {
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    const url = process.env.WHATSAPP_API_URL_BULK;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
 
-// Schedule the cron job every 5 minutes
-// cron.schedule('*/5 * * * *', async () => {
-//   console.log("⏳ Running scheduled task to cancel expired appointments...");
-//   await cancelExpiredAppointments();
-//   // await checkDoctorAvailability();
-// });
+    const adminPayload = {
+      from: fromPhoneNumber,
+      to: adminPhoneNumbers,
+      type: "template",
+      message: {
+        templateid: "731637", // Ensure this template ID is valid for Admins
+        placeholders: [doctorName, noOfPatients],
+      },
+    };
 
+    const adminResponse = await axios.post(url!, adminPayload, { headers });
+    console.log(`✅ Admin Alert Sent: ${adminPhoneNumbers}`, adminResponse.data);
 
-// async function checkDoctorAvailability() {
-//     console.log("⏳ Running Doctor Availability Check...");
+    // ✅ Log the message as sent
+    await prisma.sentMessage.create({
+      data: { doctorId, alertType: "adminAlert", sentAt: new Date() },
+    });
 
-//     const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-//     console.log(todayDate)
+  } catch (err: any) {
+    console.error(`❌ Failed to send message to Admins: ${adminPhoneNumbers}`, err.response?.data || err);
+  }
+};
+async function checkPatientWaitingTime() {
+  console.log("⏳ Running Patient Waiting Time Check...");
 
-//     // Get all doctors
-//     const doctors = await prisma.doctor.findMany({
-//         include: { availability: {
-//           where: {
-//             OR: [
-//               {
-//                 updatedAt: null, // Include availability where updatedAt is null (for older records)
-//               },
-//               {
-//                 updatedAt: {
-//                   lte: new Date(), // Get availability updated on or before the requested date
-//                 },
-//               },
-//             ],
-//           },
-//           orderBy: {
-//             updatedAt:  'desc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-//             // updatedAt: isToday || isFuture ? 'desc' : 'asc',
-//           },
-//         }, unavailableDates: true },
-//     });
-    
-//     // console.log(doctors)
+  const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+  console.log(todayDate)
 
-//     for (const doctor of doctors) {
-//         if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
-//             continue; // Skip invalid doctors
-//         }
-//         // console.log(doctor)
-//         // ✅ Check if the doctor is unavailable today
-//         const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
-//             moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
-//         );
-//         // console.log(isUnavailableToday)
-//         if (isUnavailableToday) {
-//             console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
-//             continue; // Skip processing for this doctor
-//         }
+  // Get all doctors
+  const doctors = await prisma.doctor.findMany({
+    include: {
+      availability: {
+        where: {
+          OR: [
+            {
+              updatedAt: null, // Include availability where updatedAt is null (for older records)
+            },
+            {
+              updatedAt: {
+                lte: new Date(), // Get availability updated on or before the requested date
+              },
+            },
+          ],
+        },
+        orderBy: {
+          updatedAt: 'desc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+          // updatedAt: isToday || isFuture ? 'desc' : 'asc',
+        },
+      }, unavailableDates: true
+    },
+  });
 
+  // console.log(doctors)
 
-//         const allUpdatedAtNull = doctor.availability.every((avail: any) => !avail.updatedAt);
-//         // console.log(allUpdatedAtNull)
-
-//         // Step 2: Calculate the latest timestamp if any `updatedAt` is not null
-//         let latestTimestamp: string | null = null;
-//         if (!allUpdatedAtNull) {
-//           const maxTimestamp = doctor.availability
-//             .filter((avail: any) => avail.updatedAt) // Filter entries with non-null `updatedAt`
-//             .map((avail: any) => new Date(avail.updatedAt).getTime()) // Convert to timestamp
-//             .reduce((max: any, curr: any) => Math.max(max, curr), 0); // Find the max timestamp
-
-//           // Convert the max timestamp back to an ISO string
-//           latestTimestamp = new Date(maxTimestamp).toISOString();
-//           console.log(latestTimestamp,'latest')
-//         }
-
-//           const latestAvailability = allUpdatedAtNull
-//             ? doctor.availability // If all are null, consider all availability as the latest
-//             : doctor.availability.filter((avail: any) => {
-//             // console.log("🔍 Checking Availability:", avail.updatedAt, "===", latestTimestamp);
-//             return new Date(avail.updatedAt).toISOString() === latestTimestamp;
-//         });
-
-//           const today = new Date().toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
-//           const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === today);
-
-//           if (!todayAvailability || !todayAvailability.availableFrom) {
-//             // console.log('skip')
-//             continue; // Skip if doctor is not available today
-//           }
-//         // ✅ Get first available slot time
-//         const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
-//         const firstAvailableTime = firstSlot?.split("-")[0].trim();
-//         console.log(firstAvailableTime, 'first')
-
-//         const availableTime = moment.tz(`${todayDate} ${firstAvailableTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
-//         console.log(availableTime, doctor.id)
-
-//         // ✅ Fetch doctor's appointments
-//         const appointments = await prisma.appointment.findMany({
-//             where: { doctorId: doctor.id, date: todayDate, status: "confirmed", checkedIn: true },
-//         });
-//         console.log(appointments)
-
-//         // ✅ If appointments exist, check doctor's login status
-//         if (appointments.length > 0) {
-//             const user = await prisma.user.findUnique({ where: { id: doctor.userId } });
-
-//             if (user && user.loggedInDate === todayDate) {
-//                 console.log(`✅ Dr. ${doctor.name} is already logged in.`);
-//                 continue;
-//             }
-
-//             // ✅ Send a login reminder 5 minutes before shift
-//             const notificationTime = availableTime.clone().subtract(5, "minutes");
-//             // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-//             if (moment().tz("Asia/Kolkata").isBetween(notificationTime, availableTime)) {
-//                 const sentAlert = await prisma.sentMessage.findFirst({
-//                     where: {
-//                         doctorId: doctor.id,
-//                         alertType: "lateLogin",
-//                         sentAt: {
-//                           gte: moment().tz("Asia/Kolkata").startOf("day").toISOString(),  // ✅ Reset every day
-//                           lte: moment().tz("Asia/Kolkata").toISOString(),  // ✅ Only check today
-//                       },
-//                     },
-//                 });
-
-//                 if (!sentAlert) {
-//                   console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
-                  
-//                   await sendMessageToDoctor(doctor.phone_number, appointments.length, doctor.name, doctor.id);
-//               } else {
-//                   console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
-//               }
-//             }
-//         }
-
-//         // ✅ Check waiting time for first appointment
-//         if (appointments.length > 0) {
-//             const firstAppointment = appointments[0];
+  for (const doctor of doctors) {
+    if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+      continue; // Skip invalid doctors
+    }
+    // console.log(doctor)
+    // ✅ Check if the doctor is unavailable today
+    const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
+      moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
+    );
+    // console.log(isUnavailableToday)
+    if (isUnavailableToday) {
+      console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
+      continue; // Skip processing for this doctor
+    }
 
 
+    const allUpdatedAtNull = doctor.availability.every((avail: any) => !avail.updatedAt);
+    // console.log(allUpdatedAtNull)
 
-//             const adminPhoneNumbers = ["919342287945", "919342287945"];
-//             const now = moment().tz("Asia/Kolkata").toDate();
+    // Step 2: Calculate the latest timestamp if any `updatedAt` is not null
+    let latestTimestamp: string | null = null;
+    if (!allUpdatedAtNull) {
+      const maxTimestamp = doctor.availability
+        .filter((avail: any) => avail.updatedAt) // Filter entries with non-null `updatedAt`
+        .map((avail: any) => new Date(avail.updatedAt).getTime()) // Convert to timestamp
+        .reduce((max: any, curr: any) => Math.max(max, curr), 0); // Find the max timestamp
 
-//             const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
-            
-//             if (!firstAppointment.checkedOut && now.getTime() > thresholdTime.toDate().getTime()) {
-//                 console.warn(`⏳ Alert: First checked-in patient for Dr. ${doctor.name} has exceeded waiting time!`);
-//                 await sendAdminAlertMessage(adminPhoneNumbers, appointments.length, doctor.name, doctor.id);
-//             }
+      // Convert the max timestamp back to an ISO string
+      latestTimestamp = new Date(maxTimestamp).toISOString();
+      console.log(latestTimestamp, 'latest')
+    }
 
-//         }
-//     }
+    const latestAvailability = allUpdatedAtNull
+      ? doctor.availability // If all are null, consider all availability as the latest
+      : doctor.availability.filter((avail: any) => {
+        // console.log("🔍 Checking Availability:", avail.updatedAt, "===", latestTimestamp);
+        return new Date(avail.updatedAt).toISOString() === latestTimestamp;
+      });
 
-//     console.log("✅ Doctor Availability Check Completed.");
-// }
+    const today = new Date().toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
+    const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === today);
+
+    if (!todayAvailability || !todayAvailability.availableFrom) {
+      // console.log('skip')
+      continue; // Skip if doctor is not available today
+    }
+    // ✅ Get first available slot time
+    const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
+    const firstAvailableTime = firstSlot?.split("-")[0].trim();
+    console.log(firstAvailableTime, 'first')
+    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
+
+    // Convert 24-hour format (HH:mm) to 12-hour format (hh:mm A)
+    const formattedTime = moment(firstAvailableTime, "HH:mm").format("hh:mm A");
+
+    // Construct availableTime in Asia/Kolkata timezone
+    const availableTime = moment.tz(`${todayDate} ${formattedTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
+
+    // Get current IST time
+    const currentTime = moment().tz("Asia/Kolkata");
+
+    // // Compare only the minute-level precision
+    // if (currentTime.isSame(availableTime, 'minute')) {
+    //   console.log("🔔 Notification Triggered! It's time.");
+    // } else {
+    //   console.log("⏳ Not yet time for notification.");
+    // }
+
+    // const availableTime = moment.tz(`${todayDate} ${firstAvailableTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
+    console.log(availableTime, doctor.id)
+
+    // ✅ Fetch doctor's appointments
+    const appointments = await prisma.appointment.findMany({
+      where: { doctorId: doctor.id, date: todayDate, status: "confirmed", checkedIn: true },
+    });
+    console.log(appointments)
+
+    const user = await prisma.user.findUnique({ where: { id: doctor.userId } });
+
+    // if (user && user.loggedInDate !== todayDate) {
+    //   console.log(`✅ Dr. ${doctor.name} is not logged in.`);
+    //   continue;
+    // }
+    // ✅ Check waiting time for first appointment
+    if (appointments.length > 0) {
+      const pendingAppointments = appointments.filter(
+        (appt) => appt.checkedIn === true && appt.checkedOut === false
+      );
+
+      const pendingCount = pendingAppointments.length;
+      console.log(`🚨 Pending Appointments: ${pendingCount}`);
+
+      // Step 2: Find the ongoing consultation
+      const ongoingAppointment = appointments.find(
+        (appt) => appt.checkedOut === true && appt.endConsultationTime === null
+      );
+
+      if (!ongoingAppointment) {
+        console.log("✅ No ongoing consultation.");
+        continue;
+      }
+
+      // Extract appointment details
+      const { checkedOutTime, doctorId, doctorName, patientName } = ongoingAppointment;
+      const slotDuration = todayAvailability?.slotDuration ?? 20; // Default slot duration of 15 mins
+      if (!checkedOutTime) {
+        continue
+      }
+      // Step 3: Calculate elapsed waiting time
+      const checkedOutTimestamp = new Date(checkedOutTime)!.getTime();
+      const currentTime = new Date().getTime();
+      const elapsedMinutes = Math.floor((currentTime - checkedOutTimestamp) / 60000);
+      console.log(`⏳ Elapsed Time for ${patientName}: ${elapsedMinutes} mins`);
+
+      // Step 4: Define alert thresholds
+      const firstThreshold = slotDuration + 10; // Alert at slot duration + 10 mins
+      const repeatThreshold = 5; // Repeat alerts every 5 mins
+      const waitingMultiplier = Math.floor((elapsedMinutes - firstThreshold) / repeatThreshold) + 1;
+      console.log(waitingMultiplier)
+
+      const sortedPendingAppointments = pendingAppointments.sort((a, b) => {
+        return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+      });
+
+      // Step 6: Select the next patient in line based on time
+      const nextAppointment = sortedPendingAppointments.length > 0 ? sortedPendingAppointments[0] : null;
+
+      if (!nextAppointment) {
+        console.log("✅ No next appointment found.");
+        continue;
+      }
+
+      // Step 5: Trigger alert if time exceeds threshold
+      if (elapsedMinutes >= firstThreshold && (elapsedMinutes - firstThreshold) % repeatThreshold === 0) {
+        console.warn(`⚠️ Alert: ${patientName} under Dr. ${doctorName} has exceeded waiting time by ${elapsedMinutes - slotDuration} mins!`);
 
 
-// const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number, doctorName: string, doctorId: number) => {
-//   try {
-//       const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-//       const url = process.env.WHATSAPP_API_URL;
-//       const headers = {
-//           "Content-Type": "application/json",
-//           apikey: process.env.WHATSAPP_AUTH_TOKEN,
-//       };
 
-//       const doctorPayload = {
-//           from: fromPhoneNumber,
-//           to: doctorPhoneNumber,
-//           type: "template",
-//           message: {
-//               templateid: "731635", // Ensure this template ID is valid for Doctors
-//               placeholders: [doctorName, noOfPatients],
-//           },
-//       };
+        if (nextAppointment) {
+          nextAppointment.extraWaitingTime = elapsedMinutes - slotDuration;
+          const extraWaitingTime = nextAppointment.extraWaitingTime;
 
-//       const doctorResponse = await axios.post(url!, doctorPayload, { headers });
-//       console.log(`✅ Message sent to Doctor: ${doctorPhoneNumber}`, doctorResponse.data);
 
-//       // ✅ Log the message as sent
-//       await prisma.sentMessage.create({
-//           data: { doctorId, alertType: "lateLogin", sentAt: new Date() },
-//       });
+          await prisma.appointment.update({
+            where: { id: nextAppointment.id },
+            data: { extraWaitingTime: nextAppointment.extraWaitingTime },
+          });
 
-//   } catch (err: any) {
-//       console.error(`❌ Failed to send message to Doctor: ${doctorPhoneNumber}`, err.response?.data || err);
-//   }
-// };
-// const sendAdminAlertMessage = async (adminPhoneNumbers: string[], noOfPatients: number, doctorName: string, doctorId: number) => {
-//   try {
-//       const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-//       const url = process.env.WHATSAPP_API_URL_BULK;
-//       const headers = {
-//           "Content-Type": "application/json",
-//           apikey: process.env.WHATSAPP_AUTH_TOKEN,
-//       };
 
-//       const adminPayload = {
-//           from: fromPhoneNumber,
-//           to: adminPhoneNumbers,
-//           type: "template",
-//           message: {
-//               templateid: "731637", // Ensure this template ID is valid for Admins
-//               placeholders: [doctorName, noOfPatients],
-//           },
-//       };
 
-//       const adminResponse = await axios.post(url!, adminPayload, { headers });
-//       console.log(`✅ Admin Alert Sent: ${adminPhoneNumbers}`, adminResponse.data);
+          // Step 7: Send WhatsApp notifications to Admins & Doctor
+          const adminPhoneNumbers = ['919342287945', '919342287945']; // Admin List
+          // const adminPhoneNumbers = ["919880544866", "916364833988"]
+          const adminsToSend = Array.isArray(adminPhoneNumbers)
+            ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
+            : [];
 
-//       // ✅ Log the message as sent
-//       await prisma.sentMessage.create({
-//           data: { doctorId, alertType: "adminAlert", sentAt: new Date() },
-//       });
 
-//   } catch (err: any) {
-//       console.error(`❌ Failed to send message to Admins: ${adminPhoneNumbers}`, err.response?.data || err);
-//   }
-// };
+          await waitingTimeMessage(
+            adminsToSend,
+            doctor.phone_number,
+            pendingCount,
+            doctorName,
+            waitingMultiplier, // Include waiting multiplier in the alert
+          )
+
+        }
+      }
+    }
+  }
+
+
+}
+export const scheduleForWaiting = async (req: Request, res: Response) => {
+  try {
+    // Get the current time in Indian Standard Time (IST)
+    const currentIST = moment().tz('Asia/Kolkata');
+
+    // Log the current IST time
+    console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
+
+    await checkPatientWaitingTime();
+
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Minute task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
+}
+// cron.schedule("* * * * *", checkPatientWaitingTime);
+function parseTimeToMinutes(time: string): number {
+  const [hours, minutesPart] = time.split(':');
+  const minutes = parseInt(minutesPart.slice(0, 2), 10); // Extract the numeric minutes
+  const isPM = time.toLowerCase().includes('pm');
+
+  let hoursInMinutes = parseInt(hours, 10) * 60;
+  if (isPM && parseInt(hours, 10) !== 12) {
+    hoursInMinutes += 12 * 60; // Add 12 hours for PM times
+  } else if (!isPM && parseInt(hours, 10) === 12) {
+    hoursInMinutes -= 12 * 60; // Subtract 12 hours for 12 AM
+  }
+
+  return hoursInMinutes + minutes;
+}
 
 // Run the function every 5 minutes
 // setInterval(checkDoctorAvailability, 300000); // 5 minutes

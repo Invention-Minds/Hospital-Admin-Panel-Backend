@@ -5,7 +5,12 @@ import axios from 'axios';
 
 dotenv.config();
 
-
+function formatDateYear(date: Date): string {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+    const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+    return `${day}-${month}-${year}`;
+  }
 export const sendSMS = async (req: Request, res: Response): Promise<void> => {
     try {
         const { patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status } = req.body;
@@ -16,7 +21,7 @@ export const sendSMS = async (req: Request, res: Response): Promise<void> => {
 
     const responses = [];
         let patient_message = '';
-        patient_message =`Hello ${patientName}, your appointment with ${doctorName} is ${status} on ${date} at ${time}. For any questions, please contact 97420 20123. Thank You! Regards, Rashtrotthana Team`;
+        patient_message =`Hello ${patientName}, your appointment with ${doctorName} is ${status} on ${formatDateYear(new Date(date))} at ${time}. For any questions, please contact 97420 20123. Thank You! Regards, Rashtrotthana Team`;
         
         const apiKey = process.env.SMS_API_KEY;
         const apiUrl = process.env.SMS_API_URL;
@@ -24,14 +29,17 @@ export const sendSMS = async (req: Request, res: Response): Promise<void> => {
         const dltTemplateIdForPatient = process.env.SMS_DLT_TE_ID_FOR_PATIENT;
         const url = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(patient_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForPatient}`;
         const response = await axios.get(url);
+        console.log(response)
         responses.push({ recipient: 'doctor', data: response.data });
 
-        let doctor_message = `Hi ${doctorName}, you have an ${status} appointment with ${patientName} on ${date} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
+        let doctor_message = `Hi ${doctorName}, you have an ${status} appointment with ${patientName} on ${formatDateYear(new Date(date))} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
         const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_DOCTOR;
         const urlfordoctor = `${apiUrl}/${sender}/${doctorPhoneNumber}/${encodeURIComponent(doctor_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
         const responseofdoctor = await axios.get(urlfordoctor);
         responses.push({ recipient: 'doctor', data: responseofdoctor.data });
-        res.status(200).json({ message: 'SMS sent successfully', data: responseofdoctor.data });
+
+        res.status(200).json({ message: 'SMS sent successfully', data: responses });
+
 
         if(status==='received'){
             let receive_message = `Hi ${patientName}, We have received your appointment request with ${doctorName}. Our team will process it and get back to you shortly. If you have any immediate questions, please reach out to us at 97420 20123. Thank you!`;
@@ -110,7 +118,7 @@ export const sendSMSforHealthCheckup = async (req: Request, res: Response): Prom
         const sender = process.env.SMS_SENDER;
         const dltTemplateIdForPatient = process.env.SMS_DLT_TE_ID_FOR_HEALTH_CHECKUP_STATUS;
         if(status === 'Confirmed' || status === 'confirmed' || status === 'Confirm' || status === 'Rescheduled' || status === 'rescheduled'){
-            patient_message =`Namaste ${patientName}, Your ${packageName} package is ${status} for ${date} at ${time}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana`;
+            patient_message =`Namaste ${patientName}, Your ${packageName} package is ${status} for ${formatDateYear(new Date(date))} at ${time}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana`;
         
         const url = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(patient_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForPatient}`;
         const response = await axios.get(url);
@@ -120,7 +128,7 @@ export const sendSMSforHealthCheckup = async (req: Request, res: Response): Prom
         res.status(200).json({ message: 'SMS sent successfully', data: response.data });
         }
         if(status === 'Cancelled' || status === 'Cancel'){
-        let cancel_message = `Namaste ${patientName}, Your ${packageName} package scheduled for ${date} has been Cancelled. For any further assistance or rescheduling, please contact us at 97420 20123. Regards, Team Rashtrotthana`;
+        let cancel_message = `Namaste ${patientName}, Your ${packageName} package scheduled for ${formatDateYear(new Date(date))} has been Cancelled. For any further assistance or rescheduling, please contact us at 97420 20123. Regards, Team Rashtrotthana`;
         const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_HEALTH_CHECKUP_CANCEL;
         const urlfordoctor = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(cancel_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
         const responseofdoctor = await axios.get(urlfordoctor);

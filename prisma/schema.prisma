@@ -434,6 +434,13 @@ model EstimationDetails {
   procedures              String?
   multipleSurgeries       String?
   multipleEstimationCost  String?
+  costForGeneral          String?
+  costForPrivate          String?
+  costForSemiPrivate      String?
+  costForVip              String?
+  costForDeluxe           String?
+  costForPresidential     String?
+  selectedRoomCost        String?
 
   @@map("estimation_details")
 }

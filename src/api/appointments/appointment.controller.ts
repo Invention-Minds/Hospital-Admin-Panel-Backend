@@ -200,6 +200,12 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
+function formatDateYear(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+  const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+  return `${day}-${month}-${year}`;
+}
 export const createNewAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
     // Check if request contains an array of appointments
@@ -248,7 +254,7 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           type: "template",
           message: {
             templateid: "718883", // Replace with the actual template ID
-            placeholders: [patientName, doctorName, status, date, time], // Dynamic placeholders
+            placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
           },
         };
         const patientResponse = await axios.post(url!, patientPayload, { headers });
@@ -799,7 +805,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
         type: "template",
         message: {
           templateid: "674445", // Replace with actual template ID
-          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", date, time], // Dynamic placeholders
+          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
 

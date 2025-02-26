@@ -62,6 +62,26 @@ export const getEstimationsByDepartment = async (req: Request, res: Response) =>
         res.status(500).json({ error: 'Internal server error' });
     }
 };
+export const getEstimationsByType = async (req: Request, res: Response) => {
+    try {
+        const { estimationType } = req.params;
+
+        // Fetch estimations for the given department ID
+        const estimations = await prisma.estimation.findMany({
+            where: {
+                estimationType: (estimationType)
+            },
+            select: {
+                estimation: true,
+            },
+        });
+
+        res.status(200).json(estimations.map((e) => e.estimation));
+    } catch (error) {
+        console.error('Error fetching estimations by department:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
 
 export const createEstimationDetails = async (req: Request, res: Response) => {
     try {
@@ -130,7 +150,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         const payload = {
             from: fromPhoneNumber,
             // to: ["919844171700", "916364833989", "918904943659"], // Recipient's WhatsApp number
-            to:["919342287945"],
+            to: ["919342287945"],
             type: "template",
             message: {
                 templateid: "739377", // Use your actual template ID // Extracts PDF name
@@ -164,7 +184,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 const payload = {
                     from: fromPhoneNumber,
                     // to: ["919844171700", "916364833989", "918904943659"], // Recipient's WhatsApp number
-                    to:["919342287945"],
+                    to: ["919342287945"],
                     type: "template",
                     message: {
                         templateid: "739341", // Use your actual template ID // Extracts PDF name
@@ -245,7 +265,16 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             implants,
             instrumentals,
             procedures,
-            multipleEstimationCost
+            multipleEstimationCost,
+            costForGeneral,
+            costForPrivate,
+            costForSemiPrivate,
+            costForVip,
+            costForDeluxe,
+            costForPresidential,
+            selectedRoomCost,
+            patientRemarks,
+            staffRemarks,
         } = updateFields;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -304,7 +333,16 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 procedures,
                 instrumentals,
                 implants,
-                multipleEstimationCost
+                multipleEstimationCost,
+                costForGeneral,
+                costForPrivate,
+                costForSemiPrivate,
+                costForVip,
+                costForDeluxe,
+                costForPresidential,
+                selectedRoomCost,
+                patientRemarks,
+                staffRemarks,
             },
         });
 
@@ -507,7 +545,12 @@ export const updateAdvanceDetails = async (req: Request, res: Response) => {
         res.status(500).json({ error: "Internal server error" });
     }
 };
-
+function formatDateYear(date: Date): string {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+    const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+    return `${day}-${month}-${year}`;
+}
 export const markComplete = async (req: Request, res: Response) => {
     try {
         const { estimationId } = req.params; // Get estimationId from URL params
@@ -712,7 +755,14 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             surgeryPackage,
             attenderName,
             patientRemarks,
-            multipleEstimationCost
+            multipleEstimationCost,
+            costForGeneral,
+            costForPrivate,
+            costForSemiPrivate,
+            costForVip,
+            costForDeluxe,
+            costForPresidential,
+            selectedRoomCost,
         } = updateFields
 
         // Validate that estimationId is provided
@@ -789,9 +839,69 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         doc.text(`${totalDaysStay || "N/A"}`, 306, 248);
 
         // Room Type
-        doc.text(`Room Type ${roomType || "N/A"}`, 43, 275);
-        doc.fontSize(10).font('Poppins-Regular').text(`Note: The cost of the room includes daily nursing and diet fees`, 43, 300);
-        doc.fillColor("#0098A3").font('Poppins-SemiBold').fontSize(14).text(`Inclusion: `, 30, 335);
+        // doc.fontSize(10).text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 43, 270);
+        // Define available cost fields
+        const costFields = {
+            General: costForGeneral,
+            Private: costForPrivate,
+            SemiPrivate: costForSemiPrivate,
+            VIP: costForVip,
+            Deluxe: costForDeluxe,
+            Presidential: costForPresidential
+        };
+        
+        // Example estimation names (split if there are multiple surgeries)
+        const estimationNames = estimationName ? estimationName.split(',') : [];
+        
+        // Adjust initial position for displaying room costs
+        let yPosition = 290;
+        let index = 0; // Index for numbering room types
+        
+        // // Iterate over available costs and format them correctly
+        // Object.entries(costFields).forEach(([key, value]) => {
+        //     if (value) {
+        //         const costs = value.split(','); // Split costs by comma
+        //         doc.text(`${index} - ${key}:`, 43, yPosition); // Print room type
+        //         yPosition += 15;
+        
+        //         // Assign surgery names to each cost, if available
+        //         costs.forEach((cost:any, costIndex:any) => {
+        //             let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim() : `Cost ${costIndex + 1}`;
+        //             doc.text(`${surgeryLabel} cost: $${cost.trim()}`, 60, yPosition);
+        //             yPosition += 15; // Move to the next line
+        //         });
+        
+        //         index++; // Increment index for room type numbering
+        //         yPosition += 5; // Extra spacing between room types
+        //     }
+        // });
+        // Iterate over available costs and format them correctly
+Object.entries(costFields).forEach(([key, value]) => {
+    if (value) {
+        const costs = value.split(','); // Split costs by comma
+
+        // Assign surgery names or default cost labels
+        const formattedCosts = costs.map((cost:any, costIndex:any) => {
+            let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim().trim().toUpperCase() : `Cost ${costIndex + 1}`;
+            return `${surgeryLabel} cost: ₹${cost.trim()}`;
+        });
+
+        doc.fillColor("#0098A3").font('Poppins-SemiBold').text(`${key}:`, 43, yPosition, { continued: false });
+        
+        // Set font to semi-bold before printing surgery labels
+        doc.font('Poppins-SemiBold'); // Use a semi-bold font
+        doc.fillColor("black").text(formattedCosts.join(', '), 120, yPosition, { continued: false });
+        yPosition += 15; // Move to next line for the next room type
+
+        index++; // Increment index for room type numbering
+    }
+});
+
+
+
+        // doc.text(` ${costForGeneral || "N/A"}`, 43, 275);
+        doc.fontSize(8).font('Poppins-Regular').text(`Note: The cost of the room includes daily nursing and diet fees`, 43, 345);
+        doc.fillColor("#0098A3").font('Poppins-SemiBold').fontSize(14).text(`Inclusion: `, 30, 375);
 
         // Inclusions & Exclusions
         // doc.text(`${inclusions.length > 0 ? inclusions.map((i: any) => i.description).join(", ") : "None"}`, 50, 426);
@@ -799,7 +909,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         const startX = 30;  // X position of first column
         const columnWidth = 130; // Space between columns
-        const startY = 355;
+        const startY = 395;
         const lineHeight = 20;
         const columns = 4;
         function formatWithSpaces(text: string): string {
@@ -813,7 +923,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             inclusions.slice(itemsPerColumn * 2, itemsPerColumn * 3),
             inclusions.slice(itemsPerColumn * 3)
         ];
-        let num =1
+        let num = 1
         // Render inclusions in 4 columns
         inclusionsColumns.forEach((column, colIndex) => {
             column.forEach((item: string, rowIndex: number) => {
@@ -821,10 +931,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     const xPos = startX + (colIndex * columnWidth);
                     const yPos = startY + (rowIndex * lineHeight);
                     const formattedItem = formatWithSpaces(item);
-        
+
                     doc.fontSize(10).fillColor("black").font('Poppins-Regular')
-                    .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
-        
+                        .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
+
                     num++; // Increment global number
                 } else {
                     console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
@@ -832,9 +942,9 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             });
         });
 
-        doc.fillColor("#0098A3").font('Poppins-SemiBold').fontSize(14).text(`Exclusions: `, 30, 415);
+        doc.fillColor("#0098A3").font('Poppins-SemiBold').fontSize(14).text(`Exclusions: `, 30, 455);
 
-        const startExclusionsY = 440;
+        const startExclusionsY = 480;
 
         // Split exclusions into 4 parts
         const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
@@ -846,7 +956,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         ];
 
         // Render exclusions in 4 columns
-        let exclusionNum =1
+        let exclusionNum = 1
         exclusionsColumns.forEach((column, colIndex) => {
             column.forEach((item: string, rowIndex: number) => {
                 if (item) { // Ensure item exists
@@ -856,10 +966,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     const formattedItem = formatWithSpaces(item);
 
                     doc.fontSize(10)
-                    .fillColor("black")
-                    .font('Poppins-Regular')
-                    .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
-                        exclusionNum++;
+                        .fillColor("black")
+                        .font('Poppins-Regular')
+                        .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
+                    exclusionNum++;
                 } else {
                     console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
                 }
@@ -867,23 +977,24 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         });
         const itemsStartY = startExclusionsY + (exclusionsPerColumn + 2) * lineHeight;
 
-        doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, itemsStartY + 0);
-        doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, itemsStartY + 22);
-        doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, itemsStartY + 42);
-        doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, itemsStartY + 64)
+        doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, 547);
+        doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, 567);
+        doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, 589);
+        doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, 608)
 
         // Set color for "Surgery Procedure:" label
-        doc.fillColor("#0098A3").font('Poppins-SemiBold').text("Surgery Procedure: ", 30, 605, { continued: true });
+        // doc.fillColor("#0098A3").font('Poppins-SemiBold').text("Surgery Procedure: ", 30, 605, { continued: true });
 
         // Reset color for the dynamic value (surgeryPackage)
-        doc.fillColor("black").font("Poppins-Regular").fontSize(12).text(`${surgeryPackage || "N/A"}`);
+        // doc.fillColor("black").font("Poppins-Regular").fontSize(12).text(`${surgeryPackage || "N/A"}`);
 
         if (surgeryPackage?.toLowerCase() === "multiple surgeries") {
             doc.text(`Multiple Surgery Cost: ${multipleEstimationCost || "N/A"}`, 30, 625);
         }
         // Estimation Details
         doc.text(`Estimated Date: ${estimatedDate || "N/A"}`, 30, 645);
-        doc.text(`Discount: ${discountPercentage || 0}%`, 300, 645);
+        // doc.text(`Discount: ${discountPercentage || ""}`, 300, 645);
+        doc.text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 300, 645);
         doc.fillColor("black").font('Poppins-SemiBold').fontSize(12).text(`Estimation Cost: ${estimationCost || 0}`, 30, 670);
         doc.fillColor("black").font('Poppins-SemiBold').fontSize(12).text(`Total Cost: ${totalEstimationAmount || 0}`, 300, 670);
 
@@ -979,6 +1090,36 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 };
+
+
+
+
+// 📌 Draw Table Function
+function drawTable(doc:any, rows:any, startX:any, startY:any) {
+    rows.forEach(([label, value]:any, i:any) => {
+        doc.font("Poppins-Bold").fontSize(10).text(label, startX, startY + i * 15);
+        doc.font("Poppins-Regular").text(value, startX + 150, startY + i * 15);
+    });
+}
+
+// 📌 Function to Add Images (Base64)
+async function addImageFromBase64(doc:any, base64:any, x:any, y:any, width:any, height:any, label:any) {
+    if (!base64) {
+        doc.text("N/A", x, y + height / 2);
+        return;
+    }
+    try {
+        const imageBuffer = Buffer.from(base64.split(",")[1], "base64");
+        const processedImageBuffer = await sharp(imageBuffer).png().toBuffer();
+        const tempFilePath = path.join(__dirname, `temp_${Date.now()}.png`);
+        fs.writeFileSync(tempFilePath, processedImageBuffer);
+        doc.image(tempFilePath, x, y, { width, height });
+        fs.unlinkSync(tempFilePath);
+    } catch (error) {
+        doc.text("Signature Missing", x, y + height / 2);
+    }
+}
+
 async function savePdfToDatabase(estimationId: string, pdfUrl: string) {
     try {
         await prisma.estimationDetails.update({

@@ -14,70 +14,70 @@ const prisma = new PrismaClient();
 
 // Create Service
 export const createService = async (req: Request, res: Response) => {
-    try {
-      const {
-        repeatChecked,
-        daysInterval,
-        numberOfTimes,
-        repeatedDates,
-        packageId,
-        packageName,
-        ...rest
-      } = req.body;
-  
-      // Prepare data for the Service table
-      const serviceData = {
-        ...rest,
-        daysInterval: repeatChecked ? daysInterval || null : null,
-        numberOfTimes: repeatChecked ? numberOfTimes || null : null,
-        repeatChecked: repeatChecked || false,
-        repeatedDates: repeatChecked
-          ? { create: repeatedDates.map((date: string) => ({ date })) }
-          : undefined, // Create related repeated dates only if repeatChecked is true
-        packageId: parseInt(packageId),
-        packageName: packageName,
-      };
-  
-      // Create the service record along with related repeated dates
-      const newService = await prisma.service.create({
+  try {
+    const {
+      repeatChecked,
+      daysInterval,
+      numberOfTimes,
+      repeatedDates,
+      packageId,
+      packageName,
+      ...rest
+    } = req.body;
+
+    // Prepare data for the Service table
+    const serviceData = {
+      ...rest,
+      daysInterval: repeatChecked ? daysInterval || null : null,
+      numberOfTimes: repeatChecked ? numberOfTimes || null : null,
+      repeatChecked: repeatChecked || false,
+      repeatedDates: repeatChecked
+        ? { create: repeatedDates.map((date: string) => ({ date })) }
+        : undefined, // Create related repeated dates only if repeatChecked is true
+      packageId: parseInt(packageId),
+      packageName: packageName,
+    };
+
+    // Create the service record along with related repeated dates
+    const newService = await prisma.service.create({
+      data: {
+        ...serviceData,
+      },
+      include: {
+        repeatedDates: true, // Return the related repeated dates in the response
+      },
+    });
+    if (newService.appointmentStatus === 'pending') {
+
+      const newNotification = await prisma.notification.create({
         data: {
-          ...serviceData,
-        },
-        include: {
-          repeatedDates: true, // Return the related repeated dates in the response
+
+          type: 'appointment_request',
+          title: 'New Appointment Request',
+          message: `Appointment received for ${newService.packageName} on ${newService.appointmentDate} at ${newService.appointmentTime}.`,
+          entityId: newService.id,
+          entityType: 'appointment',
+          isCritical: false,
+          targetRole: 'sub_admin',
         },
       });
-      if (newService.appointmentStatus === 'pending') {
-     
-        const newNotification = await prisma.notification.create({
-          data: {
-  
-            type: 'appointment_request',
-            title: 'New Appointment Request',
-            message: `Appointment received for ${newService.packageName} on ${newService.appointmentDate} at ${newService.appointmentTime}.`,
-            entityId: newService.id,
-            entityType: 'appointment',
-            isCritical: false,
-            targetRole: 'sub_admin',
-          },
-        });
-        console.log("New Notification:", newNotification);
-        notifyPendingAppointments(newNotification);
-  
-      }
-  
-      res.status(201).json(newService);
-      try {
-        const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
-          let payload = {};
-          const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-        // API endpoint
-        const url = process.env.WHATSAPP_API_URL;
-          
-        const name = `${firstName} ${lastName}`;
-        if(appointmentStatus === 'pending'){
+      console.log("New Notification:", newNotification);
+      notifyPendingAppointments(newNotification);
+
+    }
+
+    res.status(201).json(newService);
+    try {
+      const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
+      let payload = {};
+      const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+      // API endpoint
+      const url = process.env.WHATSAPP_API_URL;
+
+      const name = `${firstName} ${lastName}`;
+      if (appointmentStatus === 'pending') {
         // Prepare the payload
-        payload={
+        payload = {
           from: fromPhoneNumber, // Sender's WhatsApp number
           to: phoneNumber, // Recipient's WhatsApp number
           type: "template", // Message type
@@ -87,35 +87,35 @@ export const createService = async (req: Request, res: Response) => {
           },
         };
       }
-        // API key for authorization
-        const headers = {
-          "Content-Type": "application/json",
-          apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
-        };
-    
-        // Send the POST request
-        const response = await axios.post(url!, payload, { headers });
-    
-        // Log the response
-        console.log('WhatsApp message sent successfully:', response.data);
+      // API key for authorization
+      const headers = {
+        "Content-Type": "application/json",
+        apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+      };
+
+      // Send the POST request
+      const response = await axios.post(url!, payload, { headers });
+
+      // Log the response
+      console.log('WhatsApp message sent successfully:', response.data);
 
 
-    
-        // Send a success response
-        // res.status(200).json({
-        //   status: "success",
-        //   message: "WhatsApp message sent successfully.",
-        //   data: response.data,
-        // });
-      } catch (error) {
-        console.error('Error sending WhatsApp message:', error);
-      }
+
+      // Send a success response
+      // res.status(200).json({
+      //   status: "success",
+      //   message: "WhatsApp message sent successfully.",
+      //   data: response.data,
+      // });
     } catch (error) {
-      console.error('Error creating service:', error);
-      res.status(500).json({ message: 'Internal server error' });
+      console.error('Error sending WhatsApp message:', error);
     }
-  };
-  
+  } catch (error) {
+    console.error('Error creating service:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 
 // Get all services
 export const getServices = async (req: Request, res: Response) => {
@@ -134,9 +134,9 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-         res.status(400).json({ message: 'Invalid service ID' });
-         return;
-      }
+      res.status(400).json({ message: 'Invalid service ID' });
+      return;
+    }
     const service = await prisma.service.findUnique({
       where: { id },
     });
@@ -152,7 +152,7 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
   }
 };
 
-  
+
 
 // Update service
 // export const updateService = async (req: Request, res: Response) => {
@@ -166,58 +166,58 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
 //   }
 // };
 export const updateService = async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { repeatedDates,package: packageDate, ...formData } = req.body;
-      console.log(id,formData,repeatedDates)
-      const serviceId = Number(id);
-      if (isNaN(serviceId)) {
-         res.status(400).json({ message: 'Invalid service ID' });
-         return
-      }
-  
-  
-      // Start a transaction to ensure consistency
-      const result = await prisma.$transaction(async (prisma) => {
-        // Step 1: Update the Service table
-        const updatedService = await prisma.service.update({
-          where: { id: serviceId },
-          data: { ...formData },
-        });
-        console.log(updatedService, 'service');
-  
-        // Step 2: If repeatedDates exist, delete old ones and add new ones
-        if (repeatedDates && repeatedDates.length > 0) {
-          // Step 1: Delete old repeated dates
-          await prisma.repeatedDate.deleteMany({
-            where: { serviceId: Number(id) },
-          });
-        
-          // Step 2: Add new repeated dates
-          await prisma.repeatedDate.createMany({
-            data: repeatedDates.map((date: { id: number, date: string, serviceId: number }) => ({
-              serviceId: date.serviceId,  // Get serviceId from the repeatedDates object
-              date: date.date             // Get date from the repeatedDates object
-            })),
-          });
-        }
-        
-  
-        return updatedService;
-      });
-  
-      res.status(200).json({ message: 'Service updated successfully', result });
-    } catch (error) {
-      console.error('Error updating service:', error);
-      res.status(500).json({ message: 'Failed to update service', error });
+  try {
+    const { id } = req.params;
+    const { repeatedDates, package: packageDate, ...formData } = req.body;
+    console.log(id, formData, repeatedDates)
+    const serviceId = Number(id);
+    if (isNaN(serviceId)) {
+      res.status(400).json({ message: 'Invalid service ID' });
+      return
     }
-  };
+
+
+    // Start a transaction to ensure consistency
+    const result = await prisma.$transaction(async (prisma) => {
+      // Step 1: Update the Service table
+      const updatedService = await prisma.service.update({
+        where: { id: serviceId },
+        data: { ...formData },
+      });
+      console.log(updatedService, 'service');
+
+      // Step 2: If repeatedDates exist, delete old ones and add new ones
+      if (repeatedDates && repeatedDates.length > 0) {
+        // Step 1: Delete old repeated dates
+        await prisma.repeatedDate.deleteMany({
+          where: { serviceId: Number(id) },
+        });
+
+        // Step 2: Add new repeated dates
+        await prisma.repeatedDate.createMany({
+          data: repeatedDates.map((date: { id: number, date: string, serviceId: number }) => ({
+            serviceId: date.serviceId,  // Get serviceId from the repeatedDates object
+            date: date.date             // Get date from the repeatedDates object
+          })),
+        });
+      }
+
+
+      return updatedService;
+    });
+
+    res.status(200).json({ message: 'Service updated successfully', result });
+  } catch (error) {
+    console.error('Error updating service:', error);
+    res.status(500).json({ message: 'Failed to update service', error });
+  }
+};
 
 export const updateServiceMessage = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const updateData = req.body; // Only specific fields like { messageSent: true }
-    console.log(id,updateData)
+    console.log(id, updateData)
     const data = updateData.status;
     console.log(data)
 
@@ -268,20 +268,26 @@ export const getRepeatedDatesByServiceId = async (req: Request, res: Response) =
 
 export const callRepeatedAppointments = async (req: Request, res: Response) => {
   try {
-      // Get the current time in Indian Standard Time (IST)
+    // Get the current time in Indian Standard Time (IST)
 
-      await updateEstimation();
-      // Run the required tasks
-      await processRepeatedAppointments();
-  
-      // Send a response back to Cloud Scheduler
-      res.status(200).json({ message: 'Hourly task executed successfully'});
-    } catch (error) {
-      console.error('Error executing hourly task:', error);
-      res.status(500).json({ error: 'An error occurred while executing the hourly task' });
-    }
+    await updateEstimation();
+    // Run the required tasks
+    await processRepeatedAppointments();
+
+    // Send a response back to Cloud Scheduler
+    res.status(200).json({ message: 'Hourly task executed successfully' });
+  } catch (error) {
+    console.error('Error executing hourly task:', error);
+    res.status(500).json({ error: 'An error occurred while executing the hourly task' });
+  }
 }
 
+function formatDateYear(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+  const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+  return `${day}-${month}-${year}`;
+}
 export const processRepeatedAppointments = async () => {
   try {
     // Step 1: Get Tomorrow's Date
@@ -301,7 +307,7 @@ export const processRepeatedAppointments = async () => {
     });
 
     if (servicesWithRepeats.length === 0) {
-       console.log('No repeated appointments found for tomorrow');
+      console.log('No repeated appointments found for tomorrow');
     }
 
     // Step 3: Create new appointments for the day before tomorrow
@@ -312,7 +318,7 @@ export const processRepeatedAppointments = async () => {
       const dayBeforeTomorrow = new Date(tomorrow);
       dayBeforeTomorrow.setDate(tomorrow.getDate() - 1);
       const dayBeforeTomorrowStr = dayBeforeTomorrow.toISOString().split('T')[0];
-      console.log(dayBeforeTomorrow,dayBeforeTomorrowStr,tomorrowDateStr)
+      console.log(dayBeforeTomorrow, dayBeforeTomorrowStr, tomorrowDateStr)
 
       // Create a new service appointment for the day before
       const newService = await prisma.service.create({
@@ -338,53 +344,53 @@ export const processRepeatedAppointments = async () => {
       newAppointments.push(newService);
       try {
         const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
-          let payload = {};
-          const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        let payload = {};
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         // API endpoint
         const url = process.env.WHATSAPP_API_URL;
-          
+
         const name = `${firstName} ${lastName}`;
-        if(appointmentStatus !== 'pending'){
-        // Prepare the payload
-         payload = {
-          from: fromPhoneNumber, // Sender's WhatsApp number
-          to: phoneNumber, // Recipient's WhatsApp number
-          type: "template", // Message type
-          message: {
-            templateid: "682645", // Template ID
-            placeholders: [name, packageName,appointmentStatus, appointmentDate, appointmentTime], // Placeholders for the template
-          },
-        };
-      }
-      else{
-          payload={
-              from: fromPhoneNumber, // Sender's WhatsApp number
-              to: phoneNumber, // Recipient's WhatsApp number
-              type: "template", // Message type
-              message: {
-                templateid: "682649", // Template ID
-                placeholders: [name, packageName], // Placeholders for the template
-              },
-            };
-          
-  
-      }
+        if (appointmentStatus !== 'pending') {
+          // Prepare the payload
+          payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: phoneNumber, // Recipient's WhatsApp number
+            type: "template", // Message type
+            message: {
+              templateid: "682645", // Template ID
+              placeholders: [name, packageName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+            },
+          };
+        }
+        else {
+          payload = {
+            from: fromPhoneNumber, // Sender's WhatsApp number
+            to: phoneNumber, // Recipient's WhatsApp number
+            type: "template", // Message type
+            message: {
+              templateid: "682649", // Template ID
+              placeholders: [name, packageName], // Placeholders for the template
+            },
+          };
+
+
+        }
         // API key for authorization
         const headers = {
           "Content-Type": "application/json",
           apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
         };
-    
+
         // Send the POST request
         const response = await axios.post(url!, payload, { headers });
-    
+
         // Log the response
         console.log('WhatsApp message sent successfully:', response.data);
         await prisma.service.update({
           where: { id: newService.id },
           data: { messageSent: true },
         });
-    
+
         // Send a success response
         // res.status(200).json({
         //   status: "success",
@@ -394,13 +400,13 @@ export const processRepeatedAppointments = async () => {
       } catch (error) {
         console.error('Error sending WhatsApp message:', error);
       }
-      try{
+      try {
         const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
         const patientName = `${firstName} ${lastName}`;
         let status = 'confirmed';
         let patient_message = "";
-        patient_message =`Namaste ${patientName}, Your ${packageName} package is ${status} for ${appointmentDate} at ${appointmentTime}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana	`;
-        
+        patient_message = `Namaste ${patientName}, Your ${packageName} package is ${status} for ${appointmentDate} at ${appointmentTime}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana	`;
+
         const apiKey = process.env.SMS_API_KEY;
         const apiUrl = process.env.SMS_API_URL;
         const sender = process.env.SMS_SENDER;
@@ -409,7 +415,7 @@ export const processRepeatedAppointments = async () => {
         const response = await axios.get(url);
         console.log('SMS sent successfully:', response.data);
       }
-      catch (error){
+      catch (error) {
         console.error('Error sending SMS:', error);
         await prisma.service.update({
           where: { id: newService.id },
@@ -417,7 +423,7 @@ export const processRepeatedAppointments = async () => {
         });
       }
       try {
-        const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia , email} = newService;
+        const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia, email } = newService;
         const to = email;
         const patientName = `${firstName} ${lastName}`;
         // Nodemailer transporter configuration
@@ -461,7 +467,7 @@ export const processRepeatedAppointments = async () => {
             data: { emailSent: false },
           });
           throw new Error("Recipient's email address (to) is required.");
-          
+
         }
         const info = await transporter.sendMail(mailOptions);
         console.log('Email sent successfully:', info);
@@ -470,14 +476,14 @@ export const processRepeatedAppointments = async () => {
           data: { emailSent: true },
         });
       }
-    
-    catch (error) {
-      console.error('Error sending email:', error);
-      await prisma.service.update({
-        where: { id: newService.id },
-        data: { emailSent: false },
-      });
-    }
+
+      catch (error) {
+        console.error('Error sending email:', error);
+        await prisma.service.update({
+          where: { id: newService.id },
+          data: { emailSent: false },
+        });
+      }
     }
 
     // Step 4: Send Response
@@ -493,49 +499,49 @@ export const processRepeatedAppointments = async () => {
 };
 
 export const stopRepeat = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { serviceId, stopDate } = req.body;
-  
-      if (!serviceId || !stopDate) {
-         res.status(400).json({ message: 'Service ID and Stop Date are required.' });
-      }
-  
-      // Format stopDate
-      const stopDateStr = new Date(stopDate).toISOString().split('T')[0];
-  
-      // Delete repeated dates greater than or equal to stopDate
-      const deletedDates = await prisma.repeatedDate.deleteMany({
-        where: {
-          serviceId: serviceId, // Match the serviceId
-          date: { gte: stopDateStr }, // Delete dates after the stopDate
-        },
-      });
-  
-      res.status(200).json({
-        message: `Repeated dates after ${stopDateStr} deleted successfully.`,
-        deletedDates,
-      });
-    } catch (error) {
-      console.error('Error stopping repeated appointments:', error);
-      res.status(500).json({ message: 'Internal server error' });
+  try {
+    const { serviceId, stopDate } = req.body;
+
+    if (!serviceId || !stopDate) {
+      res.status(400).json({ message: 'Service ID and Stop Date are required.' });
     }
-  };
-  
+
+    // Format stopDate
+    const stopDateStr = new Date(stopDate).toISOString().split('T')[0];
+
+    // Delete repeated dates greater than or equal to stopDate
+    const deletedDates = await prisma.repeatedDate.deleteMany({
+      where: {
+        serviceId: serviceId, // Match the serviceId
+        date: { gte: stopDateStr }, // Delete dates after the stopDate
+      },
+    });
+
+    res.status(200).json({
+      message: `Repeated dates after ${stopDateStr} deleted successfully.`,
+      deletedDates,
+    });
+  } catch (error) {
+    console.error('Error stopping repeated appointments:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 //   export const getAvailableSlots = async (req: Request, res: Response):  Promise<void> => {
 //     try {
 //       const date = req.query.date;
-  
+
 //       // Validate and cast `date` to string
 //       if (typeof date !== 'string') {
 //          res.status(400).json({ message: 'Invalid date format. Date must be a string.' });
 //          return;
 //       }
-  
+
 //       // Generate all time slots from 7:00 AM to 11:00 AM
 //       const allSlots: string[] = [];
 //       const startTime = new Date(`${date}T07:00:00`);
 //       const endTime = new Date(`${date}T11:00:00`);
-  
+
 //       while (startTime < endTime) {
 //         const hours = startTime.getHours();
 //         const minutes = startTime.getMinutes();
@@ -546,7 +552,7 @@ export const stopRepeat = async (req: Request, res: Response): Promise<void> => 
 //         allSlots.push(formattedTime);
 //         startTime.setMinutes(startTime.getMinutes() + 10); // Increment by 10 minutes
 //       }
-  
+
 //       // Fetch booked appointments (direct and repeated)
 //       const bookedAppointments = await prisma.service.findMany({
 //         where: {
@@ -565,156 +571,155 @@ export const stopRepeat = async (req: Request, res: Response): Promise<void> => 
 //           appointmentTime: true, // Select the booked times
 //         },
 //       });
-  
+
 //       const bookedTimes = bookedAppointments.map((appt) => appt.appointmentTime);
-  
+
 //       // Exclude booked times from allSlots
 //       const availableSlots = allSlots.filter((slot) => !bookedTimes.includes(slot));
-  
+
 //       res.status(200).json({ availableSlots });
 //     } catch (error) {
 //       console.error('Error fetching available slots:', error);
 //       res.status(500).json({ message: 'Internal server error' });
 //     }
 //   };
-  
+
 export const getAvailableSlots = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { date, packageId } = req.query;
-  
-      if (!date || !packageId) {
-        res.status(400).json({ message: 'Date and Package ID are required.' });
-        return;
-      }
-      const packageIdParsed = parseInt(packageId as string);
-      // Generate all time slots (7:00 AM - 11:00 AM)
-      const allSlots: string[] = [];
-      const startTime = new Date(`${date}T07:00:00`);
-      const endTime = new Date(`${date}T11:00:00`);
-      while (startTime < endTime) {
-        const hours = startTime.getHours();
-        const minutes = startTime.getMinutes();
-        const period = hours >= 12 ? 'PM' : 'AM';
-        const formattedTime = `${(hours % 12 || 12).toString().padStart(2, '0')}:${minutes
+  try {
+    const { date, packageId } = req.query;
+
+    if (!date || !packageId) {
+      res.status(400).json({ message: 'Date and Package ID are required.' });
+      return;
+    }
+    const packageIdParsed = parseInt(packageId as string);
+    // Generate all time slots (7:00 AM - 11:00 AM)
+    const allSlots: string[] = [];
+    const startTime = new Date(`${date}T07:00:00`);
+    const endTime = new Date(`${date}T12:00:00`);
+    while (startTime < endTime) {
+      const hours = startTime.getHours();
+      const minutes = startTime.getMinutes();
+      const period = hours >= 12 ? 'PM' : 'AM';
+      const formattedTime = `${(hours % 12 || 12).toString().padStart(2, '0')}:${minutes
         .toString()
         .padStart(2, '0')} ${period}`;
-        allSlots.push(formattedTime);
-        startTime.setMinutes(startTime.getMinutes() + 10); // Increment by 10 minutes
-      }
-  
-      // Fetch booked slots for the specific package and date
-      const bookedAppointments = await prisma.service.findMany({
-        where: {
-          OR: [
-            {
-              appointmentDate: date as string, // Direct bookings for the date
-              packageId: packageIdParsed, // Specific package
-            },
-            {
-              repeatedDates: {
-                some: {
-                  date: date as string, // Repeated dates
-                },
+      allSlots.push(formattedTime);
+      startTime.setMinutes(startTime.getMinutes() + 10); // Increment by 10 minutes
+    }
+
+    // Fetch booked slots for the specific package and date
+    const bookedAppointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          {
+            appointmentDate: date as string, // Direct bookings for the date
+            packageId: packageIdParsed, // Specific package
+          },
+          {
+            repeatedDates: {
+              some: {
+                date: date as string, // Repeated dates
               },
-              packageId: packageIdParsed, // Specific package
             },
-          ],
-        },
-        select: { appointmentTime: true },
-      });
-      
-      const bookedTimes = bookedAppointments.map((appt) => appt.appointmentTime);
-      console.log('Booked times:', bookedTimes, bookedAppointments);
-      // Exclude booked times from allSlots
-      const availableSlots = allSlots.filter((slot) => !bookedTimes.includes(slot));
-  
-      res.status(200).json({ availableSlots });
-    } catch (error) {
-      console.error('Error fetching available slots:', error);
-      res.status(500).json({ message: 'Internal server error' });
+            packageId: packageIdParsed, // Specific package
+          },
+        ],
+      },
+      select: { appointmentTime: true },
+    });
+
+    const bookedTimes = bookedAppointments.map((appt) => appt.appointmentTime);
+    console.log('Booked times:', bookedTimes, bookedAppointments);
+    // Exclude booked times from allSlots
+    const availableSlots = allSlots.filter((slot) => !bookedTimes.includes(slot));
+
+    res.status(200).json({ availableSlots });
+  } catch (error) {
+    console.error('Error fetching available slots:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const updateServiceStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { appointmentStatus } = req.body;
+    console.log(id, appointmentStatus)
+
+    if (!appointmentStatus) {
+      res.status(400).json({ message: 'Appointment status is required.' });
+      return;
     }
-  };
-  
-  export const updateServiceStatus = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const { appointmentStatus } = req.body;
-      console.log(id,appointmentStatus)
-  
-      if (!appointmentStatus) {
-        res.status(400).json({ message: 'Appointment status is required.' });
-        return;
-      }
-  
-      const updatedService = await prisma.service.update({
-        where: { id: parseInt(id, 10) },
-        data: {
-          appointmentStatus,
-          updatedAt: new Date(),
-        },
-      });
-  
-      res.status(200).json({
-        message: `Service appointment status updated to '${appointmentStatus}'.`,
-        updatedService,
-      });
-    } catch (error) {
-      console.error('Error updating service status:', error);
-      res.status(500).json({ message: 'Internal server error' });
+
+    const updatedService = await prisma.service.update({
+      where: { id: parseInt(id, 10) },
+      data: {
+        appointmentStatus,
+        updatedAt: new Date(),
+      },
+    });
+
+    res.status(200).json({
+      message: `Service appointment status updated to '${appointmentStatus}'.`,
+      updatedService,
+    });
+  } catch (error) {
+    console.error('Error updating service status:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+export const getPackages = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const packages = await prisma.package.findMany();
+    res.status(200).json(packages);
+  } catch (error) {
+    console.error('Error fetching packages:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+export const lockService = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const serviceId = Number(req.params.id);
+    const userId = Number(req.body.userId);
+
+    if (!serviceId || isNaN(serviceId) || !userId || isNaN(userId)) {
+      res.status(400).json({ message: 'Invalid service ID or user ID' });
+      return;
     }
-  };
-  export const getPackages = async (_req: Request, res: Response): Promise<void> => {
-    try {
-      const packages = await prisma.package.findMany();
-      res.status(200).json(packages);
-    } catch (error) {
-      console.error('Error fetching packages:', error);
-      res.status(500).json({ message: 'Internal server error' });
+
+    const service = await repository.getServiceById(serviceId);
+    if (!service) {
+      res.status(404).json({ message: 'Service not found' });
+      return;
     }
-  };
-  export const lockService = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const serviceId = Number(req.params.id);
-      const userId = Number(req.body.userId);
-  
-      if (!serviceId || isNaN(serviceId) || !userId || isNaN(userId)) {
-        res.status(400).json({ message: 'Invalid service ID or user ID' });
-        return;
-      }
-  
-      const service = await repository.getServiceById(serviceId);
-      if (!service) {
-        res.status(404).json({ message: 'Service not found' });
-        return;
-      }
-  
-      if (service.lockedBy && service.lockedBy !== userId) {
-        res.status(409).json({ message: 'Service is locked by another user' });
-        return;
-      }
-  
-      const lockedService = await repository.lockService(serviceId, userId);
-      res.status(200).json(lockedService);
-    } catch (error) {
-      console.error('Error locking service:', error);
-      res.status(500).json({ message: 'Failed to lock service' });
+
+    if (service.lockedBy && service.lockedBy !== userId) {
+      res.status(409).json({ message: 'Service is locked by another user' });
+      return;
     }
-  };
-  
-  export const unlockService = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const serviceId = Number(req.params.id);
-  
-      if (!serviceId || isNaN(serviceId)) {
-        res.status(400).json({ message: 'Invalid service ID' });
-        return;
-      }
-  
-      const unlockedService = await repository.unlockService(serviceId);
-      res.status(200).json(unlockedService);
-    } catch (error) {
-      console.error('Error unlocking service:', error);
-      res.status(500).json({ message: 'Failed to unlock service' });
+
+    const lockedService = await repository.lockService(serviceId, userId);
+    res.status(200).json(lockedService);
+  } catch (error) {
+    console.error('Error locking service:', error);
+    res.status(500).json({ message: 'Failed to lock service' });
+  }
+};
+
+export const unlockService = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const serviceId = Number(req.params.id);
+
+    if (!serviceId || isNaN(serviceId)) {
+      res.status(400).json({ message: 'Invalid service ID' });
+      return;
     }
-  };
-  
+
+    const unlockedService = await repository.unlockService(serviceId);
+    res.status(200).json(unlockedService);
+  } catch (error) {
+    console.error('Error unlocking service:', error);
+    res.status(500).json({ message: 'Failed to unlock service' });
+  }
+};

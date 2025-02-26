@@ -24,6 +24,7 @@ class ScreenshotController {
             await page.goto('https://rashtrotthanahospital.docminds.in/login', { waitUntil: 'networkidle2' });
 
             // Perform login
+            
             await page.type('input[name="username"]', 'DocMinds01');
             await page.type('input[name="password"]', 'docminds@0911');
             await Promise.all([
@@ -113,6 +114,12 @@ async function autoScroll(page: puppeteer.Page) {
         });
     });
 }
+function formatDateYear(date: Date): string {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+    const year = date.getFullYear().toString().slice(-4); // Get last two digits of year
+    return `${day}-${month}-${year}`;
+  }
 async function sendWhatsAppMessage(imageUrl: any) {
     try {
         const todayDate = new Date().toISOString().split('T')[0];
@@ -121,13 +128,13 @@ async function sendWhatsAppMessage(imageUrl: any) {
         console.log(todayDate)
         const payload = {
             from: fromPhoneNumber,
-            // to: ["919496217976", "919341227264", "919995703633 ","919880544866","916364833988","919342003000"], // Recipient's WhatsApp number
-            to:['919342287945'],
+            to: ["919496217976", "919341227264", "919995703633 ","919880544866","916364833988","919342003000"], // Recipient's WhatsApp number
+            // to:['919342287945'],
             type: "template",
             message: {
                 templateid: "735729", // Use your actual template ID
                 url: imageUrl, // Extracts PDF name
-                placeholders: [todayDate]
+                placeholders: [formatDateYear(new Date(todayDate))]
             }
         };
 
