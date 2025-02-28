@@ -1,0 +1,17 @@
+-- AlterTable
+ALTER TABLE `Service` ADD COLUMN `boneDensitometry` BOOLEAN NULL,
+    ADD COLUMN `boneDensitometryTime` DATETIME(3) NULL,
+    ADD COLUMN `chestXRay` BOOLEAN NULL,
+    ADD COLUMN `chestXRayTime` DATETIME(3) NULL,
+    ADD COLUMN `ecg` BOOLEAN NULL,
+    ADD COLUMN `ecgTime` DATETIME(3) NULL,
+    ADD COLUMN `echoTMT` BOOLEAN NULL,
+    ADD COLUMN `echoTMTTime` DATETIME(3) NULL,
+    ADD COLUMN `isLab` BOOLEAN NULL,
+    ADD COLUMN `isLabTime` DATETIME(3) NULL,
+    ADD COLUMN `mammography` BOOLEAN NULL,
+    ADD COLUMN `mammographyTime` DATETIME(3) NULL,
+    ADD COLUMN `ultrasound` BOOLEAN NULL,
+    ADD COLUMN `ultrasoundTime` DATETIME(3) NULL,
+    ADD COLUMN `usgEcho` BOOLEAN NULL,
+    ADD COLUMN `usgEchoTime` DATETIME(3) NULL;

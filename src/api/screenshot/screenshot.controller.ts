@@ -128,8 +128,8 @@ async function sendWhatsAppMessage(imageUrl: any) {
         console.log(todayDate)
         const payload = {
             from: fromPhoneNumber,
-            to: ["919496217976", "919341227264", "919995703633 ","919880544866","916364833988","919342003000"], // Recipient's WhatsApp number
-            // to:['919342287945'],
+            // to: ["919496217976", "919341227264", "919995703633 ","919880544866","916364833988","919342003000"], // Recipient's WhatsApp number
+            to:['919342287945'],
             type: "template",
             message: {
                 templateid: "735729", // Use your actual template ID

@@ -257,34 +257,50 @@ model Notification {
 }
 
 model Service {
-  id                Int            @id @default(autoincrement())
-  pnrNumber         String?
-  firstName         String
-  lastName          String?
-  phoneNumber       String
-  email             String?
-  appointmentDate   String
-  appointmentTime   String?
-  repeatChecked     Boolean        @default(false)
-  daysInterval      Int?
-  numberOfTimes     Int?
-  requestVia        String
-  appointmentStatus String         @default("pending")
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  checkedIn         Boolean?       @default(false)
-  emailSent         Boolean?       @default(false)
-  messageSent       Boolean?       @default(false)
-  smsSent           Boolean?       @default(false)
-  packageId         Int            @default(0)
-  packageName       String
-  package           Package?       @relation(fields: [packageId], references: [id])
-  repeatedDates     RepeatedDate[]
-  lockedBy          Int?
-  userId            Int?
-  username          String?
-  role              UserRole?
-  checkedInTime     DateTime?
+  id                   Int            @id @default(autoincrement())
+  pnrNumber            String?
+  firstName            String
+  lastName             String?
+  phoneNumber          String
+  email                String?
+  appointmentDate      String
+  appointmentTime      String?
+  repeatChecked        Boolean        @default(false)
+  daysInterval         Int?
+  numberOfTimes        Int?
+  requestVia           String
+  appointmentStatus    String         @default("pending")
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  checkedIn            Boolean?       @default(false)
+  emailSent            Boolean?       @default(false)
+  messageSent          Boolean?       @default(false)
+  smsSent              Boolean?       @default(false)
+  packageId            Int            @default(0)
+  packageName          String
+  package              Package?       @relation(fields: [packageId], references: [id])
+  repeatedDates        RepeatedDate[]
+  lockedBy             Int?
+  userId               Int?
+  username             String?
+  role                 UserRole?
+  checkedInTime        DateTime?
+  isLab                Boolean?
+  isLabTime            DateTime?
+  chestXRay            Boolean?
+  ultrasound           Boolean?
+  boneDensitometry     Boolean?
+  mammography          Boolean?
+  ecg                  Boolean?
+  echoTMT              Boolean?
+  usgEcho              Boolean?
+  chestXRayTime        DateTime?
+  ultrasoundTime       DateTime?
+  boneDensitometryTime DateTime?
+  mammographyTime      DateTime?
+  ecgTime              DateTime?
+  echoTMTTime          DateTime?
+  usgEchoTime          DateTime?
 }
 
 model RepeatedDate {

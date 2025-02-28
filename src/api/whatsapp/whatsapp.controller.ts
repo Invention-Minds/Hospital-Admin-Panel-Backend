@@ -1117,7 +1117,7 @@ export const sendAdminMessage = async (req: Request, res: Response) => {
       type: "template", // Type of the message
       message: {
         templateid: "738057", // Replace with the actual template ID
-        placeholders: [doctorName, departmentName, formatDateYear(startDate), endDate], // Dynamic placeholders
+        placeholders: [doctorName, departmentName, formatDateYear(new Date(startDate)), formatDateYear(new Date(endDate))], // Dynamic placeholders
       },
     };
 
@@ -1867,7 +1867,7 @@ export const doctorAvailability = async (req: Request, res: Response) => {
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
     // await cancelExpiredAppointments();
-    await checkDoctorAvailability();
+    // await checkDoctorAvailability();
 
     // Send a response back to Cloud Scheduler
     res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
