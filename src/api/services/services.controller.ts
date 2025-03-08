@@ -2,6 +2,7 @@ import { application, Request, Response } from 'express';
 import { ServiceRepository } from './services.repository';
 import { notifyPendingAppointments } from '../appointments/appointment.controller';
 import nodemailer from 'nodemailer';
+import moment from 'moment-timezone';
 import cron from 'node-cron';
 import { sendServiceWhatsappMessage } from '../whatsapp/whatsapp.controller';
 import { updateEstimation } from '../whatsapp/whatsapp.controller';
@@ -82,7 +83,7 @@ export const createService = async (req: Request, res: Response) => {
           to: phoneNumber, // Recipient's WhatsApp number
           type: "template", // Message type
           message: {
-            templateid: "682649", // Template ID
+            templateid: "751393", // Template ID
             placeholders: [name, packageName], // Placeholders for the template
           },
         };
@@ -357,7 +358,7 @@ export const processRepeatedAppointments = async () => {
             to: phoneNumber, // Recipient's WhatsApp number
             type: "template", // Message type
             message: {
-              templateid: "682645", // Template ID
+              templateid: "751387", // Template ID
               placeholders: [name, packageName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
             },
           };
@@ -368,7 +369,7 @@ export const processRepeatedAppointments = async () => {
             to: phoneNumber, // Recipient's WhatsApp number
             type: "template", // Message type
             message: {
-              templateid: "682649", // Template ID
+              templateid: "751393", // Template ID
               placeholders: [name, packageName], // Placeholders for the template
             },
           };
@@ -722,4 +723,84 @@ export const unlockService = async (req: Request, res: Response): Promise<void> 
     console.error('Error unlocking service:', error);
     res.status(500).json({ message: 'Failed to unlock service' });
   }
+  
 };
+export const markComplete = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const indianTime = moment().tz('Asia/Kolkata');
+    const indianDate = indianTime.format('YYYY-MM-DD'); // Format as YYYY-MM-DD
+
+    // Find appointments for today where `checkedOut` is true
+    const checkedInServices = await prisma.service.findMany({
+      where: {
+        appointmentDate: indianDate, // Appointments for today
+        checkedIn: true, // Only checked out appointments
+        appointmentStatus: 'Confirm',
+      },
+    });
+    if (checkedInServices.length === 0) {
+      console.log('No appointments found for today with checkedOut: true');
+      // res.status(200).json({ message: 'No appointments to process' });
+      return;
+    }
+
+    // Update the status of these appointments to "Complete"
+    await Promise.all(
+      checkedInServices.map(async (appointment) => {
+        await prisma.service.update({
+          where: { id: appointment.id },
+          data: { appointmentStatus: 'completed' },
+        });
+
+        console.log(`Marked appointment ${appointment.id} as Complete`);
+
+        // Send WhatsApp message
+        const url = process.env.WHATSAPP_API_URL;
+        const headers = {
+          'Content-Type': 'application/json',
+          apikey: process.env.WHATSAPP_AUTH_TOKEN,
+        };
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+        const whatsappPayload = {
+          from: fromPhoneNumber,
+          to: appointment.phoneNumber, // Patient's phone number
+          type: 'template',
+          message: {
+            templateid: '751385', // Replace with your actual template ID
+            placeholders: [], // Add dynamic placeholders here if needed
+          },
+        };
+
+        try {
+          await axios.post(url!, whatsappPayload, { headers });
+          console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
+
+          // If WhatsApp message is successful, send SMS
+          const apiKey = process.env.SMS_API_KEY;
+          const apiUrl = process.env.SMS_API_URL;
+          const sender = process.env.SMS_SENDER;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+
+          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+            successMessage
+          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+
+          const smsResponse = await axios.get(smsUrl);
+          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+        } catch (error) {
+          console.error(
+            'Failed to send WhatsApp or SMS:',
+            (error as any).response ? (error as any).response.data : (error as any).message
+          );
+        }
+      })
+    );
+
+    
+  } catch (error) {
+    console.error('Error completing service:', error);
+    res.status(500).json({ message: 'Failed to complete service' });
+  }
+}

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `Service` ADD COLUMN `age` INTEGER NULL,
+    ADD COLUMN `gender` VARCHAR(191) NULL;

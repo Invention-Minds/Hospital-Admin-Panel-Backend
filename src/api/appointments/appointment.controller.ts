@@ -233,7 +233,8 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           doctorType,
           age,
           gender,
-          serviceId
+          serviceId,
+          type
         } = appointment;
 
 
@@ -253,7 +254,7 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           to: phoneNumber,
           type: "template",
           message: {
-            templateid: "718883", // Replace with the actual template ID
+            templateid: "750561", // Replace with the actual template ID
             placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
           },
         };
@@ -281,6 +282,7 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           age,
           gender,
           serviceId,
+          type,
           requestVia: 'Walk-In'
         });
 
@@ -804,7 +806,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
         to: phoneNumber, // Patient's WhatsApp number
         type: "template",
         message: {
-          templateid: "674445", // Replace with actual template ID
+          templateid: "751725", // Replace with actual template ID
           placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
@@ -827,7 +829,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
           to: doctor.phone_number, // Doctor's WhatsApp number
           type: "template",
           message: {
-            templateid: "674491", // Replace with actual doctor template ID
+            templateid: "751453", // Replace with actual doctor template ID
             placeholders: [doctor.name, "cancelled", patientName, date, time], // Dynamic placeholders
           },
         };

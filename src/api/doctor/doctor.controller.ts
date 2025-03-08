@@ -1123,3 +1123,26 @@ export const getDoctorByUserId = async (req: Request, res: Response): Promise<vo
       res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
     }
 }
+
+export const updateRoomNo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorId } = req.params;
+    const { roomNo } = req.body; // Get roomNo from request body (not params)
+
+    if (!doctorId || !roomNo) {
+      res.status(400).json({ error: "Doctor ID and Room Number are required." });
+      return;
+    }
+
+    const updatedDoctor = await prisma.doctor.update({
+      where: { id: Number(doctorId) },
+      data: {
+        roomNo: roomNo, // ✅ Corrected from `date` to `data`
+      },
+    });
+
+    res.status(200).json({ message: "Room number updated successfully", doctor: updatedDoctor });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred" });
+  }
+};

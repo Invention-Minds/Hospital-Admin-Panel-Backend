@@ -44,6 +44,7 @@ router.post('/process-repeated-appointments', processRepeatedAppointments);
 router.post('/stop-repeat', stopRepeat);
 router.post('/schedule-completion', scheduleServiceCompletion);
 
+
 router.put('/:id/lock', lockService);
 
 

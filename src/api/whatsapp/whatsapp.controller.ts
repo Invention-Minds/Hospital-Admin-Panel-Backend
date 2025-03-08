@@ -64,7 +64,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     //     to: patientPhoneNumber,
     //     type: "template",
     //     message: {
-    //       templateid: "674445", // Replace with the actual template ID
+    //       templateid: "751725", // Replace with the actual template ID
     //       placeholders:[patientName, doctorName, status, date, time], // Dynamic placeholders
     //     },
     //   };
@@ -96,7 +96,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       to: patientPhoneNumber, // Recipient's WhatsApp number
       type: "template", // Type of the message
       message: {
-        templateid: "674495", // Replace with the actual template ID
+        templateid: "751383", // Replace with the actual template ID
         placeholders: [patientName, doctorName], // Dynamic placeholders
       },
     };
@@ -129,7 +129,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       to: doctorPhoneNumber, // Recipient's WhatsApp number
       type: "template", // Type of the message
       message: {
-        templateid: "674491", // Replace with the actual template ID
+        templateid: "751453", // Replace with the actual template ID
         placeholders: [doctorName, status, patientName, formatDateYear(new Date(date)), time], // Dynamic placeholders
       },
     }
@@ -140,7 +140,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         to: patientPhoneNumber,
         type: "template",
         message: {
-          templateid: "718883", // Replace with the actual template ID
+          templateid: "750561", // Replace with the actual template ID
           placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
@@ -152,7 +152,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         to: patientPhoneNumber,
         type: "template",
         message: {
-          templateid: "674445", // Replace with the actual template ID
+          templateid: "751725", // Replace with the actual template ID
           placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
@@ -190,7 +190,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       to: patientPhoneNumber, // Recipient's WhatsApp number
       type: "template", // Type of the message
       message: {
-        templateid: "682641", // Replace with the actual template ID
+        templateid: "751385", // Replace with the actual template ID
         placeholders: [], // Dynamic placeholders
       },
     };
@@ -315,7 +315,7 @@ export const checkAndSendReminders = async () => {
           to: appointment.phoneNumber, // Recipient's WhatsApp number
           type: "template", // Type of the message
           message: {
-            templateid: "674507", // Replace with the actual template ID
+            templateid: "751379", // Replace with the actual template ID
             placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
@@ -495,7 +495,7 @@ export const checkAndSendReminders = async () => {
           to: appointment.phoneNumber, // Recipient's WhatsApp number
           type: "template", // Type of the message
           message: {
-            templateid: "674503", // Replace with the actual template ID
+            templateid: "751381", // Replace with the actual template ID
             placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
@@ -667,7 +667,8 @@ export const sendWhatsAppChatbot = async (req: Request, res: Response) => {
 export const sendDoctorMessage = async () => {
   try {
     const indianTime = moment.tz("Asia/Kolkata");
-    const tomorrow = indianTime.clone().add(1, 'day').format('DD-MM-YYYY');
+    const tomorrow = indianTime.clone().add(1, 'day').format('YYYY-MM-DD');
+    console.log(tomorrow)
 
     // Fetch all doctors who have appointments tomorrow
     const appointmentsTomorrow = await prisma.appointment.findMany({
@@ -691,9 +692,11 @@ export const sendDoctorMessage = async () => {
       select: {
         id: true,
         phone_number: true,
+        availability: true
       },
     });
-
+  // Determine tomorrow's weekday (e.g., 'mon', 'tue')
+  const tomorrowDay = indianTime.clone().add(1, 'day').format('ddd').toLowerCase();
     // Create a map to get the phone number by doctor ID
     const doctorPhoneMap = new Map(doctors.map(doctor => [doctor.id, doctor.phone_number]));
 
@@ -719,6 +722,28 @@ export const sendDoctorMessage = async () => {
       const doctorPhoneNumber = doctorPhoneMap.get(doctorId);
 
       if (doctorPhoneNumber) {
+        const doctor = doctors.find(doc => doc.id === doctorId);
+        
+        // Extract availability for tomorrow
+        const allUpdatedAtNull = doctor!.availability.every((avail: any) => !avail.updatedAt);
+        let latestTimestamp: string | null = null;
+
+        if (!allUpdatedAtNull) {
+          const maxTimestamp = doctor!.availability
+            .filter((avail: any) => avail.updatedAt)
+            .map((avail: any) => new Date(avail.updatedAt).getTime())
+            .reduce((max: any, curr: any) => Math.max(max, curr), 0);
+          latestTimestamp = new Date(maxTimestamp).toISOString();
+        }
+
+        const latestAvailability = allUpdatedAtNull
+          ? doctor!.availability
+          : doctor!.availability.filter((avail: any) => new Date(avail.updatedAt).toISOString() === latestTimestamp);
+
+        // Get tomorrow's availability
+        const tomorrowAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === tomorrowDay);
+        const availableFromTime = tomorrowAvailability ? tomorrowAvailability.availableFrom : "Not Provided";
+
         console.log("doctor Message")
         const message = `Namaste Dr. ${doctorName}, you have ${appointmentCount} appointment(s) scheduled for tomorrow, ${tomorrow}. Please check your schedule for more details.`;
 
@@ -764,8 +789,8 @@ export const sendDoctorMessage = async () => {
           to: doctorPhoneNumber, // Recipient's WhatsApp number
           type: "template", // Type of the message
           message: {
-            templateid: "674515", // Replace with the actual template ID
-            placeholders: [doctorName, appointmentCount, tomorrow], // Dynamic placeholders
+            templateid: "751769", // Replace with the actual template ID
+            placeholders: [doctorName, appointmentCount, tomorrow, availableFromTime], // Dynamic placeholders
           },
         };
 
@@ -1046,7 +1071,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         to: phoneNumber, // Recipient's WhatsApp number
         type: "template", // Message type
         message: {
-          templateid: "682645", // Template ID
+          templateid: "751387", // Template ID
           placeholders: [name, packageName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
         },
       };
@@ -1059,7 +1084,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         to: phoneNumber, // Recipient's WhatsApp number
         type: "template", // Message type
         message: {
-          templateid: "688775", // Template ID
+          templateid: "751391", // Template ID
           placeholders: [name, packageName, formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
@@ -1070,7 +1095,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         to: phoneNumber, // Recipient's WhatsApp number
         type: "template", // Message type
         message: {
-          templateid: "682649", // Template ID
+          templateid: "751393", // Template ID
           placeholders: [name, packageName], // Placeholders for the template
         },
       };
@@ -1202,7 +1227,7 @@ export const markComplete = async () => {
           to: appointment.phoneNumber, // Patient's phone number
           type: 'template',
           message: {
-            templateid: '682641', // Replace with your actual template ID
+            templateid: '751385', // Replace with your actual template ID
             placeholders: [], // Add dynamic placeholders here if needed
           },
         };
@@ -1432,7 +1457,7 @@ export const waitingTimeMessage = async (adminPhoneNumbers: string[], doctorPhon
         to: adminPhoneNumber,
         type: "template",
         message: {
-          templateid: "731041", // Ensure this template ID is valid for Admins
+          templateid: "751401", // Ensure this template ID is valid for Admins
           placeholders: [doctorName, noOfPatients],
         },
       };
@@ -1462,7 +1487,7 @@ export const waitingTimeMessage = async (adminPhoneNumbers: string[], doctorPhon
         to: doctorPhoneNumber,
         type: "template",
         message: {
-          templateid: "718875",  // Ensure this template ID is valid for Doctors
+          templateid: "751395",  // Ensure this template ID is valid for Doctors
           placeholders: [noOfPatients],
         },
       };
@@ -1505,7 +1530,7 @@ export const loginRemainder = async (req: Request, res: Response) => {
       to: doctorPhoneNumber,
       type: "template",
       message: {
-        templateid: "731635",  // Ensure this template ID is valid for Doctors
+        templateid: "751415",  // Ensure this template ID is valid for Doctors
         placeholders: [doctorName, noOfPatients],
       },
     };
@@ -1540,7 +1565,7 @@ export const adminDoctorLateLogin = async (req: Request, res: Response) => {
       to: adminPhoneNumber,
       type: "template",
       message: {
-        templateid: "731637",  // Ensure this template ID is valid for Doctors
+        templateid: "751401",  // Ensure this template ID is valid for Doctors
         placeholders: [doctorName, noOfPatients],
       },
     };
@@ -1606,7 +1631,7 @@ export const individualComplete = async (req: Request, res: Response) => {
           to: appointment.phoneNumber, // Patient's phone number
           type: 'template',
           message: {
-            templateid: '682641', // Replace with your actual template ID
+            templateid: '751385', // Replace with your actual template ID
             placeholders: [], // Add dynamic placeholders here if needed
           },
         };
@@ -1765,7 +1790,7 @@ export const cancelExpiredAppointments = async () => {
         to: phoneNumber, // Patient's WhatsApp number
         type: "template",
         message: {
-          templateid: "674445", // Replace with actual template ID
+          templateid: "751725", // Replace with actual template ID
           placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time],
         },
       };
@@ -1790,7 +1815,7 @@ export const cancelExpiredAppointments = async () => {
         to: doctor.phone_number, // Doctor's WhatsApp number
         type: "template",
         message: {
-          templateid: "674491", // Replace with actual doctor template ID
+          templateid: "751453", // Replace with actual doctor template ID
           placeholders: [doctor.name, "cancelled", patientName, formatDateYear(new Date(date)), time],
         },
       };
@@ -2013,7 +2038,7 @@ async function checkDoctorAvailability() {
       if (!sentAlert) {
         console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
 
-        await sendMessageToDoctor(doctor.phone_number, appointments.length, doctor.name, doctor.id);
+        await sendMessageToDoctor(doctor.phone_number, appointments.length,appointments[0].time, doctor.name, doctor.id);
       } else {
         console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
       }
@@ -2044,7 +2069,7 @@ async function checkDoctorAvailability() {
 }
 
 
-const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number, doctorName: string, doctorId: number) => {
+const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number,time:string, doctorName: string, doctorId: number) => {
   try {
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const url = process.env.WHATSAPP_API_URL;
@@ -2059,8 +2084,8 @@ const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: numb
         to: doctorPhoneNumber,
         type: "template",
         message: {
-          templateid: "731635", // Ensure this template ID is valid for Doctors
-          placeholders: [doctorName, noOfPatients],
+          templateid: "751415", // Ensure this template ID is valid for Doctors
+          placeholders: [doctorName, noOfPatients,time],
         },
       };
     } else {
@@ -2101,7 +2126,7 @@ const sendAdminAlertMessage = async (adminPhoneNumbers: string[], noOfPatients: 
       to: adminPhoneNumbers,
       type: "template",
       message: {
-        templateid: "731637", // Ensure this template ID is valid for Admins
+        templateid: "751397", // Ensure this template ID is valid for Admins
         placeholders: [doctorName, noOfPatients],
       },
     };

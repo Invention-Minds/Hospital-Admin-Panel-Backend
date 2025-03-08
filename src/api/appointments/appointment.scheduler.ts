@@ -155,7 +155,7 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
           to: appointment.phoneNumber, // Recipient's WhatsApp number
           type: "template", // Type of the message
           message: {
-            templateid: "682641", // Replace with the actual template ID
+            templateid: "751385", // Replace with the actual template ID
             placeholders: [], // Dynamic placeholders
           },
         };

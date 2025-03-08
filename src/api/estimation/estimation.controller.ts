@@ -102,7 +102,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
             icuStay,
             wardStay,
             surgeryPackage,
-            estimationStatus
+            estimationStatus,
+            patientEmail,
         } = req.body;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -141,7 +142,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 icuStay,
                 wardStay,
                 surgeryPackage,
-                estimationStatus
+                estimationStatus,
+                patientEmail
             },
         });
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
@@ -275,6 +277,7 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             selectedRoomCost,
             patientRemarks,
             staffRemarks,
+            patientEmail
         } = updateFields;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -343,6 +346,7 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 selectedRoomCost,
                 patientRemarks,
                 staffRemarks,
+                patientEmail
             },
         });
 
@@ -717,7 +721,7 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
         console.error("FTP Upload Error:", error);
     }
 }
-// export const generateEstimationPDF = async (req: Request, res: Response) => {
+//  export const generateEstimationPDF = async (req: Request, res: Response) => {
 //     try {
 //         const {
 //             estimationId,
@@ -1094,319 +1098,11 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
 
 
 
-// 📌 Draw Table Function
-// export const generateEstimationPDF = async (req: Request, res: Response) => {
-//     try {
-//         const {
-//             estimationId,
-//             inclusions,
-//             exclusions,
-//             updateFields,
-//         } = req.body;
-
-//         const {
-//             patientUHID, patientName, ageOfPatient, genderOfPatient, consultantName,
-//             estimationPreferredDate, estimationName, icuStay, wardStay, totalDaysStay,
-//             estimatedDate, discountPercentage, estimationCost, totalEstimationAmount,
-//             patientSign, employeeSign, approverSign, approverName, employeeName,
-//             patientPhoneNumber, signatureOf, implants, procedures, instrumentals,
-//             surgeryPackage, attenderName, patientRemarks, multipleEstimationCost,
-//             costForGeneral, costForPrivate, costForSemiPrivate, costForVip,
-//             costForDeluxe, costForPresidential, selectedRoomCost
-//         } = updateFields;
-
-//         if (!estimationId) {
-//              res.status(400).json({ error: "Estimation ID is required" });
-//              return
-//         }
-
-//         const pdfDirectory = "/home/u948610439/domains/inventionminds.com/public_html/docminds/pdfs";
-//         const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
-//         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
-//         const tempFilePath = path.join(__dirname, fileName);
-//         const doc = new PDFDocument({ size: "A4", margin: 20 });
-
-//         const writeStream = fs.createWriteStream(tempFilePath);
-//         doc.pipe(writeStream);
-
-//         // Register Fonts
-//         const poppinsRegular = path.join(__dirname, '../../assets/Poppins-Regular.ttf');
-//         const poppinsBold = path.join(__dirname, '../../assets/Poppins-SemiBold.ttf');
-//         doc.registerFont("Poppins-Regular", poppinsRegular);
-//         doc.registerFont("Poppins-Bold", poppinsBold);
-
-//         // Title
-//         doc.font("Poppins-Bold").fontSize(18).fillColor("#0098A3").text("Estimation Report", { align: "center" });
-//         doc.moveDown(0.5);
-//         doc.font("Poppins-Regular").fontSize(12).fillColor("black");
-
-//         // 📌 Patient Information
-//         doc.font("Poppins-Bold").text("Patient Details", { underline: true });
-//         const patientData = [
-//             ["Estimation ID:", estimationId],
-//             ["Patient UHID:", patientUHID || "N/A"],
-//             ["Patient Name:", patientName || "N/A"],
-//             ["Age:", (ageOfPatient || "N/A")],
-//             ["Gender:", genderOfPatient || "N/A"],
-//             // ["Phone Number:", patientPhoneNumber || "N/A"],
-//         ];
-//         drawTable(doc, patientData, 50, doc.y + 5);
-
-//         // 📌 Consultant & Surgery Info
-//         doc.moveDown(1);
-//         doc.font("Poppins-Bold").text("Consultation & Surgery", { underline: true });
-
-//         const consultantData = [
-//             ["Consultant:", consultantName || "N/A"],
-//             ["Preferred Date:", estimationPreferredDate || "N/A"],
-//             ["Estimation Type:", estimationName || "N/A"],
-//             ["ICU Stay:", icuStay || "N/A"],
-//             ["Ward Stay:", wardStay || "N/A"],
-//             ["Total Days Stay:", totalDaysStay || "N/A"]
-//         ];
-//         drawTable(doc, consultantData, 50, doc.y + 5);
-
-//         // 📌 Room Costs
-//         doc.moveDown(1);
-//         doc.font("Poppins-Bold").text("Room Costs", { underline: true });
-//         const costFields = {
-//             "General": costForGeneral,
-//             "Private": costForPrivate,
-//             "Semi-Private": costForSemiPrivate,
-//             "VIP": costForVip,
-//             "Deluxe": costForDeluxe,
-//             "Presidential": costForPresidential
-//         };
-
-//         let costTable: [string, string][] = [];
-//         Object.entries(costFields).forEach(([key, value]) => {
-//             if (value) {
-//                 costTable.push([`${key}:`, `₹ ${value.split(',').join(', ₹ ')}`]);
-//             }
-//         });
-//         drawTable(doc, costTable, 50, doc.y + 5);
-
-//         // 📌 Inclusions & Exclusions
-//         doc.moveDown(1);
-//         doc.font("Poppins-Bold").text("Inclusions", { underline: true });
-
-//         let inclusionsList = inclusions.length > 0
-//             ? inclusions.map((i:any, index:any) => `${index + 1}. ${i.description}`).join("\n")
-//             : "None";
-//         doc.font("Poppins-Regular").fontSize(10).text(inclusionsList, { indent: 20 });
-
-//         doc.moveDown(1);
-//         doc.font("Poppins-Bold").text("Exclusions", { underline: true });
-
-//         let exclusionsList = exclusions.length > 0
-//             ? exclusions.map((e:any, index:any) => `${index + 1}. ${e.description}`).join("\n")
-//             : "None";
-//         doc.font("Poppins-Regular").fontSize(10).text(exclusionsList, { indent: 20 });
-
-//         // 📌 Additional Details
-//         doc.moveDown(1);
-//         const additionalDetails = [
-//             ["Implants:", implants || "N/A"],
-//             ["Procedures:", procedures || "N/A"],
-//             ["Instruments:", instrumentals || "N/A"],
-//             ["Patient Remarks:", patientRemarks || "N/A"],
-//             ["Surgery Package:", surgeryPackage || "N/A"],
-//             ["Estimation Cost:", `₹ ${estimationCost || 0}`],
-//             ["Total Cost:", `₹ ${totalEstimationAmount || 0}`]
-//         ];
-//         drawTable(doc, additionalDetails, 50, doc.y + 5);
-
-//         // 📌 Signatures
-//         doc.moveDown(1);
-//         doc.font("Poppins-Bold").text("Signatures", { underline: true });
-
-//         await addImageFromBase64(doc, patientSign, 50, doc.y + 10, 60, 30, "Patient Signature");
-//         await addImageFromBase64(doc, employeeSign, 250, doc.y, 60, 30, "Employee Signature");
-//         await addImageFromBase64(doc, approverSign, 450, doc.y, 60, 30, "Approver Signature");
-
-//         // End PDF
-//         doc.end();
-
-//         writeStream.on("finish", async () => {
-//             const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`;
-//             console.log(remoteFilePath)
-//             await uploadToFTP(tempFilePath, remoteFilePath);
-//             const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
-//             console.log(pdfUrl)
-
-//             // Save PDF details to the database (assuming you have a function for this)
-//             await savePdfToDatabase(estimationId, pdfUrl);
-
-//             // Delete the local file after upload
-//             fs.unlinkSync(tempFilePath);
-//             const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, pdfUrl, patientName, estimationId);
-
-//             res.status(200).json({
-//                 success: true,
-//                 message: "PDF generated & sent via WhatsApp successfully.",
-//                 filePath: pdfUrl,
-//                 whatsappResponse: whatsappResponse.data // Include WhatsApp API response
-//             });
-//         });
-
-
-
-//         writeStream.on("error", (error) => {
-//             console.error("Error writing PDF:", error);
-//             res.status(500).json({ error: "Failed to write PDF file." });
-//         });
-
-//     } catch (error) {
-//         console.error("Error generating PDF:", error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// };
 
 
 
 
-// export const generateEstimationPDF = async (req: Request, res: Response) => {
-//     try {
-//         const { estimationId, inclusions, exclusions, updateFields } = req.body;
 
-//         if (!estimationId) {
-//              res.status(400).json({ error: "Estimation ID is required" });
-//              return
-//         }
-
-//         const {
-//             patientUHID, patientName, ageOfPatient, genderOfPatient, consultantName,
-//             estimationPreferredDate, estimationName, icuStay, wardStay, totalDaysStay,
-//             estimatedDate, estimationCost, totalEstimationAmount, patientSign, patientPhoneNumber,
-//             employeeSign, approverSign, approverName, employeeName, implants, procedures, 
-//             instrumentals, patientRemarks, costForGeneral, selectedRoomCost
-//         } = updateFields;
-
-//         const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
-//         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
-//         const tempFilePath = path.join(__dirname, fileName);
-//         const doc = new PDFDocument({ size: "A4", margin: 50 });
-//         const writeStream = fs.createWriteStream(tempFilePath);
-//         doc.pipe(writeStream);
-
-//         function addHeaderFooter(doc:any, pageNumber:any) {
-//             // Header
-//             doc.fontSize(14).fillColor("#0098A3").text("Jayadev Memorial Rashtrotthana Hospital", 50, 30, { align: "left" });
-//             doc.fontSize(10).fillColor("black").text("Rajarajeshwari Nagar, Bengaluru - 560098", 50, 50);
-//             doc.moveTo(50, 65).lineTo(550, 65).stroke();
-
-//             // Footer
-//             doc.moveTo(50, 750).lineTo(550, 750).stroke();
-//             doc.fontSize(8).fillColor("gray").text("* This is an estimation report and actual charges may vary.", 50, 760);
-//             doc.text(`Page ${pageNumber}`, 500, 760);
-//         }
-
-//         let pageNumber = 1;
-//         addHeaderFooter(doc, pageNumber);
-//         doc.moveDown(2);
-
-//         // Patient Information Section
-//         doc.fontSize(12).fillColor("black").text("Patient Information", { underline: true });
-//         doc.moveDown(0.5);
-//         doc.text(`UHID: ${patientUHID || 'N/A'}`, 50, doc.y);
-//         doc.text(`Name: ${patientName || 'N/A'}`, 50, doc.y);
-//         doc.text(`Age: ${ageOfPatient || 'N/A'}`, 50, doc.y);
-//         doc.text(`Gender: ${genderOfPatient || 'N/A'}`, 50, doc.y);
-//         doc.moveDown(1);
-
-//         // Consultant & Estimation Details
-//         doc.fontSize(12).text("Consultation Details", { underline: true });
-//         doc.moveDown(0.5);
-//         doc.text(`Consultant: ${consultantName || 'N/A'}`, 50, doc.y);
-//         doc.text(`Preferred Date: ${estimationPreferredDate || 'N/A'}`, 50, doc.y);
-//         doc.text(`Estimation Type: ${estimationName || 'N/A'}`, 50, doc.y);
-//         doc.text(`ICU Stay: ${icuStay || 'N/A'} days`, 50, doc.y);
-//         doc.text(`Ward Stay: ${wardStay || 'N/A'} days`, 50, doc.y);
-//         doc.text(`Total Stay: ${totalDaysStay || 'N/A'} days`, 50, doc.y);
-
-//         doc.moveDown(1);
-//         doc.fontSize(12).text("Room Costs", { underline: true });
-//         doc.moveDown(0.5);
-//         doc.text(`Selected Room: ₹${selectedRoomCost || 'N/A'}`, 50, doc.y);
-//         doc.text(`General Ward: ₹${costForGeneral || 'N/A'}`, 50, doc.y);
-
-//         // Page Break
-//         if (doc.y > 700) {
-//             doc.addPage();
-//             pageNumber++;
-//             addHeaderFooter(doc, pageNumber);
-//         }
-
-//         // Inclusions & Exclusions
-//         doc.moveDown(1);
-//         doc.fontSize(12).text("Inclusions", { underline: true });
-//         let inclusionsList = inclusions.length ? inclusions.map((i:any, index:any) => `${index + 1}. ${i.description}`).join("\n") : "None";
-//         doc.fontSize(10).text(inclusionsList, { indent: 20 });
-
-//         doc.moveDown(1);
-//         doc.fontSize(12).text("Exclusions", { underline: true });
-//         let exclusionsList = exclusions.length ? exclusions.map((e:any, index:any) => `${index + 1}. ${e.description}`).join("\n") : "None";
-//         doc.fontSize(10).text(exclusionsList, { indent: 20 });
-
-//         if (doc.y > 700) {
-//             doc.addPage();
-//             pageNumber++;
-//             addHeaderFooter(doc, pageNumber);
-//         }
-
-//         // Estimated Cost
-//         doc.moveDown(1);
-//         doc.fontSize(12).text("Cost Details", { underline: true });
-//         doc.text(`Estimated Cost: ₹${estimationCost || 0}`, 50, doc.y);
-//         doc.text(`Total Cost: ₹${totalEstimationAmount || 0}`, 50, doc.y);
-
-//         if (doc.y > 700) {
-//             doc.addPage();
-//             pageNumber++;
-//             addHeaderFooter(doc, pageNumber);
-//         }
-
-//         // Signatures
-//         doc.moveDown(2);
-//         doc.text("Signatures", { underline: true });
-//         // doc.text(`Patient: ${patientSign || 'N/A'}`, 50, doc.y);
-//         // doc.text(`Staff: ${employeeSign || 'N/A'}`, 250, doc.y);
-//         // doc.text(`Approver: ${approverSign || 'N/A'}`, 450, doc.y);
-//         await addImageFromBase64(doc, patientSign, 50, doc.y + 10, 60, 30, "Patient Signature");
-//         await addImageFromBase64(doc, employeeSign, 250, doc.y, 60, 30, "Employee Signature");
-//         await addImageFromBase64(doc, approverSign, 450, doc.y, 60, 30, "Approver Signature");
-
-//         // End PDF
-//         doc.end();
-//         writeStream.on("finish", async () => {
-//             const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`;
-//             console.log(remoteFilePath);
-//             await uploadToFTP(tempFilePath, remoteFilePath);
-//             const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
-//             console.log(pdfUrl);
-
-//             // Save PDF details to the database (assuming you have a function for this)
-//             await savePdfToDatabase(estimationId, pdfUrl);
-
-//             // Delete the local file after upload
-//             fs.unlinkSync(tempFilePath);
-//             const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, pdfUrl, patientName, estimationId);
-
-//             res.status(200).json({
-//                 success: true,
-//                 message: "PDF generated & sent via WhatsApp successfully.",
-//                 filePath: pdfUrl,
-//                 whatsappResponse: whatsappResponse.data // Include WhatsApp API response
-//             });
-//         });
-//         writeStream.on("finish", () => {
-//             res.status(200).json({ success: true, message: "PDF generated successfully.", filePath: fileName });
-//         });
-//     } catch (error) {
-//         console.error("Error generating PDF:", error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// };
 
 
 export const generateEstimationPDF = async (req: Request, res: Response) => {
@@ -1430,7 +1126,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
         const tempFilePath = path.join(__dirname, fileName);
-        const doc = new PDFDocument({ size: "A4", margin: 0 });
+        const doc = new PDFDocument({ size: "A4", margin: 30 });
         const writeStream = fs.createWriteStream(tempFilePath);
         doc.pipe(writeStream);
 
@@ -1440,7 +1136,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const poppinsSemiBold = path.join(__dirname, '../../assets/Poppins-SemiBold.ttf')
         function addBackground(doc: any) {
             doc.image(backgroundImagePath, 0, 0, { width: 595, height: 842 });
-            doc.y = 150; // Ensure text starts below header
+            doc.y = 170; // Ensure text starts below header
         }
 
         function checkPageSpace(doc: any, additionalSpace = 0) {
@@ -1468,24 +1164,98 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         doc.registerFont("PoppinsSemiBold", poppinsSemiBold)
 
         // Title
-        doc.text(`${estimationId || "N/A"}`, 432, 88)
-        doc.font("PoppinsRegular").text(` ${patientUHID || "N/A"}`, 100, 126);
-        doc.text(`${patientName || "N/A"}`, 100, 150);
-        doc.text(`${ageOfPatient || "N/A"}`, 382, 126);
-        doc.text(` ${genderOfPatient || "N/A"}`, 380, 150);
+        // doc.text(`Estimation Id:${estimationId || "N/A"}`, 432, 88)
+        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`Patient Information: `, 30, 100);
+        // doc.font("PoppinsRegular").text(`UHID: ${patientUHID || "N/A"}`, 100, 126);
+        // doc.text(`Name: ${patientName || "N/A"}`, 100, 150);
+        // doc.text(`Age: ${ageOfPatient || "N/A"}`, 382, 126);
+        // doc.text(`Gender: ${genderOfPatient || "N/A"}`, 380, 150);
 
-        checkPageSpace(doc, 50);
+        // checkPageSpace(doc, 50);
+
+        // // Consultant Information
+        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`Consultant Information: `, 30, 170);
+        // doc.text(`Doctor Name:${consultantName || "N/A"}`, 150, 196);
+        // doc.text(`Preferred Date: ${estimationPreferredDate || "N/A"}`, 422, 196);
+        // doc.text(`Estimation Name: ${estimationName || "N/A"}`, 148, 220);
+
+        // // Stay Details
+        // doc.text(` ${icuStay || "N/A"}`, 412, 248);
+        // doc.text(`${wardStay || "N/A"}`, 540, 248);
+        // doc.text(`${totalDaysStay || "N/A"}`, 306, 248);
+        // checkPageSpace(doc, 50);
+        // Title: Estimation Form
+        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(18)
+            .text(`ESTIMATION FORM`, 30, 90, { align: "left" });
+
+        // Estimation ID aligned correctly on the right
+        // Set text position
+        const estIdText = `EST.ID: ${estimationId || "N/A"}`;
+        const estIdX = 380; // X-position
+        const estIdY = 90;  // Y-position
+
+        // Draw the text
+        doc.fillColor("black").font("PoppinsRegular").fontSize(12).text(estIdText, estIdX, estIdY);
+
+        // Measure text width to draw underline dynamically
+        const textWidth = doc.widthOfString(estIdText);
+        const textHeight = doc.heightOfString(estIdText);
+
+        // Draw underline
+        doc.moveTo(estIdX, estIdY + textHeight + 2) // Start position (2px below the text)
+            .lineTo(estIdX + textWidth, estIdY + textHeight + 2) // End position
+            .stroke();
+
+
+        doc.moveDown(0.5); // Add spacing
+
+
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`PATIENT INFORMATION:`, 30, 120);
+        doc.fillColor("black").font("PoppinsRegular").fontSize(12);
+
+        doc.text(`UHID:`, 30, 145);
+        doc.text(`${patientUHID || "N/A"}`, 80, 145); // Positioning next to label
+
+        doc.text(`NAME:`, 30, 165);
+        doc.text(`${patientName.toUpperCase() || "N/A"}`, 80, 165);
+
+        doc.text(`AGE:`, 300, 145);
+        doc.text(`${ageOfPatient || "N/A"}`, 340, 145);
+
+        doc.text(`GENDER:`, 300, 165);
+        doc.text(`${genderOfPatient.toUpperCase() || "N/A"}`, 360, 165);
 
         // Consultant Information
-        doc.text(`${consultantName || "N/A"}`, 150, 196);
-        doc.text(` ${estimationPreferredDate || "N/A"}`, 422, 196);
-        doc.text(` ${estimationName || "N/A"}`, 148, 220);
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`CONSULTANT INFORMATION:`, 30, 190);
+        doc.fillColor("black").font("PoppinsRegular").fontSize(12);
+
+        doc.text(`DOCTOR NAME:`, 30, 215);
+        doc.text(`${consultantName.toUpperCase() || "N/A"}`, 126, 215);
+        const formattedPreferDate = estimationPreferredDate 
+        ? new Date(estimationPreferredDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) 
+        : "N/A";
+        console.log(formattedPreferDate)
+        doc.text(`PREFERRED DATE:`, 300, 215);
+        doc.text(`${formattedPreferDate || "N/A"}`, 400, 215);
+
+        doc.text(`ESTIMATION NAME:`, 30, 235);
+        doc.text(`${estimationName.toUpperCase() || "N/A"}`, 140, 235);
 
         // Stay Details
-        doc.text(` ${icuStay || "N/A"}`, 412, 248);
-        doc.text(`${wardStay || "N/A"}`, 540, 248);
-        doc.text(`${totalDaysStay || "N/A"}`, 306, 248);
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXPECTED NO. OF DAYS STAY:`, 30, 260);
+        doc.fillColor("black").font("PoppinsRegular").fontSize(12);
+
+        doc.text(`TOTAL NO. OF DAYS:`, 30, 280);
+        doc.text(`${totalDaysStay || "N/A"}`, 160, 280);
+
+        doc.text(`ICU STAY:`, 250, 280);
+        doc.text(`${icuStay || "N/A"}`, 320, 280);
+
+        doc.text(`WARD STAY:`, 400, 280);
+        doc.text(`${wardStay || "N/A"}`, 480, 280);
+
         checkPageSpace(doc, 50);
+
         // Room Type
         // doc.fontSize(10).text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 43, 270);
         // Define available cost fields
@@ -1502,28 +1272,9 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const estimationNames = estimationName ? estimationName.split(',') : [];
 
         // Adjust initial position for displaying room costs
-        let yPosition = 290;
+        let yPosition = 300;
         let index = 0; // Index for numbering room types
 
-        // // Iterate over available costs and format them correctly
-        // Object.entries(costFields).forEach(([key, value]) => {
-        //     if (value) {
-        //         const costs = value.split(','); // Split costs by comma
-        //         doc.text(`${index} - ${key}:`, 43, yPosition); // Print room type
-        //         yPosition += 15;
-
-        //         // Assign surgery names to each cost, if available
-        //         costs.forEach((cost:any, costIndex:any) => {
-        //             let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim() : `Cost ${costIndex + 1}`;
-        //             doc.text(`${surgeryLabel} cost: $${cost.trim()}`, 60, yPosition);
-        //             yPosition += 15; // Move to the next line
-        //         });
-
-        //         index++; // Increment index for room type numbering
-        //         yPosition += 5; // Extra spacing between room types
-        //     }
-        // });
-        // Iterate over available costs and format them correctly
         Object.entries(costFields).forEach(([key, value]) => {
             if (value) {
                 const costs = value.split(','); // Split costs by comma
@@ -1534,11 +1285,11 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     return `${surgeryLabel} cost: ₹${cost.trim()}`;
                 });
 
-                doc.fillColor("#0098A3").font('PoppinsSemiBold').text(`${key}:`, 43, yPosition, { continued: false });
+                doc.fillColor("#0098A3").font('PoppinsSemiBold').text(`${key.toUpperCase()} WARD:`, 43, yPosition, { continued: false });
 
                 // Set font to semi-bold before printing surgery labels
                 doc.font('PoppinsSemiBold'); // Use a semi-bold font
-                doc.fillColor("black").text(formattedCosts.join(', '), 120, yPosition, { continued: false });
+                doc.fillColor("black").text(formattedCosts.join(', ').toUpperCase(), 180, yPosition, { continued: false });
                 yPosition += 15; // Move to next line for the next room type
 
                 index++; // Increment index for room type numbering
@@ -1548,8 +1299,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
 
         // doc.text(` ${costForGeneral || "N/A"}`, 43, 275);
-        doc.fontSize(8).font('PoppinsRegular').text(`Note: The cost of the room includes daily nursing and diet fees`, 43, 345);
-        doc.fillColor("#0098A3").font('Poppins-SemiBold').fontSize(14).text(`Inclusion: `, 30, 375);
+        doc.fontSize(8).font('PoppinsRegular').text(`NOTE: THE COST OF THE ROOM INCLUDES DAILY NURSING AND DIET CHARGES`, 43, 365);
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`INCLUSION: `, 30, 375);
         checkPageSpace(doc, 50);
 
         // Inclusions & Exclusions
@@ -1557,13 +1308,13 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // doc.text(` ${exclusions.length > 0 ? exclusions.map((e: any) => e.description).join(", ") : "None"}`, 50, 516);
 
         const startX = 30;  // X position of first column
-        const columnWidth = 130; // Space between columns
+        const columnWidth = 150; // Space between columns
         const startY = 395;
         const lineHeight = 20;
         const columns = 4;
-        function formatWithSpaces(text: string): string {
-            return text.replace(/([a-z])([A-Z])/g, '$1 $2'); // Insert space before uppercase letters
-        }
+        // function formatWithSpaces(text: string): string {
+        //     return text.replace(/([a-z])([A-Z])/g, '$1 $2'); // Insert space before uppercase letters
+        // }
         // Split inclusions into 4 parts
         const itemsPerColumn = Math.ceil(inclusions.length / columns);
         const inclusionsColumns = [
@@ -1582,7 +1333,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     const formattedItem = formatWithSpaces(item);
 
                     doc.fontSize(10).fillColor("black").font('PoppinsRegular')
-                        .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
+                        .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
 
                     num++; // Increment global number
                 } else {
@@ -1592,10 +1343,36 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         });
         checkPageSpace(doc, 50);
 
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`Exclusions: `, 30, 455);
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, 455);
 
         const startExclusionsY = 480;
-
+        function formatWithSpaces(text: string): string {
+            if (!text) return '';
+        
+            // Insert spaces before uppercase letters (CamelCase handling)
+            let formattedText = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+        
+            // Convert to uppercase to ensure case-insensitive replacements
+            formattedText = formattedText.toUpperCase();
+        
+            // Define replacements for specific terms
+            const replacements: { [key: string]: string } = {
+                "LABORATORY IMAGING": "LABORATORY AND IMAGING",
+                "WARD ICUSTAY": "WARD ICU STAY",
+                "SURGEON OTANESTHESIA": "SURGEON OT ANESTHESIA",
+                "INSTRUMENT EQUIPMENT": "INSTRUMENTS",
+                "BEDSIDE PROCEDURE": "PROCEDURE"
+            };
+        
+            // Apply replacements
+            Object.keys(replacements).forEach(key => {
+                formattedText = formattedText.replace(new RegExp(key, 'gi'), replacements[key]);
+            });
+        
+            return formattedText;
+        }
+        
+        
         // Split exclusions into 4 parts
         const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
         const exclusionsColumns = [
@@ -1618,7 +1395,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     doc.fontSize(10)
                         .fillColor("black")
                         .font('PoppinsRegular')
-                        .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1)}`, xPos, yPos);
+                        .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
                     exclusionNum++;
                 } else {
                     console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
@@ -1628,26 +1405,62 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         checkPageSpace(doc, 50);
         const itemsStartY = startExclusionsY + (exclusionsPerColumn + 2) * lineHeight;
 
-        // doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, 547);
-        // doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, 567);
-        // doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, 589);
-        // doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, 608)
-        // checkPageSpace(doc, 50);
-        // Start positioning from a base Y-coordinate
+
         let dynamicY = 547;
 
         // Add implants, procedures, and instruments dynamically
-        doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, dynamicY);
-        dynamicY += doc.heightOfString(`Implants: ${implants || "N/A"}`) + 5; // Move down based on text height
+        // doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, dynamicY);
+        // dynamicY += doc.heightOfString(`Implants: ${implants || "N/A"}`) + 5; // Move down based on text height
 
-        doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, dynamicY);
-        dynamicY += doc.heightOfString(`Procedures: ${procedures || "N/A"}`) + 5;
+        // doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, dynamicY);
+        // dynamicY += doc.heightOfString(`Procedures: ${procedures || "N/A"}`) + 5;
 
-        doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, dynamicY);
-        dynamicY += doc.heightOfString(`Instruments: ${instrumentals || "N/A"}`) + 5;
+        // doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, dynamicY);
+        // dynamicY += doc.heightOfString(`Instruments: ${instrumentals || "N/A"}`) + 5;
 
-        doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, dynamicY);
-        dynamicY += doc.heightOfString(`Patient Remarks: ${patientRemarks || "N/A"}`) + 10;
+        // doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, dynamicY);
+        // dynamicY += doc.heightOfString(`Patient Remarks: ${patientRemarks || "N/A"}`) + 10;
+        const labelX = 30;   // X position for labels
+        const valueX = 160;  // X position for values (aligned for all)
+        const maxWidth = 500; // Adjust width to avoid wrapping issues
+
+        // Define label color & text properties
+        const labelColor = "#0098A3"; // Highlight color
+        const valueColor = "black";   // Default text color
+        const labelFontSize = 14;
+        const valueFontSize = 12;
+
+        const formatValueString = (value: any) => {
+            if (Array.isArray(value)) {
+                return value.join(",  "); // ✅ Ensures double space after each comma
+            }
+            return (value || "N/A").replace(/,/g, ",  "); // ✅ Adds spaces after commas in strings
+        };
+
+        // Function to draw a label and aligned value in a single line
+        const drawLabelValue = (label: any, value: any, yPosition: any) => {
+            doc.fillColor(labelColor).font("PoppinsSemiBold").fontSize(labelFontSize).text(label, labelX, yPosition);
+
+            doc.fillColor(valueColor).font("PoppinsRegular").fontSize(valueFontSize)
+                .text(` ${formatValueString(value)}`, valueX, yPosition, { width: maxWidth, align: "left" });
+        };
+
+        // Draw content with perfect alignment and spacing
+        drawLabelValue("IMPLANTS:", implants.toUpperCase(), dynamicY);
+        dynamicY += doc.heightOfString(formatValueString(implants).toUpperCase()) + 8; // Add spacing
+
+        drawLabelValue("PROCEDURES:", procedures.toUpperCase(), dynamicY);
+        dynamicY += doc.heightOfString(formatValueString(procedures).toUpperCase()) + 8;
+
+        drawLabelValue("INSTRUMENTS:", instrumentals.toUpperCase(), dynamicY);
+        dynamicY += doc.heightOfString(formatValueString(instrumentals).toUpperCase()) + 8;
+
+        drawLabelValue("PATIENT REMARKS:", patientRemarks.toUpperCase(), dynamicY);
+        dynamicY += doc.heightOfString(formatValueString(patientRemarks).toUpperCase()) + 10;
+
+
+
+
 
         // Ensure there's enough space for the next section, and prevent overlaying
         // checkPageSpace(doc, 50);
@@ -1661,8 +1474,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         if (surgeryPackage?.toLowerCase() === "multiple surgeries") {
             // doc.text(`Multiple Surgery Cost: ${multipleEstimationCost || "N/A"}`, 30, 625);
-            doc.fontSize(12).text(`Multiple Surgery Cost:  ${multipleEstimationCost || "N/A"}`, 30, dynamicY);
-            dynamicY += doc.heightOfString(`Multiple Surgery Cost:  ${multipleEstimationCost || "N/A"}`) + 10;
+            doc.fontSize(12).text(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`, 30, dynamicY);
+            dynamicY += doc.heightOfString(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`) + 10;
         }
         // // Estimation Details
         // doc.text(`Estimated Date: ${estimatedDate || "N/A"}`, 30, 645);
@@ -1677,41 +1490,180 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // // doc.text(`Discount: ${discountPercentage || ""}`, 300, dynamicY); // Uncomment if needed
         // doc.text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 300, dynamicY);
         // dynamicY += doc.heightOfString(`Selected Ward: ${selectedRoomCost || "N/A"}`) ;
+        const formattedDate = estimatedDate 
+  ? new Date(estimatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) 
+  : "N/A";
+        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+            .text(`ESTIMATED DATE: ${formattedDate  || "N/A"}`, 30, dynamicY, { continued: false });
 
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-        .text(`Estimated Date: ${estimatedDate || "N/A"}`, 30, dynamicY, { continued: false });
-     
-     doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-        .text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 300, dynamicY); // Same Y-coordinate
-     
-     // Now update dynamicY only once after both texts are placed
-     dynamicY += doc.heightOfString(`Estimated Date: ${estimatedDate || "N/A"}`) + 10;
+            .text(`SELECTED WARD: ${selectedRoomCost.toUpperCase() || "N/A"}`, 300, dynamicY); // Same Y-coordinate
+
+        // Now update dynamicY only once after both texts are placed
+        dynamicY += doc.heightOfString(`ESTIMATED DATE: ${estimatedDate || "N/A"}`) + 10;
 
         // Ensure space for cost details
         // checkPageSpace(doc, 50);
 
         // Cost Details (Bold & Dynamic)
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-        .text(`Estimation Cost: ${estimationCost || 0}`, 30, dynamicY, { continued: false });
-     
-     doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-        .text(`Total Cost: ${totalEstimationAmount || 0}`, 300, dynamicY); // Same Y-coordinate
-     
-     // Now update dynamicY only once after both texts are placed
-     dynamicY += doc.heightOfString(`Estimation Cost: ${estimationCost || 0}`) + 10;
+            .text(`ESTIMATION COST: ${estimationCost || 0}`, 30, dynamicY, { continued: false });
+
+        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+            .text(`TOTAL COST: ${totalEstimationAmount || 0}`, 300, dynamicY); // Same Y-coordinate
+
+        // Now update dynamicY only once after both texts are placed
+        dynamicY += doc.heightOfString(`ESTIMATION COST: ${estimationCost || 0}`) + 10;
 
         // Ensure there's enough space for the next section
-        checkPageSpace(doc, 50);
+        // checkPageSpace(doc, 50);
 
         //         // Signatures
-        doc.fillColor("#213043").font("PoppinsMedium").text(`${signatureOf ? signatureOf.charAt(0).toUpperCase() + signatureOf.slice(1).toLowerCase() : "N/A"}`, 88, 696);
-        // 📌 Signatures
-        doc.moveDown(1);
-        doc.font("PoppinsSemiBold").text("Signatures", { underline: true });
+        // doc.fillColor("#213043").font("PoppinsMedium").text(`${signatureOf ? signatureOf.charAt(0).toUpperCase() + signatureOf.slice(1).toLowerCase() : "N/A"}`, 88, 696);
+        // // 📌 Signatures
+        // doc.moveDown(1);
+        // doc.font("PoppinsSemiBold").text("Signatures", { underline: true });
 
-        await addImageFromBase64(doc, patientSign, 50, doc.y + 10, 60, 30, "Patient Signature");
-        await addImageFromBase64(doc, employeeSign, 250, doc.y, 60, 30, "Employee Signature");
-        await addImageFromBase64(doc, approverSign, 450, doc.y, 60, 30, "Approver Signature");
+        // await addImageFromBase64(doc, patientSign, 50, doc.y + 10, 60, 30, "Patient Signature");
+        // await addImageFromBase64(doc, employeeSign, 250, doc.y, 60, 30, "Employee Signature");
+        // await addImageFromBase64(doc, approverSign, 450, doc.y, 60, 30, "Approver Signature");
+        //         const noteText = `This estimation is prepared based on the details available at the time of the request. 
+        // Actual charges may vary depending on unforeseen circumstances or changes in the patient’s condition. 
+        // The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
+        // Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.`;
+
+        //         // Check if there's enough space before adding the note
+        //         if (dynamicY + 150 > doc.page.height - 100) {
+        //             doc.addPage();
+        //             dynamicY = 70; // Reset Y position for new page
+        //         }
+
+        //         // Add "Note" title
+        //         doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(12).text("Note:", 30, dynamicY, { continued: true });
+
+        //         // Add the note content
+        //         doc.fillColor("black").font("PoppinsRegular").fontSize(10).text(` ${noteText}`, 65, dynamicY, { width: 500, align: "justify" });
+
+        //         // Move Y position down after the note
+        //         dynamicY += doc.heightOfString(noteText) + 15;
+        //         if (dynamicY + 150 > doc.page.height - 100) {  // Adjusted condition to check available space
+        //             doc.addPage();
+        //             dynamicY = 50; // ✅ Reset Y position for new page properly
+        //         }
+
+        //         // Signature Section follows dynamically
+        //         const startYAxis = dynamicY + 20;
+        //         const signerLabel = signatureOf === "patient" ? "Signature of Patient" : "Signature of Attender";
+
+
+
+        //         // Signature Titles
+        //         doc.fillColor("#213043").font("PoppinsSemiBold").fontSize(12);
+        //         doc.text(signerLabel, 30, startYAxis);
+        //         doc.text("Signature of Staff", 230, startYAxis);
+        //         doc.text("Signature of Approver", 430, startYAxis);
+
+        //         // Signature Boxes
+        //         doc.rect(30, startYAxis + 20, 150, 50).stroke();  // Patient/Attender Box
+        //         doc.rect(230, startYAxis + 20, 150, 50).stroke(); // Staff Box
+        //         doc.rect(430, startYAxis + 20, 150, 50).stroke(); // Approver Box
+
+        //         // Add Signatures (Base64 Images)
+        //         await addImageFromBase64(doc, patientSign, 30, startYAxis + 20, 140, 40, signerLabel);
+        //         await addImageFromBase64(doc, employeeSign, 230, startYAxis + 20, 140, 40, "Staff Signature");
+        //         await addImageFromBase64(doc, approverSign, 430, startYAxis + 20, 140, 40, "Approver Signature");
+
+        //         doc.fillColor("#000000").font("PoppinsSemiBold").fontSize(12);
+        //         doc.text(signatureOf === "patient" ? patientName : attenderName || "N/A", 50, startYAxis + 75, { align: "center", width: 100 });
+        //         doc.text(employeeName || "N/A", 235, startYAxis + 75, { align: "center", width: 100 });
+        //         doc.text(approverName || "N/A", 440, startYAxis + 75, { align: "center", width: 100 });
+
+        //         // Name Labels Below Names
+        //         doc.font("PoppinsRegular").fontSize(10);
+        //         doc.text("Name :", 30, startYAxis + 85);
+        //         doc.text("Name :", 230, startYAxis + 85);
+        //         doc.text("Name :", 430, startYAxis + 85);
+
+        //         // Line Under Name Labels
+        //         doc.moveTo(70, startYAxis + 95).lineTo(180, startYAxis + 95).stroke(); // Line under Patient/Attender
+        //         doc.moveTo(270, startYAxis + 95).lineTo(395, startYAxis + 95).stroke(); // Line under Staff
+        //         doc.moveTo(470, startYAxis + 95).lineTo(605, startYAxis + 95).stroke(); // Line under Approver
+
+        //         // Move Down for Additional Content
+        //         doc.moveDown(2);
+        const leftMargin = 30;   // Left-side margin
+        const rightMargin = 550; // ✅ Reduce width to create right-side space
+        const contentWidth = rightMargin - leftMargin; // Width of text with padding
+
+        // Define note text
+        const noteText = `This estimation is prepared based on the details available at the time of the request. 
+Actual charges may vary depending on unforeseen circumstances or changes in the patient’s condition. 
+The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
+Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.`;
+
+        // Check if there's enough space before adding the note
+        if (dynamicY + 150 > doc.page.height - 100) {
+            doc.addPage();
+            dynamicY = 80; // Reset Y position for new page
+        }
+
+        // Add "Note" title with proper margins
+        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(12)
+            .text("NOTE:", leftMargin, dynamicY, { continued: true });
+
+        // Add the note content, ensuring right margin space
+        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+            .text(` ${noteText.toUpperCase()}`, 30, dynamicY, { width: 300, align: "left" });
+
+        // Move Y position down after the note
+        dynamicY += doc.heightOfString(noteText) + 15;
+
+        // Ensure there's space before the signature section
+        if (dynamicY + 150 > doc.page.height - 100) {
+            doc.addPage();
+            dynamicY = 50; // Reset Y position for new page
+        }
+
+        // Proceed with Signature Section
+        const startYAxis = dynamicY + 20;
+        const signerLabel = signatureOf === "patient" ? "SIGNATURE OF PATIENT" : "SIGNATURE OF ATTENDER";
+
+        // Signature Titles with proper margins
+        doc.fillColor("#213043").font("PoppinsSemiBold").fontSize(10);
+        doc.text(signerLabel, leftMargin, startYAxis);
+        doc.text("SIGNATURE OF STAFF", leftMargin + 200, startYAxis);
+        doc.text("SIGNATURE OF APPROVER", leftMargin + 400, startYAxis);
+
+        // Signature Boxes
+        doc.rect(leftMargin, startYAxis + 20, 150, 50).stroke();  // Patient/Attender Box
+        doc.rect(leftMargin + 200, startYAxis + 20, 150, 50).stroke(); // Staff Box
+        doc.rect(leftMargin + 400, startYAxis + 20, 150, 50).stroke(); // Approver Box
+
+        // Add Signatures (Base64 Images)
+        await addImageFromBase64(doc, patientSign, leftMargin, startYAxis + 20, 140, 40, signerLabel);
+        await addImageFromBase64(doc, employeeSign, leftMargin + 200, startYAxis + 20, 140, 40, "Staff Signature");
+        await addImageFromBase64(doc, approverSign, leftMargin + 400, startYAxis + 20, 140, 40, "Approver Signature");
+
+        // Add Names Below Signatures with proper spacing
+        doc.fillColor("#000000").font("PoppinsSemiBold").fontSize(12);
+        doc.text(signatureOf === "patient" ? patientName.toUpperCase() : attenderName.toUpperCase() || "N/A", leftMargin + 20, startYAxis + 75, { align: "center", width: 100 });
+        doc.text(employeeName.toUpperCase() || "N/A", leftMargin + 220, startYAxis + 75, { align: "center", width: 100 });
+        doc.text(approverName.toUpperCase() || "N/A", leftMargin + 420, startYAxis + 75, { align: "center", width: 100 });
+
+        // Name Labels Below Names
+        doc.font("PoppinsRegular").fontSize(10);
+        doc.text("NAME :", leftMargin, startYAxis + 85);
+        doc.text("NAME :", leftMargin + 200, startYAxis + 85);
+        doc.text("NAME :", leftMargin + 400, startYAxis + 85);
+
+        // Line Under Name Labels
+        doc.moveTo(leftMargin + 40, startYAxis + 95).lineTo(leftMargin + 140, startYAxis + 95).stroke(); // Line under Patient/Attender
+        doc.moveTo(leftMargin + 240, startYAxis + 95).lineTo(leftMargin + 340, startYAxis + 95).stroke(); // Line under Staff
+        doc.moveTo(leftMargin + 440, startYAxis + 95).lineTo(leftMargin + 540, startYAxis + 95).stroke(); // Line under Approver
+
+        // Move Down for Additional Content
+        doc.moveDown(2);
+
 
         // End PDF
         doc.end();
@@ -1793,6 +1745,7 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, pdfUrl: string, p
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         const url = process.env.WHATSAPP_API_URL;
         console.log(patientName)
+        patientPhoneNumber = formatPhoneNumber(patientPhoneNumber);
         const payload = {
             from: fromPhoneNumber,
             to: patientPhoneNumber, // Recipient's WhatsApp number
@@ -1833,7 +1786,18 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, pdfUrl: string, p
         throw error;
     }
 }
+function formatPhoneNumber(phoneNumber: string): string {
+    phoneNumber = phoneNumber.replace(/\D/g, ''); // Remove non-numeric characters
 
+    if (phoneNumber.length === 10) {
+        return `91${phoneNumber}`; // ✅ Add country code if it's missing
+    } else if (phoneNumber.length === 12 && phoneNumber.startsWith("91")) {
+        return phoneNumber; // ✅ Keep as is
+    } else {
+        console.warn(`Invalid phone number format: ${phoneNumber}`);
+        return phoneNumber; // Return unchanged if not valid
+    }
+}
 export const lockService = async (req: Request, res: Response): Promise<void> => {
     try {
         const serviceId = Number(req.params.id);
