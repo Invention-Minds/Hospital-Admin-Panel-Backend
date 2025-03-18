@@ -149,10 +149,7 @@ export const removeDoctorFromChannel = async (req: Request, res: Response) => {
       await prisma.doctorAssignment.delete({
         where: { id: assignment.id },
       });
-      await prisma.doctor.update({
-        where: { id: doctorId },
-        data: { roomNo: "" }, // Set room number to empty
-      });
+
       notifyRemoveChannels(channelId)
       res.status(200).json({ message: 'Doctor removed successfully' });
     } catch (error) {

@@ -151,6 +151,14 @@ model Appointment {
   gender              String?
   serviceId           Int?
   nameChangedBy       String?
+  referredDeptId      Int?
+  referredDept        String?
+  referredDocId       Int?
+  referredDoc         String?
+  isReferred          Boolean?
+  isNew               Boolean?
+  prefix              String?
+  patientType         String?
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -314,6 +322,8 @@ model Service {
   radioServiceId            Int?
   age                       Int?
   gender                    String?
+  prefix                    String?
+  patientType               String?
 }
 
 model RepeatedDate {
@@ -344,7 +354,48 @@ model RadioService {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  services Service[] // Back relation to Service
+  services            Service[] // Back relation to Service
+  ServiceAppointments ServiceAppointments[]
+}
+
+model ServiceAppointments {
+  id                Int           @id @default(autoincrement())
+  pnrNumber         String?
+  firstName         String
+  lastName          String?
+  phoneNumber       String
+  email             String?
+  appointmentDate   String
+  appointmentTime   String?
+  requestVia        String
+  appointmentStatus String        @default("pending")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  checkedIn         Boolean?      @default(false)
+  lockedBy          Int?
+  userId            Int?
+  username          String?
+  role              UserRole?
+  checkedInTime     DateTime?
+  checkedOut        Boolean?
+  checkedOutTime    DateTime?
+  age               Int?
+  gender            String?
+  RadioService      RadioService? @relation(fields: [radioServiceId], references: [id])
+  radioServiceId    Int?
+  radioServiceName  String?
+  emailSent         Boolean?      @default(false)
+  messageSent       Boolean?      @default(false)
+  smsSent           Boolean?      @default(false)
+  serviceId         Int?
+  entry             Boolean?
+  entryTime         DateTime?
+  postPond          Boolean?
+  postPondTime      DateTime?
+  entryDoneBy       String?
+  reportDoneBy      String?
+  prefix            String?
+  patientType       String?
 }
 
 enum AppointmentStatus {
@@ -383,6 +434,7 @@ model Channel {
   doctorId          Int? // Doctor ID
   doctors           Doctor?            @relation(fields: [doctorId], references: [id]) // Relation with Doctor model
   doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment") // Opposite relation to DoctorAssignment
+  roomNumber        String?
 }
 
 model ExtraSlotCount {
@@ -543,4 +595,12 @@ model LeaveDates {
   Doctor   Doctor?  @relation(fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "LeaveDates_doctorId_fkey")
+}
+
+model Advertisement {
+  id         Int      @id @default(autoincrement())
+  type       String   @db.VarChar(10) // "text", "image", "video"
+  content    String   @db.Text // Stores text for text ads, file path for media ads
+  uploadedAt DateTime @default(now())
+  isActive   Boolean?
 }

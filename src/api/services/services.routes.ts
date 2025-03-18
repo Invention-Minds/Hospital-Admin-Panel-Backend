@@ -16,6 +16,7 @@ import {
   unlockService,
   callRepeatedAppointments,
   updateServiceMessage,
+  individualComplete,
 } from './services.controller';
 import {scheduleServiceCompletion} from './services.schedular';
 import { authenticateToken } from './../../middleware/middleware';
@@ -28,7 +29,8 @@ const router = Router();
 router.post('/', createService); // Create a new service
 router.get('/', getServices);  
 router.get('/packages', getPackages)
-router.get('/available-slots', getAvailableSlots)                     // Fetch all services
+router.get('/available-slots', getAvailableSlots) ;
+router.post('/mark-complete', individualComplete)               // Fetch all services
 router.get('/:id', getServiceById);                 // Fetch a specific service by ID
 router.put('/:id', authenticateToken, updateServiceStatus); // Update a service by ID
 router.delete('/:id', authenticateToken, deleteService); // Delete a service by ID

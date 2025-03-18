@@ -397,6 +397,7 @@ export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Pro
     const doctorId = parseInt(req.query.doctorId as string);
     const individualAvailability = req.query.individualAvailability === 'true';
     const day = Number(req.query.dayOfWeek)
+    console.log(day)
 
     if (isNaN(doctorId)) {
       res.status(400).json({ error: 'Invalid doctorId' });
@@ -444,7 +445,7 @@ export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Pro
         },
       });
     }
-
+    console.log("Future Booked Slots:", futureBookedSlots, requestedDate, requestedDate.toISOString().split('T')[0],doctorId);
     res.json(futureBookedSlots);
   } catch (error: any) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });

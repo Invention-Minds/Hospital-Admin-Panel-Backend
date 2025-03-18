@@ -19,6 +19,8 @@ import estimationRoutes from './api/estimation/estimation.routes';
 import channelRoutes from './api/channel/channel.routes';
 import screenshotRoutes from './api/screenshot/screenshot.routes';
 import extraSlotCountRoutes from './api/extraslots/extraslots.router'
+import adRoutes from './api/ad/ad.routes';
+import serviceRadiologyRoutes from './api/service-radiology/service-radiology.routes'
 import { channel } from 'diagnostics_channel';
 
 // Load environment variables from .env file
@@ -54,7 +56,9 @@ app.use('/api/services', serviceRoutes);
 app.use('/api/estimation', estimationRoutes);
 app.use('/api/channel', channelRoutes);
 app.use('/api/capture-screenshoot', screenshotRoutes);
-app.use('/api/extraslot-count', extraSlotCountRoutes)
+app.use('/api/extraslot-count', extraSlotCountRoutes);
+app.use('/api/ads',adRoutes);
+app.use('/api/radiology',serviceRadiologyRoutes)
 
 // Sample route to check server status
 app.get('/', (req, res) => {

@@ -25,7 +25,9 @@ const httpsAgent = new https.Agent({
 
 export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   console.log('req.body:', req.body);
-  const { patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status, requestVia } = req.body;
+  const { doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status, requestVia, prefix } = req.body;
+  let patientName = req.body.patientName;
+  patientName = prefix + ' ' +patientName;
   console.log(patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status);
   // const date = formatDateYear(date)
 
@@ -281,6 +283,8 @@ export const checkAndSendReminders = async () => {
           apikey: process.env.WHATSAPP_AUTH_TOKEN,
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        let prefix = appointment.prefix || '';
+        const name = prefix + ' ' +appointment.patientName;
 
         // const messages = [
         //     // Message for Patient
@@ -316,7 +320,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "751379", // Replace with the actual template ID
-            placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
+            placeholders: [name, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
 
@@ -341,7 +345,7 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${appointment.patientName}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${name}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -352,7 +356,7 @@ export const checkAndSendReminders = async () => {
             data: { remainder1Sent: true }
           });
           console.log('WhatsApp message(s) sent successfully');
-          console.log(`Reminder sent for tomorrow's appointment: ${appointment.patientName}`);
+          console.log(`Reminder sent for tomorrow's appointment: ${name}`);
         } catch (error) {
           console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
         }
@@ -461,6 +465,8 @@ export const checkAndSendReminders = async () => {
           apikey: process.env.WHATSAPP_AUTH_TOKEN,
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+        let prefix = appointment.prefix || '';
+        const name = prefix + ' ' +appointment.patientName;
 
         // const messages = [
         //     // Message for Patient
@@ -496,7 +502,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "751381", // Replace with the actual template ID
-            placeholders: [appointment.patientName, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
+            placeholders: [name, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
           },
         };
 
@@ -522,7 +528,7 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${appointment.patientName}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${name}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -532,7 +538,7 @@ export const checkAndSendReminders = async () => {
             where: { id: appointment.id },
             data: { remainder2Sent: true }
           });
-          console.log(`Reminder sent for 4 hours before appointment: ${appointment.patientName}`);
+          console.log(`Reminder sent for 4 hours before appointment: ${name}`);
         } catch (error) {
           console.error('Failed to send WhatsApp message(s):', (error as any).response ? (error as any).response.data : (error as any).message);
         }
@@ -695,8 +701,8 @@ export const sendDoctorMessage = async () => {
         availability: true
       },
     });
-  // Determine tomorrow's weekday (e.g., 'mon', 'tue')
-  const tomorrowDay = indianTime.clone().add(1, 'day').format('ddd').toLowerCase();
+    // Determine tomorrow's weekday (e.g., 'mon', 'tue')
+    const tomorrowDay = indianTime.clone().add(1, 'day').format('ddd').toLowerCase();
     // Create a map to get the phone number by doctor ID
     const doctorPhoneMap = new Map(doctors.map(doctor => [doctor.id, doctor.phone_number]));
 
@@ -723,7 +729,7 @@ export const sendDoctorMessage = async () => {
 
       if (doctorPhoneNumber) {
         const doctor = doctors.find(doc => doc.id === doctorId);
-        
+
         // Extract availability for tomorrow
         const allUpdatedAtNull = doctor!.availability.every((avail: any) => !avail.updatedAt);
         let latestTimestamp: string | null = null;
@@ -1130,6 +1136,81 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
     });
   }
 };
+export const sendRadiologyMessage = async (req: Request, res: Response) => {
+  try {
+    const { firstName, lastName, radioServiceName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = req.body;
+    let payload = {};
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    // API endpoint
+    const url = process.env.WHATSAPP_API_URL;
+
+    const name = `${firstName} ${lastName}`;
+    if (appointmentStatus === 'Confirm' || appointmentStatus === 'confirmed' || appointmentStatus === 'rescheduled') {
+      // Prepare the payload
+      payload = {
+        from: fromPhoneNumber, // Sender's WhatsApp number
+        to: phoneNumber, // Recipient's WhatsApp number
+        type: "template", // Message type
+        message: {
+          templateid: "765787", // Template ID
+          placeholders: [name, radioServiceName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+        },
+      };
+    }
+    else if (appointmentStatus === 'cancelled' || appointmentStatus === 'Cancel' || appointmentStatus === 'Cancelled') {
+      const time = appointmentStatus === 'pending' ? '' : appointmentTime;
+
+      payload = {
+        from: fromPhoneNumber, // Sender's WhatsApp number
+        to: phoneNumber, // Recipient's WhatsApp number
+        type: "template", // Message type
+        message: {
+          templateid: "765791", // Template ID
+          placeholders: [name, radioServiceName, formatDateYear(new Date(appointmentDate))], // Placeholders for the template
+        },
+      };
+    }
+    else {
+      payload = {
+        from: fromPhoneNumber, // Sender's WhatsApp number
+        to: phoneNumber, // Recipient's WhatsApp number
+        type: "template", // Message type
+        message: {
+          templateid: "751393", // Template ID
+          placeholders: [name, radioServiceName], // Placeholders for the template
+        },
+      };
+
+
+    }
+    // API key for authorization
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+    };
+
+    // Send the POST request
+    const response = await axios.post(url!, payload, { headers });
+
+    // Log the response
+    console.log('WhatsApp message sent successfully:1', response.data);
+
+    // Send a success response
+    res.status(200).json({
+      status: "success",
+      message: "WhatsApp message sent successfully.2",
+      data: response.data,
+    });
+  } catch (error) {
+    console.error('Error sending WhatsApp message:', error);
+
+    // Send an error response
+    res.status(500).json({
+      status: "error",
+      message: "Failed to send WhatsApp message."
+    });
+  }
+};
 
 export const sendAdminMessage = async (req: Request, res: Response) => {
   try {
@@ -1306,6 +1387,7 @@ export const updateEstimation = async () => {
             updatedStatus = "overDue";
             updatedData.statusOfEstimation = updatedStatus;
             updatedData.overDueDateAndTIme = new Date(); // Set overdue timestamp
+            updatedData.messageSent = true;
 
             console.log(`Estimation ID: ${estimation.id} marked as Overdue`);
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
@@ -1731,19 +1813,19 @@ export const cancelExpiredAppointments = async () => {
   // const thresholdTime = currentTimeIST.subtract(30, "minutes").format("HH:mm:ss");
   // const currentTimeIST = moment().tz("Asia/Kolkata"); // Get current IST time
   const thresholdTime = moment().tz("Asia/Kolkata").subtract(30, "minutes"); // Subtract 30 mins from current time
-  
+
   const filteredAppointments = expiredAppointments.filter((appt) => {
     // Ensure appointment date and time are correctly parsed together
     const appointmentTime = moment.tz(`${appt.date} ${appt.time}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
-  
+
     console.log(`📅 Appointment Time: ${appointmentTime.format("YYYY-MM-DD hh:mm A")}`);
     console.log(`⏳ Threshold Time: ${thresholdTime.format("YYYY-MM-DD hh:mm A")}`);
     console.log(`🕒 Current Time: ${currentTimeIST.format("YYYY-MM-DD hh:mm A")}`);
-  
+
     // Only cancel if the appointment time is *before* the threshold and is still today's appointment
     return appointmentTime.isBefore(thresholdTime) && appointmentTime.isSame(currentTimeIST, "day");
   });
-  
+
   console.log(filteredAppointments)
 
   if (filteredAppointments.length === 0) {
@@ -1891,8 +1973,8 @@ export const doctorAvailability = async (req: Request, res: Response) => {
     // Log the current IST time
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
-    // await cancelExpiredAppointments();
-    // await checkDoctorAvailability();
+    await cancelExpiredAppointments();
+    await checkDoctorAvailability();
 
     // Send a response back to Cloud Scheduler
     res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
@@ -1905,8 +1987,7 @@ export const doctorAvailability = async (req: Request, res: Response) => {
 async function checkDoctorAvailability() {
   console.log("⏳ Running Doctor Availability Check...");
 
-  const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-  console.log(todayDate)
+
 
   // Get all doctors
   const doctors = await prisma.doctor.findMany({
@@ -1938,6 +2019,8 @@ async function checkDoctorAvailability() {
     if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
       continue; // Skip invalid doctors
     }
+    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+    console.log(todayDate)
     // console.log(doctor)
     // ✅ Check if the doctor is unavailable today
     const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
@@ -1984,7 +2067,7 @@ async function checkDoctorAvailability() {
     const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
     const firstAvailableTime = firstSlot?.split("-")[0].trim();
     console.log(firstAvailableTime, 'first')
-    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
+    // todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
 
     // Convert 24-hour format (HH:mm) to 12-hour format (hh:mm A)
     const formattedTime = moment(firstAvailableTime, "HH:mm").format("hh:mm A");
@@ -2038,7 +2121,7 @@ async function checkDoctorAvailability() {
       if (!sentAlert) {
         console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
 
-        await sendMessageToDoctor(doctor.phone_number, appointments.length,appointments[0].time, doctor.name, doctor.id);
+        await sendMessageToDoctor(doctor.phone_number, appointments.length, appointments[0].time, doctor.name, doctor.id);
       } else {
         console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
       }
@@ -2069,7 +2152,7 @@ async function checkDoctorAvailability() {
 }
 
 
-const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number,time:string, doctorName: string, doctorId: number) => {
+const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: number, time: string, doctorName: string, doctorId: number) => {
   try {
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const url = process.env.WHATSAPP_API_URL;
@@ -2085,7 +2168,7 @@ const sendMessageToDoctor = async (doctorPhoneNumber: string, noOfPatients: numb
         type: "template",
         message: {
           templateid: "751415", // Ensure this template ID is valid for Doctors
-          placeholders: [doctorName, noOfPatients,time],
+          placeholders: [doctorName, noOfPatients, time],
         },
       };
     } else {
@@ -2146,8 +2229,7 @@ const sendAdminAlertMessage = async (adminPhoneNumbers: string[], noOfPatients: 
 async function checkPatientWaitingTime() {
   console.log("⏳ Running Patient Waiting Time Check...");
 
-  const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-  console.log(todayDate)
+
 
   // Get all doctors
   const doctors = await prisma.doctor.findMany({
@@ -2179,12 +2261,14 @@ async function checkPatientWaitingTime() {
     if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
       continue; // Skip invalid doctors
     }
-    // console.log(doctor)
+    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+    // console.log(todayDate)
+    // console.log('doctor')
     // ✅ Check if the doctor is unavailable today
     const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
       moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
     );
-    // console.log(isUnavailableToday)
+    console.log(isUnavailableToday)
     if (isUnavailableToday) {
       console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
       continue; // Skip processing for this doctor
@@ -2204,7 +2288,7 @@ async function checkPatientWaitingTime() {
 
       // Convert the max timestamp back to an ISO string
       latestTimestamp = new Date(maxTimestamp).toISOString();
-      console.log(latestTimestamp, 'latest')
+      // console.log(latestTimestamp, 'latest')
     }
 
     const latestAvailability = allUpdatedAtNull
@@ -2218,14 +2302,14 @@ async function checkPatientWaitingTime() {
     const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === today);
 
     if (!todayAvailability || !todayAvailability.availableFrom) {
-      // console.log('skip')
+      console.log('skip')
       continue; // Skip if doctor is not available today
     }
     // ✅ Get first available slot time
     const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
     const firstAvailableTime = firstSlot?.split("-")[0].trim();
     console.log(firstAvailableTime, 'first')
-    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
+    // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
 
     // Convert 24-hour format (HH:mm) to 12-hour format (hh:mm A)
     const formattedTime = moment(firstAvailableTime, "HH:mm").format("hh:mm A");
@@ -2357,6 +2441,7 @@ export const scheduleForWaiting = async (req: Request, res: Response) => {
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
     await checkPatientWaitingTime();
+    await updateDoctorAssignments();
 
     // Send a response back to Cloud Scheduler
     res.status(200).json({ message: 'Minute task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
@@ -2381,5 +2466,296 @@ function parseTimeToMinutes(time: string): number {
   return hoursInMinutes + minutes;
 }
 
-// Run the function every 5 minutes
-// setInterval(checkDoctorAvailability, 300000); // 5 minutes
+async function updateDoctorAssignments() {
+  const now = moment().tz("Asia/Kolkata"); // Get current time in IST
+  const todayDate = now.format("YYYY-MM-DD"); // Example: '2024-03-09'
+  const todayDay = now.format("ddd").toLowerCase(); // Example: 'mon', 'tue'
+  const currentTimeMinutes = now.hours() * 60 + now.minutes(); // Convert current time to minutes
+
+  try {
+    // ✅ Fetch all doctors with availability & unavailable dates
+    const doctors = await prisma.doctor.findMany({
+      include: {
+        availability: {
+          where: {
+            OR: [
+              { updatedAt: null }, // Get older records if no update
+              { updatedAt: { lte: new Date() } }, // Get availability updated on or before today
+            ],
+          },
+          orderBy: { updatedAt: 'desc' }, // Get the most recent availability record
+        },
+        unavailableDates: true, // Fetch unavailable dates
+      },
+    });
+
+    // ✅ Fetch all channels
+    const channels = await prisma.channel.findMany();
+
+    // for (const channel of channels) {
+    //   const assignedDoctors = doctors.filter((doctor) => {
+    //     // ❌ Skip invalid doctors
+    //     if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+    //       return false;
+    //     }
+
+    //     // ❌ Skip doctors who are unavailable today
+    //     const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
+    //       moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
+    //     );
+    //     if (isUnavailableToday) {
+    //       console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
+    //       return false;
+    //     }
+
+    //     // ✅ Get the latest updated availability
+    //     const allUpdatedAtNull = doctor.availability.every((avail: any) => !avail.updatedAt);
+    //     let latestTimestamp: string | null = null;
+
+    //     if (!allUpdatedAtNull) {
+    //       latestTimestamp = new Date(
+    //         Math.max(...doctor.availability.map((avail: any) => avail.updatedAt ? new Date(avail.updatedAt).getTime() : 0))
+    //       ).toISOString();
+    //     }
+
+    //     const latestAvailability = allUpdatedAtNull
+    //       ? doctor.availability // Use all if no updated records
+    //       : doctor.availability.filter((avail: any) => new Date(avail.updatedAt).toISOString() === latestTimestamp);
+
+    //     // ✅ Find today's availability
+    //     const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === todayDay);
+    //     if (!todayAvailability || !todayAvailability.availableFrom) {
+    //       return false;
+    //     }
+    //     // console.log(todayAvailability)
+    //     const dayOfWeek = new Date().toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
+    //     const matchingDays = latestAvailability
+    //       ?.filter((avail: any) => avail.day.toLowerCase() === dayOfWeek); // Get all matching days
+
+    //     const availableDay = matchingDays?.length ? matchingDays[matchingDays.length - 1] : null;
+    //     // ✅ Extract the start and end time of the first slot
+    //     const firstSlot = availableDay?.availableFrom.split(',')[0].trim(); // e.g., "09:00-16:00"
+    //     // if (firstSlot) {
+    //     //   const [startAvailableTime, endAvailableTime] = firstSlot.split("-").map(t => t.trim());
+
+    //     //   // ✅ Convert start & end time to minutes
+    //     //   const startMinutes = convertTimeToMinutes(startAvailableTime);
+    //     //   const endMinutes = convertTimeToMinutes(endAvailableTime);
+
+    //     //   // ✅ Ensure doctor is assigned to the correct room & available at this time
+    //     //   // return (
+    //     //   //   doctor.roomNo === channel.roomNumber &&
+    //     //   //   currentTimeMinutes >= startMinutes &&
+    //     //   //   currentTimeMinutes <= endMinutes
+    //     //   // );
+    //     //   const isDoctorAvailableNow = currentTimeMinutes >= startMinutes && currentTimeMinutes <= endMinutes;
+
+    //     //   if (!isDoctorAvailableNow) {
+    //     //     console.log(`❌ Removing Dr. ${doctor.name} from Channel ${channel.name} (Room ${channel.roomNumber})`);
+    //     //   }
+
+    //     //   // ✅ Ensure doctor is assigned to the correct room & only if available at this time
+    //     //   // return doctor.roomNo === channel.roomNumber && isDoctorAvailableNow;
+    //     //   // ✅ Convert channel.roomNumber (comma-separated string) into an array
+    //     //   const channelRooms = channel.roomNumber!.split(',').map(room => room.trim());
+
+    //     //   // ✅ Check if the doctor's roomNo exists in this list
+    //     //   const isDoctorInChannel = channelRooms.includes(doctor.roomNo!);
+
+    //     //   if (!isDoctorInChannel) {
+    //     //     console.log(`❌ Dr. ${doctor.name} is NOT assigned to Channel ${channel.name} - Room No mismatch`);
+    //     //   }
+
+    //     //   return isDoctorInChannel && isDoctorAvailableNow;
+
+    //     // }
+    //     const availableSlots = availableDay?.availableFrom.split(',').map(slot => slot.trim()); // ["09:00-16:00", "17:00-19:00"]
+
+    //     let isDoctorAvailableNow = false;
+
+    //     // ✅ Iterate over each slot and check if the doctor is currently available
+    //     for (const slot of availableSlots!) {
+    //       const [startAvailableTime, endAvailableTime] = slot.split("-").map(t => t.trim());
+
+    //       // ✅ Convert start & end time to minutes
+    //       const startMinutes = convertTimeToMinutes(startAvailableTime);
+    //       const endMinutes = convertTimeToMinutes(endAvailableTime);
+
+    //       console.log(`⏳ Checking Slot: ${slot} (Start: ${startMinutes}, End: ${endMinutes})`);
+
+    //       // ✅ Check if current time falls within this slot
+    //       if (currentTimeMinutes >= startMinutes && currentTimeMinutes <= endMinutes) {
+    //         isDoctorAvailableNow = true;
+    //         console.log(`✅ Doctor ${doctor.name} is available NOW in slot ${slot}`);
+    //         break; // ✅ Stop checking once we find an active slot
+    //       }
+    //     }
+
+    //     // ✅ Ensure doctor is assigned to the correct room
+    //     const channelRooms = channel.roomNumber!.split(',').map(room => room.trim());
+    //     const isDoctorInChannel = channelRooms.includes(doctor.roomNo!);
+
+    //     if (!isDoctorInChannel) {
+    //       console.log(`❌ Dr. ${doctor.name} is NOT assigned to Channel ${channel.name} - Room No mismatch`);
+    //     }
+
+    //     if (!isDoctorAvailableNow) {
+    //       console.log(`❌ Removing Dr. ${doctor.name} from Channel ${channel.name} - Time Expired`);
+    //     }
+
+    //     // ✅ Doctor is assigned only if they are in the correct room & available at this time
+    //     return isDoctorInChannel && isDoctorAvailableNow;
+
+
+    //   });
+
+    //   // console.log(assignedDoctors)
+    //   // ✅ Remove existing doctor assignments for this channel
+    //   await prisma.doctorAssignment.deleteMany({
+    //     where: { channelId: channel.channelId },
+    //   });
+
+    //   // ✅ Assign the correct doctor dynamically
+    //   if (assignedDoctors.length > 0) {
+    //     const assignedDoctor = assignedDoctors[0];
+
+    //     console.log(
+    //       `✅ Assigning Dr. ${assignedDoctor.name} to Channel ${channel.name} (Room ${channel.roomNumber})`
+    //     );
+
+    //     await prisma.doctorAssignment.create({
+    //       data: {
+    //         channelId: channel.channelId,
+    //         doctorId: assignedDoctor.id,
+    //         departmentName: assignedDoctor.departmentName,
+    //       },
+    //     });
+
+    //     console.log(
+    //       `🔄 Assigned Dr. ${assignedDoctor.name} to Channel ${channel.name}, Available from: ${assignedDoctor.availability[0].availableFrom} (24-hour format)`
+    //     );
+    //   } else {
+    //     console.log(`❌ No available doctors for Channel ${channel.name} at this time.`);
+    //   }
+    // }
+    for (const channel of channels) {
+      const assignedDoctors = doctors.filter((doctor) => {
+        // ❌ Skip invalid doctors
+        if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+          return false;
+        }
+
+        // ❌ Skip doctors who are unavailable today
+        const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
+          moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
+        );
+        if (isUnavailableToday) {
+          console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
+          return false;
+        }
+
+        // ✅ Get the latest updated availability
+        const allUpdatedAtNull = doctor.availability.every((avail: any) => !avail.updatedAt);
+        let latestTimestamp: string | null = null;
+
+        if (!allUpdatedAtNull) {
+          latestTimestamp = new Date(
+            Math.max(...doctor.availability.map((avail: any) => avail.updatedAt ? new Date(avail.updatedAt).getTime() : 0))
+          ).toISOString();
+        }
+
+        const latestAvailability = allUpdatedAtNull
+          ? doctor.availability // Use all if no updated records
+          : doctor.availability.filter((avail: any) => new Date(avail.updatedAt).toISOString() === latestTimestamp);
+
+        // ✅ Find today's availability
+        const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === todayDay);
+        if (!todayAvailability || !todayAvailability.availableFrom) {
+          return false;
+        }
+
+        const availableSlots = todayAvailability?.availableFrom.split(',').map(slot => slot.trim()); // ["09:00-16:00", "17:00-19:00"]
+
+        let isDoctorAvailableNow = false;
+
+        // ✅ Iterate over each slot and check if the doctor is currently available
+        for (const slot of availableSlots!) {
+          const [startAvailableTime, endAvailableTime] = slot.split("-").map(t => t.trim());
+
+          // ✅ Convert start & end time to minutes
+          const startMinutes = convertTimeToMinutes(startAvailableTime);
+          const endMinutes = convertTimeToMinutes(endAvailableTime);
+
+          console.log(`⏳ Checking Slot: ${slot} (Start: ${startMinutes}, End: ${endMinutes})`);
+
+          // ✅ Check if current time falls within this slot
+          if (currentTimeMinutes >= startMinutes && currentTimeMinutes <= endMinutes) {
+            isDoctorAvailableNow = true;
+            console.log(`✅ Doctor ${doctor.name} is available NOW in slot ${slot}`);
+            break; // ✅ Stop checking once we find an active slot
+          }
+        }
+
+        // ✅ Ensure doctor is assigned to the correct room
+        const channelRooms = channel.roomNumber!.split(',').map(room => room.trim());
+        const isDoctorInChannel = channelRooms.includes(doctor.roomNo!);
+        console.log(channelRooms, doctor.roomNo)
+
+        if (!isDoctorInChannel) {
+          console.log(`❌ Dr. ${doctor.name} is NOT assigned to Channel ${channel.name} - Room No mismatch`);
+        }
+
+        if (!isDoctorAvailableNow) {
+          console.log(`❌ Removing Dr. ${doctor.name} from Channel ${channel.name} - Time Expired`);
+        }
+
+        // ✅ Doctor is assigned only if they are in the correct room & available at this time
+        return isDoctorInChannel && isDoctorAvailableNow;
+      });
+
+      // ✅ Remove existing doctor assignments for this channel
+      await prisma.doctorAssignment.deleteMany({
+        where: { channelId: channel.channelId },
+      });
+
+      // ✅ Assign **up to 3 doctors** dynamically
+      const doctorsToAssign = assignedDoctors.slice(0, 3); // Take only the first 3 doctors
+
+      if (doctorsToAssign.length > 0) {
+        console.log(`✅ Assigning ${doctorsToAssign.length} doctors to Channel ${channel.name} (Room ${channel.roomNumber})`);
+
+        for (const assignedDoctor of doctorsToAssign) {
+          await prisma.doctorAssignment.create({
+            data: {
+              channelId: channel.channelId,
+              doctorId: assignedDoctor.id,
+              departmentName: assignedDoctor.departmentName,
+            },
+          });
+
+          console.log(
+            `🔄 Assigned Dr. ${assignedDoctor.name} to Channel ${channel.name}, Available Slots: ${assignedDoctor.availability[0].availableFrom}`
+          );
+        }
+      } else {
+        console.log(`❌ No available doctors for Channel ${channel.name} at this time.`);
+      }
+    }
+
+
+    console.log("✅ Doctor assignments updated successfully!");
+  } catch (error) {
+    console.error("❌ Error updating doctor assignments:", error);
+  }
+}
+
+// ✅ Convert HH:mm format to minutes for easy comparison
+function convertTimeToMinutes(time: string): number {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+// ✅ Run the function every 1 minute (or use a cron job)
+// setInterval(updateDoctorAssignments, 60000);
+
+

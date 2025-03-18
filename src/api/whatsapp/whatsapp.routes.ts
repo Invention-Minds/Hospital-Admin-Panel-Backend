@@ -1,7 +1,7 @@
 // src/whatsapp/whatsapp.routes.ts
 
 import { Router } from 'express';
-import {  adminDoctorLateLogin, cancelExpiredAppointments, checkAndSendReminders,CornSchedular,doctorAvailability,individualComplete,loginRemainder,markComplete,remainderForAdmin,reminderForServices,scheduleForWaiting,sendAdminMessage,sendDoctorMessage,sendServiceWhatsappMessage,sendWhatsAppChatbot,sendWhatsAppMessage, timeElevenRemainder, timeNineRemainder, timeThreeRemainder, updateEstimation, waitingTimeMessage } from './whatsapp.controller'; // Ensure this path is correct
+import {  adminDoctorLateLogin, cancelExpiredAppointments, checkAndSendReminders,CornSchedular,doctorAvailability,individualComplete,loginRemainder,markComplete,remainderForAdmin,reminderForServices,scheduleForWaiting,sendAdminMessage,sendDoctorMessage,sendRadiologyMessage,sendServiceWhatsappMessage,sendWhatsAppChatbot,sendWhatsAppMessage, timeElevenRemainder, timeNineRemainder, timeThreeRemainder, updateEstimation, waitingTimeMessage } from './whatsapp.controller'; // Ensure this path is correct
 
 const router = Router();
 
@@ -12,6 +12,7 @@ router.post('/remainder', updateEstimation );
 router.post('/send-doctor-message',sendDoctorMessage)
 router.post('/send-receive-message',sendWhatsAppChatbot);
 router.post('/send-service-message', sendServiceWhatsappMessage)
+router.post('/send-radiology-message', sendRadiologyMessage)
 router.post('/send-admin-message', sendAdminMessage)
 // router.post('/send-waiting-message', waitingTimeMessage)
 router.post('/send-doctor-remainder', loginRemainder)

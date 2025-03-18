@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 
 const FTP_CONFIG = {
-    host: "ftp.inventionminds.com",  // Your FTP hostname
+    host: "srv680.main-hosting.eu",  // Your FTP hostname
     user: "u948610439",       // Your FTP username
     password: "Bsrenuk@1993",   // Your FTP password
     secure: false                    // Set to true if using FTPS

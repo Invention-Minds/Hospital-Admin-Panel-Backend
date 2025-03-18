@@ -53,6 +53,13 @@ export const notifyDoctor = (doctorId: any): void => {
     client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
   });
 };
+export const loadTv = (type: any): void => {
+  console.log('Notifying clients of ad loading:', type);
+  clients.forEach(client => {
+    client.write(`event: loadTv\n`);
+    client.write(`data: ${JSON.stringify(type)}\n\n`);
+  });
+};
 
 export const messageSent = (doctorId: any): void => {
   console.log('Notifying clients of message doctor:', doctorId);
@@ -90,7 +97,9 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       doctorType,
       age,
       gender,
-      serviceId
+      serviceId,
+      patientType,
+      prefix
     } = req.body;
     console.log(req.body, 'request');
 
@@ -168,7 +177,9 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       prnNumber,
       age,
       gender,
-      serviceId
+      serviceId,
+      patientType,
+      prefix
     });
     console.log("New Appointment:", newAppointment);
     if (newAppointment.status === 'pending') {
@@ -234,7 +245,8 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           age,
           gender,
           serviceId,
-          type
+          type,
+          prefix
         } = appointment;
 
 
@@ -283,7 +295,8 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           gender,
           serviceId,
           type,
-          requestVia: 'Walk-In'
+          requestVia: 'Walk-In',
+          prefix
         });
 
 
@@ -783,7 +796,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
         return null;
       }
 
-      const { doctorId, date, time, phoneNumber, patientName, doctor } = existingAppointment;
+      const { doctorId, date, time, phoneNumber, patientName, doctor, prefix } = existingAppointment;
 
       // **Cancel the booked slot**
       await prisma.bookedSlot.deleteMany({
@@ -800,6 +813,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
 
       console.log(`Updated appointment status to cancelled for Appointment ID: ${appointment.id}`);
 
+      const name = prefix + ' ' + existingAppointment.patientName;
       // **Send WhatsApp message to patient**
       const patientMessagePayload = {
         from: fromPhoneNumber,
@@ -807,7 +821,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
         type: "template",
         message: {
           templateid: "751725", // Replace with actual template ID
-          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time], // Dynamic placeholders
+          placeholders: [name, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time], // Dynamic placeholders
         },
       };
 

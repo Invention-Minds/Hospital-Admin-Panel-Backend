@@ -25,6 +25,7 @@
     "date-fns-tz": "^3.2.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "formidable": "^3.5.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "middleware": "^1.0.0",
@@ -42,12 +43,15 @@
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/formidable": "^3.4.5",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.7.4",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.16",
     "@types/pdfkit": "^0.13.8",
+    "install": "^0.13.0",
     "nodemon": "^3.1.7",
+    "npm": "^11.2.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.2"
   }

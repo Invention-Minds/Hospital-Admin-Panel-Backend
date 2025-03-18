@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 const repository = new ServiceRepository();
 
 const FTP_CONFIG = {
-    host: "ftp.inventionminds.com",  // Your FTP hostname
+    host: "srv680.main-hosting.eu",  // Your FTP hostname
     user: "u948610439",       // Your FTP username
     password: "Bsrenuk@1993",   // Your FTP password
     secure: false                    // Set to true if using FTPS
@@ -710,7 +710,8 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
         console.log("Connected to FTP Server!");
 
         // Ensure the "pdfs" directory exists
-        await client.ensureDir("/docminds/pdfs");
+        // await client.ensureDir("/docminds/pdfs");
+        await client.ensureDir("/docminds/demo_pdfs");
 
         // Upload the file
         await client.uploadFrom(localFilePath, remoteFilePath);
@@ -1670,10 +1671,11 @@ Please note that the cost will increase if the duration of the patient’s stay 
 
 
         writeStream.on("finish", async () => {
-            const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`;
+            // const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // rashtrotthana
+            const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //demo
             console.log(remoteFilePath);
             await uploadToFTP(tempFilePath, remoteFilePath);
-            const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
             console.log(pdfUrl);
 
             // Save PDF details to the database (assuming you have a function for this)
