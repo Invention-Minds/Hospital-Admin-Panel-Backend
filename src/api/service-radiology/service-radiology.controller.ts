@@ -125,7 +125,9 @@ export const createNewService = async (req: Request, res: Response): Promise<voi
             appointmentStatus,
             userId,
             serviceId,
-            email
+            email,
+            prefix,
+            patientType
           } = appointment;
 
           // 🔹 Send WhatsApp Notification
@@ -138,11 +140,11 @@ export const createNewService = async (req: Request, res: Response): Promise<voi
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
             const patientPayload = {
               from: fromPhoneNumber,
-              to: email, // Using email instead of phoneNumber since it's not available
+              to: phoneNumber, // Using email instead of phoneNumber since it's not available
               type: "template",
               message: {
                 templateid: "765787", // Template ID
-                placeholders: [firstName + ' ' + lastName, radiologyName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+                placeholders: [prefix + firstName + ' ' + lastName, radiologyName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
               },
             };
             await axios.post(url!, patientPayload, { headers });
@@ -166,7 +168,9 @@ export const createNewService = async (req: Request, res: Response): Promise<voi
               userId,
               serviceId,
               email,
-              messageSent: true
+              messageSent: true,
+              prefix,
+              patientType
             },
           });
         } catch (error) {

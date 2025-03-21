@@ -1063,13 +1063,13 @@ export const reminderForServices = async () => {
 
 export const sendServiceWhatsappMessage = async (req: Request, res: Response) => {
   try {
-    const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = req.body;
+    const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia, prefix } = req.body;
     let payload = {};
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     // API endpoint
     const url = process.env.WHATSAPP_API_URL;
 
-    const name = `${firstName} ${lastName}`;
+    const name = `${prefix} ${firstName} ${lastName}`;
     if (appointmentStatus === 'Confirm' || appointmentStatus === 'confirmed' || appointmentStatus === 'rescheduled') {
       // Prepare the payload
       payload = {
@@ -1138,13 +1138,13 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
 };
 export const sendRadiologyMessage = async (req: Request, res: Response) => {
   try {
-    const { firstName, lastName, radioServiceName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = req.body;
+    const { firstName, lastName, radioServiceName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia, prefix } = req.body;
     let payload = {};
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     // API endpoint
     const url = process.env.WHATSAPP_API_URL;
 
-    const name = `${firstName} ${lastName}`;
+    const name = `${prefix} ${firstName} ${lastName}`;
     if (appointmentStatus === 'Confirm' || appointmentStatus === 'confirmed' || appointmentStatus === 'rescheduled') {
       // Prepare the payload
       payload = {
@@ -2440,7 +2440,7 @@ export const scheduleForWaiting = async (req: Request, res: Response) => {
     // Log the current IST time
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
-    await checkPatientWaitingTime();
+    // await checkPatientWaitingTime();
     await updateDoctorAssignments();
 
     // Send a response back to Cloud Scheduler
@@ -2759,3 +2759,93 @@ function convertTimeToMinutes(time: string): number {
 // setInterval(updateDoctorAssignments, 60000);
 
 
+export const sendLabReportMessage = async (req: Request, res: Response) => {
+  try {
+    const { firstName,lastName,prefix, phoneNumber } = req.body;
+    const patientName = `${prefix} ${firstName} ${lastName}`;
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    const url = process.env.WHATSAPP_API_URL;
+    const payload = {
+      from: fromPhoneNumber, // Sender's WhatsApp number
+      to: phoneNumber, // Recipient's WhatsApp number
+      type: "template", // Type of the message
+      message: {
+        templateid: "767067", // Replace with the actual template ID
+        placeholders: [patientName], // Dynamic placeholders
+      },
+    };
+
+
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+    };
+    const response = await axios.post(url!, payload, { headers });
+    if (response.data.code === '200') {
+      res.status(200).json({
+        message: 'WhatsApp message sent successfully',
+        data: response.data, // Optional: Include response data
+      });
+    }
+    else {
+      res.status(500).json({
+        message: 'Failed to send',
+        data: response.data
+      })
+    }
+
+
+    // Log the response
+    console.log('WhatsApp message sent successfully:1', response.data);
+
+  }
+  catch (error) {
+    console.error('Error sending WhatsApp message:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+export const sendRadioReportMessage = async (req: Request, res: Response) => {
+  try {
+    const { firstName,lastName,prefix, phoneNumber, radioServiceName } = req.body;
+    const patientName = ` ${prefix} ${firstName} ${lastName}`;
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    const url = process.env.WHATSAPP_API_URL;
+    const payload = {
+      from: fromPhoneNumber, // Sender's WhatsApp number
+      to: phoneNumber, // Recipient's WhatsApp number
+      type: "template", // Type of the message
+      message: {
+        templateid: "767297", // Replace with the actual template ID
+        placeholders: [patientName, radioServiceName], // Dynamic placeholders
+      },
+    };
+
+
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN, // Replace with your actual API key
+    };
+    const response = await axios.post(url!, payload, { headers });
+    if (response.data.code === '200') {
+      res.status(200).json({
+        message: 'WhatsApp message sent successfully',
+        data: response.data, // Optional: Include response data
+      });
+    }
+    else {
+      res.status(500).json({
+        message: 'Failed to send',
+        data: response.data
+      })
+    }
+
+
+    // Log the response
+    console.log('WhatsApp message sent successfully:1', response.data);
+
+  }
+  catch (error) {
+    console.error('Error sending WhatsApp message:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}

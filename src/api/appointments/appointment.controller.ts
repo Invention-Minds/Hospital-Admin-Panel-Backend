@@ -246,14 +246,15 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           gender,
           serviceId,
           type,
-          prefix
+          prefix,
+          patientType
         } = appointment;
 
 
 
         await doctorRepository.addBookedSlot(doctorId, date, time);
         // 🔹 Create the appointment
-
+        const name = `${prefix} ${patientName}`;
         try{
           const url = process.env.WHATSAPP_API_URL;
         const headers = {
@@ -267,7 +268,7 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           type: "template",
           message: {
             templateid: "750561", // Replace with the actual template ID
-            placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
+            placeholders: [name, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
           },
         };
         const patientResponse = await axios.post(url!, patientPayload, { headers });
@@ -296,7 +297,8 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           serviceId,
           type,
           requestVia: 'Walk-In',
-          prefix
+          prefix,
+          patientType
         });
 
 
@@ -844,7 +846,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
           type: "template",
           message: {
             templateid: "751453", // Replace with actual doctor template ID
-            placeholders: [doctor.name, "cancelled", patientName, date, time], // Dynamic placeholders
+            placeholders: [doctor.name, "cancelled", name, date, time], // Dynamic placeholders
           },
         };
 

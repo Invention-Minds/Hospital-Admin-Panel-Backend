@@ -534,6 +534,7 @@ model EstimationDetails {
   costForPresidential     String?
   selectedRoomCost        String?
   patientEmail            String?
+  rejectReason            String?
 
   @@map("estimation_details")
 }
