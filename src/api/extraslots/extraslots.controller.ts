@@ -43,58 +43,110 @@ export const getExtraSlotsByDoctor = async (req: Request, res: Response) => {
 };
 
 // Add or update extra slots
+// export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
+//     try {
+//         const { doctorId, extraHoursBefore, extraHoursAfter, date } = req.body;
+
+//         // Get today's date as a string (YYYY-MM-DD)
+//         // const todayDate = new Date().toISOString().split('T')[0];
+
+//         // Ensure `extraHoursBefore` and `extraHoursAfter` are stored as strings
+//         const extraBeforeStr = String(extraHoursBefore);
+//         const extraAfterStr = String(extraHoursAfter);
+
+//         // Check if an entry exists for today's date
+//         const existingSlot = await prisma.extraSlotCount.findFirst({
+//             where: {
+//                 doctorId: doctorId,
+//                 date: date, // Check today's date
+//             },
+//         });
+
+//         let updatedExtraSlot;
+
+//         if (existingSlot) {
+//             // If the slot exists, update it
+//             updatedExtraSlot = await prisma.extraSlotCount.update({
+//                 where: {
+//                     id: existingSlot.id, // Update using unique ID
+//                 },
+//                 data: {
+//                     extraHoursBefore: extraBeforeStr,
+//                     extraHoursAfter: extraAfterStr,
+//                 },
+//             });
+//         } else {
+//             // If no entry exists, create a new one
+//             updatedExtraSlot = await prisma.extraSlotCount.create({
+//                 data: {
+//                     doctorId,
+//                     date: date, // Store today's date
+//                     extraHoursBefore: extraBeforeStr,
+//                     extraHoursAfter: extraAfterStr,
+//                 },
+//             });
+//         }
+
+//         res.status(201).json({ message: 'Extra slot added/updated successfully', updatedExtraSlot });
+//     } catch (error) {
+//         console.error('Error adding/updating extra slot:', error);
+//         res.status(500).json({ error: 'Internal server error' });
+//     }
+// };
+
 export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
     try {
-        const { doctorId, extraHoursBefore, extraHoursAfter, date } = req.body;
-
-        // Get today's date as a string (YYYY-MM-DD)
-        // const todayDate = new Date().toISOString().split('T')[0];
-
-        // Ensure `extraHoursBefore` and `extraHoursAfter` are stored as strings
-        const extraBeforeStr = String(extraHoursBefore);
-        const extraAfterStr = String(extraHoursAfter);
-
-        // Check if an entry exists for today's date
-        const existingSlot = await prisma.extraSlotCount.findFirst({
-            where: {
-                doctorId: doctorId,
-                date: date, // Check today's date
-            },
+      const { doctorId, date, timeRange, extraHoursBefore, extraHoursAfter } = req.body;
+  
+      if (!doctorId || !date || !timeRange) {
+         res.status(400).json({ error: 'doctorId, date, and timeRange are required.' });
+         return
+      }
+  
+      const existingSlot = await prisma.extraSlotCount.findFirst({
+        where: {
+          doctorId,
+          date,
+          timeRange,
+        },
+      });
+  
+      let updatedExtraSlot;
+  
+      if (existingSlot) {
+        // Update existing slot
+        updatedExtraSlot = await prisma.extraSlotCount.update({
+          where: {
+            id: existingSlot.id,
+          },
+          data: {
+            extraHoursBefore: String(extraHoursBefore),
+            extraHoursAfter: String(extraHoursAfter),
+          },
         });
-
-        let updatedExtraSlot;
-
-        if (existingSlot) {
-            // If the slot exists, update it
-            updatedExtraSlot = await prisma.extraSlotCount.update({
-                where: {
-                    id: existingSlot.id, // Update using unique ID
-                },
-                data: {
-                    extraHoursBefore: extraBeforeStr,
-                    extraHoursAfter: extraAfterStr,
-                },
-            });
-        } else {
-            // If no entry exists, create a new one
-            updatedExtraSlot = await prisma.extraSlotCount.create({
-                data: {
-                    doctorId,
-                    date: date, // Store today's date
-                    extraHoursBefore: extraBeforeStr,
-                    extraHoursAfter: extraAfterStr,
-                },
-            });
-        }
-
-        res.status(201).json({ message: 'Extra slot added/updated successfully', updatedExtraSlot });
+      } else {
+        // Create new entry
+        updatedExtraSlot = await prisma.extraSlotCount.create({
+          data: {
+            doctorId,
+            date,
+            timeRange,
+            extraHoursBefore: String(extraHoursBefore),
+            extraHoursAfter: String(extraHoursAfter),
+          },
+        });
+      }
+  
+      res.status(201).json({
+        message: 'Extra slot added/updated successfully',
+        updatedExtraSlot,
+      });
     } catch (error) {
-        console.error('Error adding/updating extra slot:', error);
-        res.status(500).json({ error: 'Internal server error' });
+      console.error('Error adding/updating extra slot:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
-};
-
-
+  };
+  
 
 // Remove an extra slot
 export const removeExtraSlot = async (req: Request, res: Response) => {

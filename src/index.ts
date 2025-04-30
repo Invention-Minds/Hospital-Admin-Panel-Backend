@@ -18,10 +18,10 @@ import serviceRoutes from './api/services/services.routes';
 import estimationRoutes from './api/estimation/estimation.routes';
 import channelRoutes from './api/channel/channel.routes';
 import screenshotRoutes from './api/screenshot/screenshot.routes';
-import extraSlotCountRoutes from './api/extraslots/extraslots.router'
+import extraSlotCountRoutes from './api/extraslots/extraslots.router';
 import adRoutes from './api/ad/ad.routes';
-import serviceRadiologyRoutes from './api/service-radiology/service-radiology.routes'
-import { channel } from 'diagnostics_channel';
+import serviceRadiologyRoutes from './api/service-radiology/service-radiology.routes';
+import whatsappBotRoutes from './api/whatsapp-bot/whatsapp-bot.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -36,7 +36,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(cors({
-  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024'], 
+  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -58,7 +58,8 @@ app.use('/api/channel', channelRoutes);
 app.use('/api/capture-screenshoot', screenshotRoutes);
 app.use('/api/extraslot-count', extraSlotCountRoutes);
 app.use('/api/ads',adRoutes);
-app.use('/api/radiology',serviceRadiologyRoutes)
+app.use('/api/radiology',serviceRadiologyRoutes);
+app.use('/api/callback', whatsappBotRoutes);
 
 // Sample route to check server status
 app.get('/', (req, res) => {

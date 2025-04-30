@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -16,12 +16,14 @@ router.get('/booked-slots',getBookedSlots);
 router.post('/booked-slots',authenticateToken, addBookedSlot);
 router.post('/cancel-booked-slot', authenticateToken, cancelBookedSlot);
 router.post('/unavailable-dates',authenticateToken, addUnavailableDates); // New endpoint for adding unavailable dates
+router.post('/add-unavailable-dates', addUnavailableDatesBulk);
 router.get('/unavailable-dates', getUnavailableDates); // New endpoint for getting unavailable dates
 router.get('/:id/unavailableSlots', getUnavailableSlots);
 router.get('/unavailableSlotsbyDate/:docId/:date', getUnavailableSlotsByDate)
 router.post('/mark-complete', updateBookedSlot),
 router.get('/futureBookedSlots', getFutureBookedSlotsBoth);
-router.get('/futureslotsForSlotDuration',getFutureBookedSlots)
+router.get('/futureslotsForSlotDuration',getFutureBookedSlots);
+router.post('/bulk-future-slots', getBulkFutureBookedSlots)
 router.get('/get-doctor-by-userId/:userId', authenticateToken, getDoctorByUserId)
 
 // POST: Add unavailable slots for a specific doctor

@@ -159,6 +159,8 @@ model Appointment {
   isNew               Boolean?
   prefix              String?
   patientType         String?
+  isfollowup          Boolean?
+  isFollowupTime      DateTime?
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -324,6 +326,7 @@ model Service {
   gender                    String?
   prefix                    String?
   patientType               String?
+  isLabEntry1Time           DateTime?
 }
 
 model RepeatedDate {
@@ -446,6 +449,7 @@ model ExtraSlotCount {
   extraHoursAfter  String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  timeRange        String?
 }
 
 model DoctorAssignment {
@@ -604,4 +608,54 @@ model Advertisement {
   content    String   @db.Text // Stores text for text ads, file path for media ads
   uploadedAt DateTime @default(now())
   isActive   Boolean?
+}
+
+model BloodGroup {
+  id                Int                     @id @default(autoincrement())
+  name              String                  @unique
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  bloodAppointments BloodGroupAppointment[]
+}
+
+model BloodGroupAppointment {
+  id                Int                      @id @default(autoincrement())
+  pnrNumber         String?
+  firstName         String
+  lastName          String?
+  phoneNumber       String
+  email             String?
+  appointmentDate   String
+  appointmentSlot   String?
+  repeatChecked     Boolean                  @default(false)
+  daysInterval      Int?
+  numberOfTimes     Int?
+  requestVia        String
+  appointmentStatus String                   @default("pending")
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  checkedIn         Boolean?                 @default(false)
+  emailSent         Boolean?                 @default(false)
+  messageSent       Boolean?                 @default(false)
+  smsSent           Boolean?                 @default(false)
+  bloodGroupId      Int
+  bloodGroup        BloodGroup               @relation(fields: [bloodGroupId], references: [id])
+  repeatedDates     BloodGroupRepeatedDate[]
+  lockedBy          Int?
+  userId            Int?
+  username          String?
+  role              UserRole?
+  checkedInTime     DateTime?
+  age               String?
+  gender            String?
+  prefix            String?
+}
+
+model BloodGroupRepeatedDate {
+  id                      Int                   @id @default(autoincrement())
+  date                    String
+  bloodGroupAppointmentId Int
+  bloodGroupAppointment   BloodGroupAppointment @relation(fields: [bloodGroupAppointmentId], references: [id])
+
+  @@index([bloodGroupAppointmentId], map: "BloodGroupRepeatedDate_appointmentId_fkey")
 }

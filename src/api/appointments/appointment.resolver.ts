@@ -46,12 +46,24 @@ export default class AppointmentResolver {
 
     // Check if the appointment is already locked by another user
     if (appointment.lockedBy && appointment.lockedBy !== userId) {
-      // Appointment is locked by someone else
-      return null;
+      const lockedUser = await prisma.user.findUnique({
+        where: { id: appointment.lockedBy },
+        select: { username: true },
+      });
+  
+      const displayName = lockedUser?.username?.split(/_(admin|subadmin|superadmin|doctor)/)[0] || 'Another user';
+  
+      return {
+        locked: true,
+        lockedByUserId: appointment.lockedBy,
+        lockedByUsername: displayName,
+      };
     }
 
     // Lock the appointment for the current user
-    return await this.repository.lockAppointment(appointmentId, userId);
+    const lockedAppointment = await this.repository.lockAppointment(appointmentId, userId);
+    return { locked: false, data: lockedAppointment };
+  
   }
 
   // Method to unlock an appointment

@@ -627,10 +627,12 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
           },
         ],
       },
-      select: { appointmentTime: true },
+      select: { appointmentTime: true, appointmentStatus: true },
     });
 
-    const bookedTimes = bookedAppointments.map((appt) => appt.appointmentTime);
+    const bookedTimes = bookedAppointments
+      .filter((appt) => appt.appointmentStatus !== 'Cancel')
+      .map((appt) => appt.appointmentTime);
     console.log('Booked times:', bookedTimes, bookedAppointments);
     // Exclude booked times from allSlots
     const availableSlots = allSlots.filter((slot) => !bookedTimes.includes(slot));
@@ -723,7 +725,7 @@ export const unlockService = async (req: Request, res: Response): Promise<void> 
     console.error('Error unlocking service:', error);
     res.status(500).json({ message: 'Failed to unlock service' });
   }
-  
+
 };
 export const markComplete = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -780,7 +782,7 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
           const apiKey = process.env.SMS_API_KEY;
           const apiUrl = process.env.SMS_API_URL;
           const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
           const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
           const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
@@ -798,7 +800,7 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
       })
     );
 
-    
+
   } catch (error) {
     console.error('Error completing service:', error);
     res.status(500).json({ message: 'Failed to complete service' });
@@ -894,8 +896,8 @@ export const individualComplete = async (req: Request, res: Response) => {
 
     if (appointments.length === 0) {
       console.log('No appointments found to process.');
-       res.status(200).json({ message: 'No appointments to process.' });
-       return
+      res.status(200).json({ message: 'No appointments to process.' });
+      return
     }
 
     for (const appointment of appointments) {
@@ -908,10 +910,12 @@ export const individualComplete = async (req: Request, res: Response) => {
 
       // Cancel appointments and service appointments with checkedOut: false
       const relatedAppointments = await prisma.appointment.findMany({
-        where: { serviceId: appointment.id, OR: [
-          { checkedOut: false },
-          { checkedOut: null }
-        ]},
+        where: {
+          serviceId: appointment.id, OR: [
+            { checkedOut: false },
+            { checkedOut: null }
+          ]
+        },
         include: { doctor: true },
       });
 
@@ -929,12 +933,16 @@ export const individualComplete = async (req: Request, res: Response) => {
           from: fromPhoneNumber,
           to: appt.phoneNumber, // Patient's WhatsApp number
           type: "template",
+          // message: {
+          //   templateid: "751725", // Replace with actual template ID
+          //   placeholders: [name, appt.doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(appt.date)), appt.time], // Dynamic placeholders
+          // },
           message: {
-            templateid: "751725", // Replace with actual template ID
-            placeholders: [name, appt.doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(appt.date)), appt.time], // Dynamic placeholders
+            templateid: "790519", // Replace with the actual template ID
+            placeholders: [name, appt.doctor?.name, appt.time, formatDateYear(new Date(appt.date))], // Dynamic placeholders
           },
         };
-  
+
         try {
           const patientResponse = await axios.post(url!, patientMessagePayload, { headers });
           if (patientResponse.data.code === "200") {
@@ -945,7 +953,7 @@ export const individualComplete = async (req: Request, res: Response) => {
         } catch (error) {
           console.error("Error sending WhatsApp message to Patient:", error);
         }
-  
+
         // **Send WhatsApp message to doctor**
         if (appt.doctor?.phone_number) {
           const doctorMessagePayload = {
@@ -953,11 +961,11 @@ export const individualComplete = async (req: Request, res: Response) => {
             to: appt.doctor.phone_number, // Doctor's WhatsApp number
             type: "template",
             message: {
-              templateid: "751453", // Replace with actual doctor template ID
-              placeholders: [appt.doctor.name, "cancelled", name, appt.date, appt.time], // Dynamic placeholders
+              templateid: "774273", // Replace with actual doctor template ID
+              placeholders: [appt.doctor.name, "cancelled", name, appt.time, appt.date], // Dynamic placeholders
             },
           };
-  
+
           try {
             const doctorResponse = await axios.post(url!, doctorMessagePayload, { headers });
             if (doctorResponse.data.code === "200") {
@@ -969,15 +977,17 @@ export const individualComplete = async (req: Request, res: Response) => {
             console.error("Error sending WhatsApp message to Doctor:", error);
           }
         }
-  
+
         console.log(`Cancelled appointment ${appt.id}`);
       }
 
       const relatedServiceAppointments = await prisma.serviceAppointments.findMany({
-        where: { serviceId: appointment.id,OR: [
-          { checkedOut: false },
-          { checkedOut: null }
-        ] },
+        where: {
+          serviceId: appointment.id, OR: [
+            { checkedOut: false },
+            { checkedOut: null }
+          ]
+        },
       });
       console.log(relatedServiceAppointments)
 
@@ -1026,7 +1036,7 @@ export const individualComplete = async (req: Request, res: Response) => {
 
         console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
-        const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+        const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
 
         const smsUrl = `${process.env.SMS_API_URL}/${process.env.SMS_SENDER}/${appointment.phoneNumber}/${encodeURIComponent(successMessage)}/TXT?apikey=${process.env.SMS_API_KEY}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${process.env.SMS_DLT_TE_ID_FOR_COMPLETE}`;
 

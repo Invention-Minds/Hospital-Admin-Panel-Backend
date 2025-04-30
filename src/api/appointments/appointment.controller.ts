@@ -255,26 +255,26 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
         await doctorRepository.addBookedSlot(doctorId, date, time);
         // 🔹 Create the appointment
         const name = `${prefix} ${patientName}`;
-        try{
+        try {
           const url = process.env.WHATSAPP_API_URL;
-        const headers = {
-          "Content-Type": "application/json",
-          apikey: process.env.WHATSAPP_AUTH_TOKEN,
-        };
-        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-        const patientPayload = {
-          from: fromPhoneNumber,
-          to: phoneNumber,
-          type: "template",
-          message: {
-            templateid: "750561", // Replace with the actual template ID
-            placeholders: [name, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
-          },
-        };
-        const patientResponse = await axios.post(url!, patientPayload, { headers });
+          const headers = {
+            "Content-Type": "application/json",
+            apikey: process.env.WHATSAPP_AUTH_TOKEN,
+          };
+          const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+          const patientPayload = {
+            from: fromPhoneNumber,
+            to: phoneNumber,
+            type: "template",
+            message: {
+              templateid: "750561", // Replace with the actual template ID
+              placeholders: [name, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
+            },
+          };
+          const patientResponse = await axios.post(url!, patientPayload, { headers });
 
         }
-        catch(error){
+        catch (error) {
           res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
         }
         return await resolver.createAppointment({
@@ -303,11 +303,11 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
 
 
       })
-      
+
     );
-   
+
     res.status(201).json(newAppointments);
-    
+
 
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -494,14 +494,20 @@ export const lockAppointment = async (req: Request, res: Response): Promise<void
     //   res.status(423).json({ message: 'Appointment is currently locked by another user.' });
     //   return;
     // }
-    const lockedAppointment = await resolver.lockAppointment(appointmentId, userIdNum);
-    console.log(lockedAppointment, "locked")
-    if (!lockedAppointment) {
-      res.status(409).json({ message: 'Appointment is currently locked by another user.' });
+    const lockResult = await resolver.lockAppointment(appointmentId, userIdNum);
+
+    if (lockResult.locked) {
+      res.status(409).json({
+        message: `Appointment is currently locked by ${lockResult.lockedByUsername}.`,
+        lockedByUserId: lockResult.lockedByUserId,
+        lockedByUsername: lockResult.lockedByUsername,
+      });
       return;
     }
 
-    res.status(200).json(lockedAppointment);
+    // If not locked by someone else
+    res.status(200).json(lockResult.data);
+
   } catch (error) {
     console.error('Error locking appointment:', error);
     res.status(500).json({ error: 'Failed to lock appointment' });
@@ -530,7 +536,7 @@ export const checkInAppointment = async (req: Request, res: Response) => {
   const { username } = req.body;
   const usEasternTime = moment.tz("America/New_York");
 
-  console.log(id,username)
+  console.log(id, username)
 
   // Convert US Eastern Time to Indian Standard Time (IST)
   const indianTime = usEasternTime.clone().tz("Asia/Kolkata").toDate();
@@ -631,11 +637,12 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
     const whatsappPayload = {
       from: fromPhoneNumber,
       // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      to:['919342287945'],
+      to: ['919342287945'],
+      // to:['919342003000'],
       type: "template",
       message: {
         templateid: "738055", // Replace with actual template ID
-        placeholders: [doctorName, appointmentsToUpdate.length,doctor?.roomNo], // Dynamic placeholders
+        placeholders: [doctorName, appointmentsToUpdate.length, doctor?.roomNo], // Dynamic placeholders
       },
     };
     try {
@@ -822,8 +829,8 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
         to: phoneNumber, // Patient's WhatsApp number
         type: "template",
         message: {
-          templateid: "751725", // Replace with actual template ID
-          placeholders: [name, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time], // Dynamic placeholders
+          templateid: "790519", // Replace with the actual template ID
+          placeholders: [name, doctor?.name, time, formatDateYear(new Date(date))], // Dynamic placeholders
         },
       };
 
@@ -845,8 +852,8 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
           to: doctor.phone_number, // Doctor's WhatsApp number
           type: "template",
           message: {
-            templateid: "751453", // Replace with actual doctor template ID
-            placeholders: [doctor.name, "cancelled", name, date, time], // Dynamic placeholders
+            templateid: "774273", // Replace with actual doctor template ID
+            placeholders: [doctor.name, "cancelled", name, time, date], // Dynamic placeholders
           },
         };
 

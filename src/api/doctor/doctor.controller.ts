@@ -91,22 +91,22 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
 
     });
     console.log("unavailableSlots", unavailableSlots)
-       // Create unavailable slots if they exist
-      //  if (unavailableSlots && unavailableSlots.length > 0) {
-      //   console.log("unavailableSlots in if", unavailableSlots)
-      //   try {
-      //     await prisma.unavailableSlot.createMany({
-      //       data: unavailableSlots.map((time: string) => ({
-      //         doctorId: newDoctor.id,
-      //         time: time,
-      //       })),
-      //     });
-  
-      //     console.log("Unavailable Slots Inserted Successfully");
-      //   } catch (error) {
-      //     console.error("Error inserting unavailable slots:", error);
-      //   }
-      // }
+    // Create unavailable slots if they exist
+    //  if (unavailableSlots && unavailableSlots.length > 0) {
+    //   console.log("unavailableSlots in if", unavailableSlots)
+    //   try {
+    //     await prisma.unavailableSlot.createMany({
+    //       data: unavailableSlots.map((time: string) => ({
+    //         doctorId: newDoctor.id,
+    //         time: time,
+    //       })),
+    //     });
+
+    //     console.log("Unavailable Slots Inserted Successfully");
+    //   } catch (error) {
+    //     console.error("Error inserting unavailable slots:", error);
+    //   }
+    // }
 
 
     console.log("after added", newDoctor)
@@ -162,54 +162,74 @@ export const getDoctors = async (req: Request, res: Response) => {
     const indianDate = indianTime.toDate();
     const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
     const isToday = requestedDate.toDateString() === indianDate.toDateString();
-    const isFuture = requestedDate > indianDate
+    const isFuture = requestedDate > indianDate;
+    const today = new Date();
+    const startOfToday = new Date(today.setHours(0, 0, 0, 0));
+    const endOfToday = new Date(today.setHours(23, 59, 59, 999));
 
     const doctors = await prisma.doctor.findMany({
       include: {
         // availability: {
         //   where: {
-        //     AND: [
+        //     OR: [
+        //       {
+        //         updatedAt: null, // Include availability where updatedAt is null (for older records)
+        //       },
         //       {
         //         updatedAt: {
         //           lte: requestedDate, // Get availability updated on or before the requested date
         //         },
         //       },
-        //       {
-        //         OR: [
-        //           {
-        //             updatedAt: null, // Include availability where updatedAt is null (for older records)
-        //           },
-        //           {
-        //             updatedAt: {
-        //               not: null, // Ensure the availability has been updated at least once
-        //             },
-        //           },
-        //         ],
-        //       },
         //     ],
         //   },
         //   orderBy: {
         //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+        //     // updatedAt: isToday ? 'desc' : 'asc',
         //   },
+
         // },
         availability: {
-          where: {
-            OR: [
-              {
-                updatedAt: null, // Include availability where updatedAt is null (for older records)
+          where: isToday
+            ? {
+                OR: [
+                  {
+                    updatedAt: {
+                      gte: startOfToday,
+                      lte: endOfToday,
+                    },
+                  },
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : isFuture
+            ? {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
               },
-              {
-                updatedAt: {
-                  lte: requestedDate, // Get availability updated on or before the requested date
-                },
-              },
-            ],
-          },
           orderBy: {
-            updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-            // updatedAt: isToday || isFuture ? 'desc' : 'asc',
+            updatedAt: 'desc',
           },
-        
         },
         department: true, // Include department to get its details
         unavailableDates: true,
@@ -257,7 +277,7 @@ export const getDoctorDetails = async (req: Request, res: Response) => {
     const isFuture = requestedDate > indianDate
     const today = new Date();
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
-const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+    const endOfToday = new Date(today.setHours(23, 59, 59, 999));
 
     const doctors = await prisma.doctor.findMany({
       include: {
@@ -287,25 +307,71 @@ const endOfToday = new Date(today.setHours(23, 59, 59, 999));
         //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
         //   },
         // },
-        availability: {
-          where: {
-            OR: [
-              {
-                updatedAt: null, // Include availability where updatedAt is null (for older records)
-              },
-              {
-                updatedAt: {
-                  lte: requestedDate, // Get availability updated on or before the requested date
-                },
-              },
-            ],
-          },
-          orderBy: {
-            updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-            // updatedAt: isToday || isFuture ? 'desc' : 'asc',
-          },
+        // availability: {
+        //   where: {
+        //     OR: [
+        //       {
+        //         updatedAt: null, // Include availability where updatedAt is null (for older records)
+        //       },
+        //       {
+        //         updatedAt: {
+        //           lte: requestedDate, // Get availability updated on or before the requested date
+        //         },
+        //       },
+        //     ],
+        //   },
+        //   orderBy: {
+        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+        //     // updatedAt: isToday ? 'asc' : 'desc',
+        //   },
+
+        // },
         
+        availability: {
+          where: isToday
+            ? {
+                OR: [
+                  {
+                    updatedAt: {
+                      gte: startOfToday,
+                      lte: endOfToday,
+                    },
+                  },
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : isFuture
+            ? {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              },
+          orderBy: {
+            updatedAt: 'desc',
+          },
         },
+        
+        
         department: true, // Include department to get its details
         unavailableDates: true,
         bookedSlots: {
@@ -326,8 +392,8 @@ const endOfToday = new Date(today.setHours(23, 59, 59, 999));
             time: true,
           },
         },
-        ExtraSlotCount:{
-          where:{
+        ExtraSlotCount: {
+          where: {
             date: formattedDate,
           }
         }
@@ -372,7 +438,7 @@ export const getFutureBookedSlots = async (req: Request, res: Response) => {
       where: {
         doctorId: doctorId,
         date: {
-          gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+          gte: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
         },
       },
       orderBy: {
@@ -416,18 +482,18 @@ export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Pro
         where: {
           doctorId: doctorId,
           date: {
-            gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+            gte: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
           },
         },
         orderBy: {
           date: 'asc', // Order by date in ascending order
         },
       });
-      console.log(futureBookedSlots,"Future Booked Slots:", futureBookedSlots);
+      console.log(futureBookedSlots, "Future Booked Slots:", futureBookedSlots);
       // Filter booked slots to only include those on the requested day of the week
       futureBookedSlots = futureBookedSlots.filter((slot) => {
         const slotDate = new Date(slot.date);
-        console.log(slotDate.getDay(),day)
+        console.log(slotDate.getDay(), day)
         return slotDate.getDay() === day;
       });
       console.log("Future Booked Slots:", futureBookedSlots);
@@ -437,7 +503,7 @@ export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Pro
         where: {
           doctorId: doctorId,
           date: {
-            gt: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
+            gte: requestedDate.toISOString().split('T')[0], // Get booked slots after the requested date
           },
         },
         orderBy: {
@@ -445,7 +511,7 @@ export const getFutureBookedSlotsBoth = async (req: Request, res: Response): Pro
         },
       });
     }
-    console.log("Future Booked Slots:", futureBookedSlots, requestedDate, requestedDate.toISOString().split('T')[0],doctorId);
+    console.log("Future Booked Slots:", futureBookedSlots, requestedDate, requestedDate.toISOString().split('T')[0], doctorId);
     res.json(futureBookedSlots);
   } catch (error: any) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
@@ -508,7 +574,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
     console.log("Update Request Body:", req.body);
 
     // Validation: Ensure all required fields are present
-    if (!name || !phone_number || !departmentName  || !slotDuration) {
+    if (!name || !phone_number || !departmentName || !slotDuration) {
       res.status(400).json({ error: 'All fields are required.' });
       return;
     }
@@ -644,7 +710,7 @@ export const addUnavailableSlots = async (req: Request, res: Response) => {
         data: unavailableSlotEntries,
       });
     }
-console.log("unavailableSlotEntries",unavailableSlotEntries)
+    console.log("unavailableSlotEntries", unavailableSlotEntries)
     res.status(201).json({ message: 'Unavailable slots updated successfully.' });
   } catch (error) {
     console.error('Error adding unavailable slots:', error);
@@ -776,9 +842,9 @@ export const getDoctorAvailability = async (req: Request, res: Response): Promis
     const date = req.query.date as string;
     const dateObject = new Date(date);
 
-// Convert the date object to the day of the week
-const day = dateObject.toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); 
-console.log("Day:", day);
+    // Convert the date object to the day of the week
+    const day = dateObject.toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
+    console.log("Day:", day);
 
     // Call the resolver to get availability
     const availability = await resolver.getDoctorAvailability(doctorId, day, date);
@@ -846,7 +912,7 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
       },
       select: {
         time: true,
-        complete:true
+        complete: true
       },
     });
 
@@ -924,17 +990,17 @@ export const updateBookedSlot = async (req: Request, res: Response): Promise<voi
     }
 
     // Update the booked slot to mark it as complete
-        // Update the booked slot to mark it as complete
-        const updatedBooking = await prisma.bookedSlot.updateMany({
-          where: {
-            doctorId,
-            date,
-            time,
-          },
-          data: {
-            complete: true, // Mark the slot as complete
-          },
-        });
+    // Update the booked slot to mark it as complete
+    const updatedBooking = await prisma.bookedSlot.updateMany({
+      where: {
+        doctorId,
+        date,
+        time,
+      },
+      data: {
+        complete: true, // Mark the slot as complete
+      },
+    });
 
     res.status(200).json({ updatedBooking, message: 'Slot successfully marked as complete.' });
   } catch (error) {
@@ -992,6 +1058,72 @@ export const addUnavailableDates = async (req: Request, res: Response): Promise<
     res.status(500).json({ error: 'An error occurred while updating unavailable dates.' });
   }
 };
+export const addUnavailableDatesBulk = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { doctorIds, startDate, endDate } = req.body;
+
+    if (!doctorIds || !startDate || !endDate) {
+      res.status(400).json({ error: 'Doctor IDs, start date, and end date are required.' });
+      return;
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const unavailableDates = [];
+    let current = new Date(start);
+    while (current <= end) {
+      unavailableDates.push(new Date(current));
+      current.setDate(current.getDate() + 1);
+    }
+
+    for (const doctorId of doctorIds) {
+      await prisma.unavailableDates.deleteMany({
+        where: {
+          doctorId,
+          date: { gte: start, lte: end },
+        },
+      });
+
+      const newEntries = unavailableDates.map(date => ({ doctorId, date }));
+      if (newEntries.length) {
+        await prisma.unavailableDates.createMany({ data: newEntries });
+      }
+    }
+
+    res.status(200).json({ message: 'Unavailable dates updated for selected doctors.' });
+  } catch (error) {
+    console.error('Bulk unavailability error:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+};
+export const getBulkFutureBookedSlots = async (req: Request, res: Response) => {
+  try {
+    const { doctorIds, startDate, endDate } = req.body;
+
+    if (!Array.isArray(doctorIds) || !startDate || !endDate) {
+       res.status(400).json({ error: 'Invalid input for fetching future slots' });
+       return
+    }
+
+    const bookedSlots = await prisma.bookedSlot.findMany({
+      where: {
+        doctorId: { in: doctorIds },
+        date: {
+          gte: new Date(startDate).toISOString().split('T')[0], // ✅ Convert to 'YYYY-MM-DD'
+          lte: new Date(endDate).toISOString().split('T')[0],
+        },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    res.status(200).json(bookedSlots);
+  } catch (error) {
+    console.error('Error fetching bulk future slots:', error);
+    res.status(500).json({ error: 'Failed to fetch slots' });
+  }
+};
+
 
 export const markDatesAsAvailable = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1041,7 +1173,7 @@ export const getUnavailableDates = async (req: Request, res: Response): Promise<
       },
     });
 
-    res.status(200).json(unavailableDates); 
+    res.status(200).json(unavailableDates);
   } catch (error) {
     console.error('Error fetching unavailable dates:', error);
     res.status(500).json({ error: 'An error occurred while fetching unavailable dates.' });
@@ -1076,7 +1208,7 @@ export const getAvailableDoctorsCount = async (req: Request, res: Response): Pro
   }
 };
 export const addExtraSlot = async (req: Request, res: Response): Promise<void> => {
-  try{
+  try {
     const { doctorId, date, time } = req.body;
     const result = await prisma.extraSlot.create({
       data: {
@@ -1087,15 +1219,15 @@ export const addExtraSlot = async (req: Request, res: Response): Promise<void> =
     });
     res.status(200).json({ success: true, result });
   }
-  catch(error){
+  catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 
 }
 export const getExtraSlots = async (req: Request, res: Response): Promise<void> => {
-  try{
-  const date = req.query.date;
-  const doctorId = req.params.id;
+  try {
+    const date = req.query.date;
+    const doctorId = req.params.id;
     const extraSlots = await prisma.extraSlot.findMany({
       where: {
         doctorId: Number(doctorId),
@@ -1107,22 +1239,22 @@ export const getExtraSlots = async (req: Request, res: Response): Promise<void> 
     });
     res.status(200).json(extraSlots);
   }
-  catch(error){
+  catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
 
-export const getDoctorByUserId = async (req: Request, res: Response): Promise<void> =>{
-  try{
-  const {userId} = req.params;
-      const extraSlots = await prisma.doctor.findFirst({
-        where: { userId: Number(userId) },
-      });
-      res.status(200).json(extraSlots);
-    }
-    catch(error){
-      res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
-    }
+export const getDoctorByUserId = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const extraSlots = await prisma.doctor.findFirst({
+      where: { userId: Number(userId) },
+    });
+    res.status(200).json(extraSlots);
+  }
+  catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
 }
 
 export const updateRoomNo = async (req: Request, res: Response): Promise<void> => {

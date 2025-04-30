@@ -166,7 +166,7 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+            let success_message = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);

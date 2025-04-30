@@ -8,7 +8,7 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Install app dependencies
-RUN npm install
+RUN npm install && npm rebuild bcrypt --build-from-source
 
 # Copy the rest of the application code
 COPY . .
@@ -19,8 +19,9 @@ RUN npx prisma generate
 # Compile TypeScript code
 RUN npm run build
 
-# Reinstall bcrypt to ensure native bindings are compiled for Linux
-RUN npm rebuild bcrypt --build-from-source
+ENV PRISMA_ENABLE_TRACING=true
+ENV PRISMA_LOG_LEVEL=query
+ENV RUST_BACKTRACE=full
 
 # Expose the port that the app runs on
 EXPOSE 3000

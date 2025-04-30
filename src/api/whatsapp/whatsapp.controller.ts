@@ -131,8 +131,8 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       to: doctorPhoneNumber, // Recipient's WhatsApp number
       type: "template", // Type of the message
       message: {
-        templateid: "751453", // Replace with the actual template ID
-        placeholders: [doctorName, status, patientName, formatDateYear(new Date(date)), time], // Dynamic placeholders
+        templateid: "774273", // Replace with the actual template ID
+        placeholders: [doctorName, status, patientName, time,formatDateYear(new Date(date))], // Dynamic placeholders
       },
     }
     let patientPayload = {}
@@ -142,21 +142,37 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
         to: patientPhoneNumber,
         type: "template",
         message: {
-          templateid: "750561", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
+          templateid: "774273", // Replace with the actual template ID
+          placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
         },
       };
       const patientResponse = await axios.post(url!, patientPayload, { headers });
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
-    } else {
+    }
+    else if(status === 'cancelled'){
+      patientPayload = {
+        from: fromPhoneNumber,
+        to: patientPhoneNumber,
+        type: "template",
+        message: {
+          templateid: "790519", // Replace with the actual template ID
+          placeholders: [patientName, doctorName, time, formatDateYear(new Date(date))], // Dynamic placeholders
+        },
+      };
+      const patientResponse = await axios.post(url!, patientPayload, { headers });
+      res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
+
+    }
+     else {
       patientPayload = {
         from: fromPhoneNumber,
         to: patientPhoneNumber,
         type: "template",
         message: {
           templateid: "751725", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
+          placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
         },
+
       };
       const patientResponse = await axios.post(url!, patientPayload, { headers });
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
@@ -320,7 +336,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "751379", // Replace with the actual template ID
-            placeholders: [name, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
+            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
           },
         };
 
@@ -345,7 +361,8 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${name}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+            // let success_message = `Namaste ${name}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${name}, This is a gentle reminder regarding your appointment with ${appointment.doctorName} scheduled at ${appointment.time} on ${formatDateYear(new Date(appointment.date))}. Kindly note that this is an indicative time and the actual appointment time may vary. Please contact 9742020123 for any further assistance. Regards, Team Rashtrotthana.`
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -502,7 +519,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "751381", // Replace with the actual template ID
-            placeholders: [name, appointment.doctorName, formatDateYear(new Date(appointment.date)), appointment.time], // Dynamic placeholders
+            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date)) ], // Dynamic placeholders
           },
         };
 
@@ -528,7 +545,8 @@ export const checkAndSendReminders = async () => {
             const apiKey = process.env.SMS_API_KEY;
             const apiUrl = process.env.SMS_API_URL;
             const sender = process.env.SMS_SENDER;
-            let success_message = `Namaste ${name}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+            // let success_message = `Namaste ${name}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+            let success_message = `Namaste ${name},This is a gentle reminder regarding your appointment with ${appointment.doctorName} that is scheduled for today ${appointment.time}  on ${formatDateYear(new Date(appointment.date))}.Please note:1. Kindly arrive at least 10 minutes prior to complete the registration process.2. Your appointment may be delayed if the doctor is handling an emergency.Thank you for your cooperation.Regards,Team Rashtrotthana`
             const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
             const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
             const responseofcomplete = await axios.get(urlforComplete);
@@ -834,7 +852,7 @@ export const timeNineRemainder = async (req: Request, res: Response) => {
     // Run the required tasks
     // await markComplete()
     await sendDoctorMessage();
-    await ScreenshotController.captureDashboard();
+    // await ScreenshotController.captureDashboard();
     // Send a response back to Cloud Scheduler
     res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
   } catch (error) {
@@ -852,7 +870,8 @@ export const timeElevenRemainder = async (req: Request, res: Response) => {
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
     // Run the required tasks
-    await markComplete()
+    await markComplete();
+    await markCompleteRadio();
 
     // Send a response back to Cloud Scheduler
     res.status(200).json({ message: 'Hourly task executed successfully', time: currentIST.format('YYYY-MM-DD HH:mm:ss') });
@@ -1078,7 +1097,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         type: "template", // Message type
         message: {
           templateid: "751387", // Template ID
-          placeholders: [name, packageName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+          placeholders: [name, packageName, appointmentStatus, appointmentTime , formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
     }
@@ -1153,7 +1172,7 @@ export const sendRadiologyMessage = async (req: Request, res: Response) => {
         type: "template", // Message type
         message: {
           templateid: "765787", // Template ID
-          placeholders: [name, radioServiceName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+          placeholders: [name, radioServiceName, appointmentStatus, appointmentTime ,formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
     }
@@ -1321,7 +1340,89 @@ export const markComplete = async () => {
           const apiKey = process.env.SMS_API_KEY;
           const apiUrl = process.env.SMS_API_URL;
           const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+
+          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+            successMessage
+          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+
+          const smsResponse = await axios.get(smsUrl);
+          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+        } catch (error) {
+          console.error(
+            'Failed to send WhatsApp or SMS:',
+            (error as any).response ? (error as any).response.data : (error as any).message
+          );
+        }
+      })
+    );
+
+    // res.status(200).json({ message: 'Appointments marked as complete and notifications sent' });
+  } catch (error) {
+    console.error('Error marking complete:', error);
+    // res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const markCompleteRadio = async () => {
+  try {
+    // Get current Indian time
+    const indianTime = moment().tz('Asia/Kolkata');
+    const indianDate = indianTime.format('YYYY-MM-DD'); // Format as YYYY-MM-DD
+
+    // Find appointments for today where `checkedOut` is true
+    const checkedOutAppointments = await prisma.serviceAppointments.findMany({
+      where: {
+        appointmentDate: indianDate, // Appointments for today
+        checkedOut: true, // Only checked out appointments
+        appointmentStatus: 'confirmed'
+      },
+    });
+
+    if (checkedOutAppointments.length === 0) {
+      console.log('No appointments found for today with checkedOut: true');
+      // res.status(200).json({ message: 'No appointments to process' });
+      return;
+    }
+
+    // Update the status of these appointments to "Complete"
+    await Promise.all(
+      checkedOutAppointments.map(async (appointment) => {
+        await prisma.serviceAppointments.update({
+          where: { id: appointment.id },
+          data: { appointmentStatus: 'completed' },
+        });
+
+        console.log(`Marked appointment ${appointment.id} as Complete`);
+
+        // Send WhatsApp message
+        const url = process.env.WHATSAPP_API_URL;
+        const headers = {
+          'Content-Type': 'application/json',
+          apikey: process.env.WHATSAPP_AUTH_TOKEN,
+        };
+        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+        const whatsappPayload = {
+          from: fromPhoneNumber,
+          to: appointment.phoneNumber, // Patient's phone number
+          type: 'template',
+          message: {
+            templateid: '751385', // Replace with your actual template ID
+            placeholders: [], // Add dynamic placeholders here if needed
+          },
+        };
+
+        try {
+          await axios.post(url!, whatsappPayload, { headers });
+          console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
+
+          // If WhatsApp message is successful, send SMS
+          const apiKey = process.env.SMS_API_KEY;
+          const apiUrl = process.env.SMS_API_URL;
+          const sender = process.env.SMS_SENDER;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
           const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
           const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
@@ -1381,7 +1482,7 @@ export const updateEstimation = async () => {
         let updatedStatus = estimation.statusOfEstimation;
         if (
           (estimatedDate && estimatedDate < currentDate) || // Condition 1: Estimated date is past today
-          (estimation.estimationType !== "Maternity" && estimation.statusOfEstimation === "approved" && ageBucket > 20) // Condition 2: Approved & 20+ days old
+          (estimation.estimationType !== "Maternity" && estimation.statusOfEstimation === "accepted" && ageBucket > 20) // Condition 2: Approved & 20+ days old
         ) {
           if (estimation.statusOfEstimation !== "completed" && estimation.statusOfEstimation !== "cancelled") {
             updatedStatus = "overDue";
@@ -1726,7 +1827,7 @@ export const individualComplete = async (req: Request, res: Response) => {
           const apiKey = process.env.SMS_API_KEY;
           const apiUrl = process.env.SMS_API_URL;
           const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
           const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
           const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
@@ -1871,9 +1972,13 @@ export const cancelExpiredAppointments = async () => {
         from: fromPhoneNumber,
         to: phoneNumber, // Patient's WhatsApp number
         type: "template",
+        // message: {
+        //   templateid: "751725", // Replace with actual template ID
+        //   placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time],
+        // },
         message: {
-          templateid: "751725", // Replace with actual template ID
-          placeholders: [patientName, doctor?.name || "Doctor", "cancelled", formatDateYear(new Date(date)), time],
+          templateid: "790519", // Replace with the actual template ID
+          placeholders: [patientName, doctor?.name, time, formatDateYear(new Date(date))], // Dynamic placeholders
         },
       };
 
@@ -1973,7 +2078,7 @@ export const doctorAvailability = async (req: Request, res: Response) => {
     // Log the current IST time
     console.log(`Cloud Scheduler task triggered at (IST): ${currentIST.format('YYYY-MM-DD HH:mm:ss')}`);
 
-    await cancelExpiredAppointments();
+    // await cancelExpiredAppointments();
     await checkDoctorAvailability();
 
     // Send a response back to Cloud Scheduler
@@ -2135,7 +2240,8 @@ async function checkDoctorAvailability() {
 
 
       // const adminPhoneNumbers = ["919880544866", "916364833988"]
-      const adminPhoneNumbers = ["919342287945", "919342287945"];
+      const adminPhoneNumbers = ["919342287945", "919342003000"];
+      
       const now = moment().tz("Asia/Kolkata").toDate();
 
       const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
@@ -2410,7 +2516,7 @@ async function checkPatientWaitingTime() {
 
 
           // Step 7: Send WhatsApp notifications to Admins & Doctor
-          const adminPhoneNumbers = ['919342287945', '919342287945']; // Admin List
+          const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
           // const adminPhoneNumbers = ["919880544866", "916364833988"]
           const adminsToSend = Array.isArray(adminPhoneNumbers)
             ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
@@ -2719,7 +2825,7 @@ async function updateDoctorAssignments() {
       });
 
       // ✅ Assign **up to 3 doctors** dynamically
-      const doctorsToAssign = assignedDoctors.slice(0, 3); // Take only the first 3 doctors
+      const doctorsToAssign = assignedDoctors; // Take only the first 3 doctors
 
       if (doctorsToAssign.length > 0) {
         console.log(`✅ Assigning ${doctorsToAssign.length} doctors to Channel ${channel.name} (Room ${channel.roomNumber})`);

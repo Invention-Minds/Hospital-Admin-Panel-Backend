@@ -365,10 +365,13 @@ export const getAvailableSlots = async (req: Request, res: Response): Promise<vo
         appointmentDate: date as string, // Direct bookings for the date
         radioServiceId: packageIdParsed, // Specific package
       },
-      select: { appointmentTime: true },
+      select: { appointmentTime: true, appointmentStatus: true },
     });
 
-    const bookedTimes = bookedAppointments.map((appt) => appt.appointmentTime);
+
+    const bookedTimes = bookedAppointments
+      .filter((appt) => appt.appointmentStatus !== 'Cancel')
+      .map((appt) => appt.appointmentTime);
     console.log('Booked times:', bookedTimes, bookedAppointments);
     // Exclude booked times from allSlots
     const availableSlots = allSlots.filter((slot) => !bookedTimes.includes(slot));
@@ -520,7 +523,7 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
           const apiKey = process.env.SMS_API_KEY;
           const apiUrl = process.env.SMS_API_URL;
           const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. If you have any queries or need further assistance, feel free to reach out. Wishing you good health!`;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
           const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
           const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
@@ -566,3 +569,36 @@ export const getAppointmentByServiceId = async (req: Request, res: Response): Pr
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
+export const getDetailsByPRN = async(req: Request, res: Response): Promise<void>=> {
+  try {
+    const { prnNumber } = req.body;
+
+    if (!prnNumber) {
+      res.status(400).json({ message: 'PNR number is required' });
+      return;
+    }
+
+
+
+    const serviceAppointments = await prisma.serviceAppointments.findMany({
+      where: { pnrNumber: prnNumber },
+      include: {  RadioService: true }
+    });
+
+    const services = await prisma.service.findMany({
+      where: { pnrNumber: prnNumber },
+      include: { repeatedDates: true, package: true, RadioService: true }
+    });
+
+    
+
+    res.json({
+      serviceAppointments: serviceAppointments,
+      services: services,
+    });
+
+  } catch (error) {
+    console.error('Error fetching data by PRN:', error);
+    res.status(500).json({ message: 'Internal server error', error });
+  }
+};

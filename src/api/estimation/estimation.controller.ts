@@ -151,8 +151,9 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         console.log(estimationId)
         const payload = {
             from: fromPhoneNumber,
-            // to: ["919844171700", "916364833989", "918904943659"], // Recipient's WhatsApp number
+            // to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
             to: ["919342287945"],
+            // to:['919342003000'],
             type: "template",
             message: {
                 templateid: "739377", // Use your actual template ID // Extracts PDF name
@@ -185,8 +186,9 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 console.log(estimationId)
                 const payload = {
                     from: fromPhoneNumber,
-                    // to: ["919844171700", "916364833989", "918904943659"], // Recipient's WhatsApp number
+                    // to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
                     to: ["919342287945"],
+                    // to:['919342003000'],
                     type: "template",
                     message: {
                         templateid: "739341", // Use your actual template ID // Extracts PDF name
@@ -277,7 +279,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             selectedRoomCost,
             patientRemarks,
             staffRemarks,
-            patientEmail
+            patientEmail,
+            submittedDateAndTime
         } = updateFields;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -346,7 +349,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 selectedRoomCost,
                 patientRemarks,
                 staffRemarks,
-                patientEmail
+                patientEmail,
+                submittedDateAndTime: new Date()
             },
         });
 
@@ -447,19 +451,49 @@ export const updateEstimationDetails = async (req: Request, res: Response) => {
                 })),
             });
         }
-        const newNotification = await prisma.notification.create({
-            data: {
+        if (updateFields.statusOfEstimation === 'rejected') {
+            try {
+                const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+                const url = process.env.WHATSAPP_API_URL;
+                console.log(existingEstimation.patientName)
+                const payload = {
+                    from: fromPhoneNumber,
+                    to: existingEstimation.patientPhoneNumber, // Recipient's WhatsApp number
+                    type: "template",
+                    message: {
+                        templateid: "796857",  // Ensure this template ID is valid for Admins
+                        placeholders: [existingEstimation.patientName],
+                    },
+                };
 
-                type: 'estimation_request',
-                title: 'Estimation Submitted for Approval',
-                message: `An estimation is currently awaiting approval. Please review and approve the details.`,
-                entityType: 'estimation',
-                isCritical: false,
-                targetRole: 'admin',
-            },
-        });
-        console.log("New Notification:", newNotification);
-        notifyPendingAppointments(newNotification);
+                const headers = {
+                    "Content-Type": "application/json",
+                    apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
+                };
+
+                const response = await axios.post(url!, payload, { headers });
+
+
+            } catch (error) {
+                console.error("❌ WhatsApp API Error:", error);
+                throw error;
+            }
+        }
+        if (existingEstimation.statusOfEstimation === 'submitted') {
+            const newNotification = await prisma.notification.create({
+                data: {
+
+                    type: 'estimation_request',
+                    title: 'Estimation Submitted for Approval',
+                    message: `An estimation is currently awaiting approval. Please review and approve the details.`,
+                    entityType: 'estimation',
+                    isCritical: false,
+                    targetRole: 'admin',
+                },
+            });
+            console.log("New Notification:", newNotification);
+            notifyPendingAppointments(newNotification);
+        }
 
         res.status(200).json({
             message: 'Estimation updated successfully',
@@ -535,8 +569,6 @@ export const updateAdvanceDetails = async (req: Request, res: Response) => {
             data: {
                 advanceAmountPaid,
                 receiptNumber,
-                statusOfEstimation: 'confirmed',
-                confirmedDateAndTime: new Date()
             },
         });
 
@@ -572,7 +604,8 @@ export const markComplete = async (req: Request, res: Response) => {
             where: { estimationId },
             data: {
                 statusOfEstimation: 'completed',
-                completedDateAndTime: new Date()
+                completedDateAndTime: new Date(),
+                messageSent: true,
             },
 
         });
@@ -688,7 +721,9 @@ export const updatePACDone = async (req: Request, res: Response) => {
             data: {
                 pacDone: true,
                 pacAmountPaid: updateFields.pacAmountPaid,
-                pacReceiptNumber: updateFields.pacReceiptNumber
+                pacReceiptNumber: updateFields.pacReceiptNumber,
+                statusOfEstimation: 'confirmed',
+                confirmedDateAndTime: new Date()
             }
 
         });
@@ -701,6 +736,35 @@ export const updatePACDone = async (req: Request, res: Response) => {
     }
 }
 
+export const estConfirm = async (req: Request, res: Response) => {
+    try {
+        const { estimationId } = req.params; // Get estimationId from URL params
+        const { updateFields } = req.body;
+        console.log(updateFields.pacAmountPaid, updateFields.pacReceiptNumber)
+        const existingEstimation = await prisma.estimationDetails.findUnique({
+            where: { estimationId },
+        });
+
+        if (!existingEstimation) {
+            res.status(404).json({ message: "Estimation not found" });
+            return
+        }
+        const updatedEstimation = await prisma.estimationDetails.update({
+            where: { estimationId },
+            data: {
+                statusOfEstimation: 'confirmed',
+                confirmedDateAndTime: new Date()
+            }
+
+        });
+        res.status(200).json(updatedEstimation);
+
+
+    } catch (error) {
+        console.error("Error updating complete estimation details:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+}
 async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
     const client = new Client();
     client.ftp.verbose = true; // Optional: Logs FTP operations
@@ -710,8 +774,8 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
         console.log("Connected to FTP Server!");
 
         // Ensure the "pdfs" directory exists
-        // await client.ensureDir("/docminds/pdfs");
-        await client.ensureDir("/docminds/demo_pdfs");
+        await client.ensureDir("/docminds/pdfs");
+        // await client.ensureDir("/docminds/demo_pdfs");
 
         // Upload the file
         await client.uploadFrom(localFilePath, remoteFilePath);
@@ -1122,7 +1186,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             patientPhoneNumber, signatureOf, implants, procedures, instrumentals,
             surgeryPackage, attenderName, patientRemarks, multipleEstimationCost,
             costForGeneral, costForPrivate, costForSemiPrivate, costForVip,
-            costForDeluxe, costForPresidential, selectedRoomCost
+            costForDeluxe, costForPresidential, selectedRoomCost, estimationCreatedTime,
+            submittedDateAndTime
         } = updateFields;
         const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
@@ -1135,6 +1200,11 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const poppinsFontPath = path.join(__dirname, '../../assets/Poppins-Regular.ttf');
         const poppinsMedium = path.join(__dirname, '../../assets/Poppins-Medium.ttf');
         const poppinsSemiBold = path.join(__dirname, '../../assets/Poppins-SemiBold.ttf')
+
+        doc.registerFont("PoppinsRegular", poppinsFontPath);
+        doc.registerFont("PoppinsMedium", poppinsMedium);
+        //         doc.registerFont("Poppins-Medium", poppinsMedium);
+        doc.registerFont("PoppinsSemiBold", poppinsSemiBold)
         function addBackground(doc: any) {
             doc.image(backgroundImagePath, 0, 0, { width: 595, height: 842 });
             doc.y = 170; // Ensure text starts below header
@@ -1144,53 +1214,45 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             if (doc.y + additionalSpace > 700) {
                 doc.addPage();
                 addBackground(doc);
+                addCreatedAtFooter(doc);
             }
         }
+        function addCreatedAtFooter(doc: any) {
+            const date = estimationPreferredDate ? new Date(estimationCreatedTime) : new Date(submittedDateAndTime);
+            const createdAt = date.toLocaleDateString('en-GB', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+
+            const text = `EST Created at: ${createdAt}`;
+            const x = doc.page.width - 150;
+            const y = doc.page.height - 30; // ✅ Safely away from margin
+
+            // Use text with { continued: false, lineBreak: false } to avoid page break
+            doc.save(); // Save current graphic state
+            doc.fontSize(10)
+                .fillColor('black')
+                .font('PoppinsRegular')
+                .text(text, x, y, { lineBreak: false });
+            doc.restore(); // Restore original state
+        }
+
 
         doc.on('pageAdded', () => {
             addBackground(doc);
+            addCreatedAtFooter(doc);
         });
 
         addBackground(doc);
+        addCreatedAtFooter(doc);
 
         // Position text inside background fields
         doc.fontSize(12).fillColor("black");
 
-        // Register Fonts
-        // const poppinsRegular = path.join(__dirname, '../../assets/Poppins-Regular.ttf');
-        // const poppinsBold = path.join(__dirname, '../../assets/Poppins-SemiBold.ttf');
-        doc.registerFont("PoppinsRegular", poppinsFontPath);
-        doc.registerFont("PoppinsMedium", poppinsMedium);
-        //         doc.registerFont("Poppins-Medium", poppinsMedium);
-        doc.registerFont("PoppinsSemiBold", poppinsSemiBold)
-
-        // Title
-        // doc.text(`Estimation Id:${estimationId || "N/A"}`, 432, 88)
-        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`Patient Information: `, 30, 100);
-        // doc.font("PoppinsRegular").text(`UHID: ${patientUHID || "N/A"}`, 100, 126);
-        // doc.text(`Name: ${patientName || "N/A"}`, 100, 150);
-        // doc.text(`Age: ${ageOfPatient || "N/A"}`, 382, 126);
-        // doc.text(`Gender: ${genderOfPatient || "N/A"}`, 380, 150);
-
-        // checkPageSpace(doc, 50);
-
-        // // Consultant Information
-        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`Consultant Information: `, 30, 170);
-        // doc.text(`Doctor Name:${consultantName || "N/A"}`, 150, 196);
-        // doc.text(`Preferred Date: ${estimationPreferredDate || "N/A"}`, 422, 196);
-        // doc.text(`Estimation Name: ${estimationName || "N/A"}`, 148, 220);
-
-        // // Stay Details
-        // doc.text(` ${icuStay || "N/A"}`, 412, 248);
-        // doc.text(`${wardStay || "N/A"}`, 540, 248);
-        // doc.text(`${totalDaysStay || "N/A"}`, 306, 248);
-        // checkPageSpace(doc, 50);
-        // Title: Estimation Form
         doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(18)
             .text(`ESTIMATION FORM`, 30, 90, { align: "left" });
 
-        // Estimation ID aligned correctly on the right
-        // Set text position
         const estIdText = `EST.ID: ${estimationId || "N/A"}`;
         const estIdX = 380; // X-position
         const estIdY = 90;  // Y-position
@@ -1198,7 +1260,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // Draw the text
         doc.fillColor("black").font("PoppinsRegular").fontSize(12).text(estIdText, estIdX, estIdY);
 
-        // Measure text width to draw underline dynamically
+
         const textWidth = doc.widthOfString(estIdText);
         const textHeight = doc.heightOfString(estIdText);
 
@@ -1232,9 +1294,9 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         doc.text(`DOCTOR NAME:`, 30, 215);
         doc.text(`${consultantName.toUpperCase() || "N/A"}`, 126, 215);
-        const formattedPreferDate = estimationPreferredDate 
-        ? new Date(estimationPreferredDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) 
-        : "N/A";
+        const formattedPreferDate = estimationPreferredDate
+            ? new Date(estimationPreferredDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : "N/A";
         console.log(formattedPreferDate)
         doc.text(`PREFERRED DATE:`, 300, 215);
         doc.text(`${formattedPreferDate || "N/A"}`, 400, 215);
@@ -1243,23 +1305,22 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         doc.text(`${estimationName.toUpperCase() || "N/A"}`, 140, 235);
 
         // Stay Details
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXPECTED NO. OF DAYS STAY:`, 30, 260);
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXPECTED NO. OF DAYS STAY:`, 30, doc.y + 20);
         doc.fillColor("black").font("PoppinsRegular").fontSize(12);
 
-        doc.text(`TOTAL NO. OF DAYS:`, 30, 280);
-        doc.text(`${totalDaysStay || "N/A"}`, 160, 280);
+        const lineY = doc.y + 10;
+        doc.text(`TOTAL NO. OF DAYS:`, 30, lineY);
+        doc.text(`${totalDaysStay || "N/A"}`, 160, lineY);
 
-        doc.text(`ICU STAY:`, 250, 280);
-        doc.text(`${icuStay || "N/A"}`, 320, 280);
+        doc.text(`ICU STAY:`, 250, lineY);
+        doc.text(`${icuStay || "N/A"}`, 320, lineY);
 
-        doc.text(`WARD STAY:`, 400, 280);
-        doc.text(`${wardStay || "N/A"}`, 480, 280);
+        doc.text(`WARD STAY:`, 400, lineY);
+        doc.text(`${wardStay || "N/A"}`, 480, lineY);
 
         checkPageSpace(doc, 50);
 
-        // Room Type
-        // doc.fontSize(10).text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 43, 270);
-        // Define available cost fields
+
         const costFields = {
             General: costForGeneral,
             Private: costForPrivate,
@@ -1273,50 +1334,102 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const estimationNames = estimationName ? estimationName.split(',') : [];
 
         // Adjust initial position for displaying room costs
-        let yPosition = 300;
+        let yPosition = doc.y + 10;
         let index = 0; // Index for numbering room types
+
+        // Object.entries(costFields).forEach(([key, value]) => {
+        //     if (value) {
+        //         const costs = value.split(','); // Split costs by comma
+
+        //         // Assign surgery names or default cost labels
+        //         const formattedCosts = costs.map((cost: any, costIndex: any) => {
+        //             let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim().trim().toUpperCase() : `Cost ${costIndex + 1}`;
+        //             return `${surgeryLabel} cost: ₹${cost.trim()}`;
+        //         });
+
+        //         doc.fillColor("#0098A3").font('PoppinsSemiBold').text(`${key.toUpperCase()} WARD:`, 43, yPosition, { continued: false });
+
+        //         // Set font to semi-bold before printing surgery labels
+        //         doc.font('PoppinsSemiBold'); // Use a semi-bold font
+        //         doc.fillColor("black").text(formattedCosts.join(', ').toUpperCase(), 180, yPosition, {
+        //             continued: false,
+        //             width: 350, // Width for wrapping
+        //             lineGap: 4, // Add spacing between lines if needed
+        //         });
+        //         yPosition += 15; // Move to next line for the next room type
+
+        //         index++; // Increment index for room type numbering
+        //     }
+        // });
 
         Object.entries(costFields).forEach(([key, value]) => {
             if (value) {
-                const costs = value.split(','); // Split costs by comma
+                const costs = value.split(',');
 
-                // Assign surgery names or default cost labels
                 const formattedCosts = costs.map((cost: any, costIndex: any) => {
-                    let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim().trim().toUpperCase() : `Cost ${costIndex + 1}`;
-                    return `${surgeryLabel} cost: ₹${cost.trim()}`;
+                    let surgeryLabel = estimationNames[costIndex]?.trim()?.toUpperCase() || `Cost ${costIndex + 1}`;
+                    return `${surgeryLabel} COST: ₹${cost.trim()}`;
                 });
 
-                doc.fillColor("#0098A3").font('PoppinsSemiBold').text(`${key.toUpperCase()} WARD:`, 43, yPosition, { continued: false });
+                const labelText = `${key.toUpperCase()} WARD:`;
+                const costText = formattedCosts.join(', ').toUpperCase();
 
-                // Set font to semi-bold before printing surgery labels
-                doc.font('PoppinsSemiBold'); // Use a semi-bold font
-                doc.fillColor("black").text(formattedCosts.join(', ').toUpperCase(), 180, yPosition, { continued: false });
-                yPosition += 15; // Move to next line for the next room type
+                // Draw the ward label first
+                doc.fillColor("#0098A3").font('PoppinsSemiBold').text(labelText, 43, yPosition, {
+                    continued: false
+                });
 
-                index++; // Increment index for room type numbering
+                // Measure the height of the cost block before drawing
+                const costHeight = doc.heightOfString(costText, {
+                    width: 350,
+                    lineGap: 4
+                });
+
+                // Draw the cost text with proper wrapping
+                doc.font('PoppinsSemiBold').fillColor("black").text(costText, 180, yPosition, {
+                    width: 350,
+                    lineGap: 4
+                });
+
+                // ✅ Increase yPosition based on actual height
+                yPosition += costHeight + 8;
             }
         });
 
 
-
         // doc.text(` ${costForGeneral || "N/A"}`, 43, 275);
-        doc.fontSize(8).font('PoppinsRegular').text(`NOTE: THE COST OF THE ROOM INCLUDES DAILY NURSING AND DIET CHARGES`, 43, 365);
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`INCLUSION: `, 30, 375);
+        // doc.fontSize(8).font('PoppinsRegular').text(`NOTE: THE COST OF THE ROOM INCLUDES DAILY NURSING`, 43, doc.y + 20);
+        // Styled like second NOTE design
+        const nursingNoteY = doc.y + 20;
+        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
+            .text("NOTE:", 43, nursingNoteY, { continued: true });
+
+        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+            .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
+    
+        // Move Y down to avoid overlap with next content
+        doc.moveDown(1);
+        
+
+        // Update Y position
+        doc.moveDown(1);
+
+
+        let afterNoteY = doc.y;
+        console.log('note', afterNoteY)
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`INCLUSION: `, 30, afterNoteY + 10);
         checkPageSpace(doc, 50);
 
-        // Inclusions & Exclusions
-        // doc.text(`${inclusions.length > 0 ? inclusions.map((i: any) => i.description).join(", ") : "None"}`, 50, 426);
-        // doc.text(` ${exclusions.length > 0 ? exclusions.map((e: any) => e.description).join(", ") : "None"}`, 50, 516);
 
         const startX = 30;  // X position of first column
         const columnWidth = 150; // Space between columns
-        const startY = 395;
+        // const startY = 395;
+        let afterRoomCostY = doc.y;
+        console.log(afterRoomCostY)
+        const startY = afterRoomCostY + 10; // Calculate height based on the text
         const lineHeight = 20;
-        const columns = 4;
-        // function formatWithSpaces(text: string): string {
-        //     return text.replace(/([a-z])([A-Z])/g, '$1 $2'); // Insert space before uppercase letters
-        // }
-        // Split inclusions into 4 parts
+        const columns = 3;
+
         const itemsPerColumn = Math.ceil(inclusions.length / columns);
         const inclusionsColumns = [
             inclusions.slice(0, itemsPerColumn),
@@ -1326,9 +1439,27 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         ];
         let num = 1
         // Render inclusions in 4 columns
+        // inclusionsColumns.forEach((column, colIndex) => {
+        //     column.forEach((item: string, rowIndex: number) => {
+        //         if (item) { // Ensure item exists
+        //             const xPos = startX + (colIndex * columnWidth);
+        //             const yPos = startY + (rowIndex * lineHeight);
+        //             const formattedItem = formatWithSpaces(item);
+
+        //             doc.fontSize(10).fillColor("black").font('PoppinsRegular')
+        //                 .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
+
+        //             num++; // Increment global number
+
+        //         } else {
+        //             console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
+        //         }
+        //     });
+        // });.
+        let maxInclusionY = startY; // Initialize with starting Y
         inclusionsColumns.forEach((column, colIndex) => {
             column.forEach((item: string, rowIndex: number) => {
-                if (item) { // Ensure item exists
+                if (item) {
                     const xPos = startX + (colIndex * columnWidth);
                     const yPos = startY + (rowIndex * lineHeight);
                     const formattedItem = formatWithSpaces(item);
@@ -1336,26 +1467,30 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                     doc.fontSize(10).fillColor("black").font('PoppinsRegular')
                         .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
 
-                    num++; // Increment global number
-                } else {
-                    console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
+                    if (yPos > maxInclusionY) maxInclusionY = yPos; // Track the deepest Y used
+                    num++;
                 }
             });
         });
+
         checkPageSpace(doc, 50);
 
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, 455);
+        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, doc.y + 10);
+        const exclusionHeaderY = maxInclusionY + lineHeight + 10;
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, exclusionHeaderY);
+        // const startExclusionsY = doc.y + 5;
 
-        const startExclusionsY = 480;
+
+        const startExclusionsY = doc.y + 10;
         function formatWithSpaces(text: string): string {
             if (!text) return '';
-        
+
             // Insert spaces before uppercase letters (CamelCase handling)
             let formattedText = text.replace(/([a-z])([A-Z])/g, '$1 $2');
-        
+
             // Convert to uppercase to ensure case-insensitive replacements
             formattedText = formattedText.toUpperCase();
-        
+
             // Define replacements for specific terms
             const replacements: { [key: string]: string } = {
                 "LABORATORY IMAGING": "LABORATORY AND IMAGING",
@@ -1364,16 +1499,16 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                 "INSTRUMENT EQUIPMENT": "INSTRUMENTS",
                 "BEDSIDE PROCEDURE": "PROCEDURE"
             };
-        
+
             // Apply replacements
             Object.keys(replacements).forEach(key => {
                 formattedText = formattedText.replace(new RegExp(key, 'gi'), replacements[key]);
             });
-        
+
             return formattedText;
         }
-        
-        
+
+
         // Split exclusions into 4 parts
         const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
         const exclusionsColumns = [
@@ -1407,20 +1542,9 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const itemsStartY = startExclusionsY + (exclusionsPerColumn + 2) * lineHeight;
 
 
-        let dynamicY = 547;
+        // let dynamicY = doc.y +20;
 
-        // Add implants, procedures, and instruments dynamically
-        // doc.fontSize(12).text(`Implants: ${implants || "N/A"}`, 30, dynamicY);
-        // dynamicY += doc.heightOfString(`Implants: ${implants || "N/A"}`) + 5; // Move down based on text height
-
-        // doc.fontSize(12).text(`Procedures: ${procedures || "N/A"}`, 30, dynamicY);
-        // dynamicY += doc.heightOfString(`Procedures: ${procedures || "N/A"}`) + 5;
-
-        // doc.fontSize(12).text(`Instruments: ${instrumentals || "N/A"}`, 30, dynamicY);
-        // dynamicY += doc.heightOfString(`Instruments: ${instrumentals || "N/A"}`) + 5;
-
-        // doc.fontSize(12).text(`Patient Remarks: ${patientRemarks || "N/A"}`, 30, dynamicY);
-        // dynamicY += doc.heightOfString(`Patient Remarks: ${patientRemarks || "N/A"}`) + 10;
+        let dynamicY = itemsStartY + 20; // Start below the exclusions section
         const labelX = 30;   // X position for labels
         const valueX = 160;  // X position for values (aligned for all)
         const maxWidth = 500; // Adjust width to avoid wrapping issues
@@ -1445,57 +1569,44 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             doc.fillColor(valueColor).font("PoppinsRegular").fontSize(valueFontSize)
                 .text(` ${formatValueString(value)}`, valueX, yPosition, { width: maxWidth, align: "left" });
         };
+        const requiredSpace = 100; // Approx space needed for implants + procedures + instruments + remarks
+        const pageHeightThreshold = doc.page.height - 100;
+
+        if (dynamicY + requiredSpace > pageHeightThreshold) {
+            doc.addPage();
+            dynamicY = 80; // Reset top padding for new page
+        }
 
         // Draw content with perfect alignment and spacing
-        drawLabelValue("IMPLANTS:", implants.toUpperCase(), dynamicY);
+        drawLabelValue("IMPLANTS:", implants?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(implants).toUpperCase()) + 8; // Add spacing
 
-        drawLabelValue("PROCEDURES:", procedures.toUpperCase(), dynamicY);
+        drawLabelValue("PROCEDURES:", procedures?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(procedures).toUpperCase()) + 8;
 
-        drawLabelValue("INSTRUMENTS:", instrumentals.toUpperCase(), dynamicY);
+        drawLabelValue("INSTRUMENTS:", instrumentals?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(instrumentals).toUpperCase()) + 8;
 
-        drawLabelValue("PATIENT REMARKS:", patientRemarks.toUpperCase(), dynamicY);
+        drawLabelValue("PATIENT REMARKS:", patientRemarks?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(patientRemarks).toUpperCase()) + 10;
 
 
-
-
-
-        // Ensure there's enough space for the next section, and prevent overlaying
-        // checkPageSpace(doc, 50);
-
-
-        // Set color for "Surgery Procedure:" label
-        // doc.fillColor("#0098A3").font('Poppins-SemiBold').text("Surgery Procedure: ", 30, 605, { continued: true });
-
-        // Reset color for the dynamic value (surgeryPackage)
-        // doc.fillColor("black").font("Poppins-Regular").fontSize(12).text(`${surgeryPackage || "N/A"}`);
 
         if (surgeryPackage?.toLowerCase() === "multiple surgeries") {
             // doc.text(`Multiple Surgery Cost: ${multipleEstimationCost || "N/A"}`, 30, 625);
             doc.fontSize(12).text(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`, 30, dynamicY);
             dynamicY += doc.heightOfString(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`) + 10;
         }
-        // // Estimation Details
-        // doc.text(`Estimated Date: ${estimatedDate || "N/A"}`, 30, 645);
-        // // doc.text(`Discount: ${discountPercentage || ""}`, 300, 645);
-        // doc.text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 300, 645);
-        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12).text(`Estimation Cost: ${estimationCost || 0}`, 30, 670);
-        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12).text(`Total Cost: ${totalEstimationAmount || 0}`, 300, 670);
-        // checkPageSpace(doc, 50);
-        // doc.fontSize(12).text(`Estimated Date: ${estimatedDate || "N/A"}`, 30, dynamicY);
-        // dynamicY += doc.heightOfString(`Estimated Date: ${estimatedDate || "N/A"}`) + 5;
 
-        // // doc.text(`Discount: ${discountPercentage || ""}`, 300, dynamicY); // Uncomment if needed
-        // doc.text(`Selected Ward: ${selectedRoomCost || "N/A"}`, 300, dynamicY);
-        // dynamicY += doc.heightOfString(`Selected Ward: ${selectedRoomCost || "N/A"}`) ;
-        const formattedDate = estimatedDate 
-  ? new Date(estimatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) 
-  : "N/A";
+        if (dynamicY + requiredSpace > pageHeightThreshold) {
+            doc.addPage();
+            dynamicY = 80; // Reset top padding for new page
+        }
+        const formattedDate = estimatedDate
+            ? new Date(estimatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : "N/A";
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`ESTIMATED DATE: ${formattedDate  || "N/A"}`, 30, dynamicY, { continued: false });
+            .text(`ESTIMATED DATE: ${formattedDate || "N/A"}`, 30, dynamicY, { continued: false });
 
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
             .text(`SELECTED WARD: ${selectedRoomCost.toUpperCase() || "N/A"}`, 300, dynamicY); // Same Y-coordinate
@@ -1503,6 +1614,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // Now update dynamicY only once after both texts are placed
         dynamicY += doc.heightOfString(`ESTIMATED DATE: ${estimatedDate || "N/A"}`) + 10;
 
+        if (dynamicY + requiredSpace > pageHeightThreshold) {
+            doc.addPage();
+            dynamicY = 80; // Reset top padding for new page
+        }
         // Ensure space for cost details
         // checkPageSpace(doc, 50);
 
@@ -1516,82 +1631,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // Now update dynamicY only once after both texts are placed
         dynamicY += doc.heightOfString(`ESTIMATION COST: ${estimationCost || 0}`) + 10;
 
-        // Ensure there's enough space for the next section
-        // checkPageSpace(doc, 50);
 
-        //         // Signatures
-        // doc.fillColor("#213043").font("PoppinsMedium").text(`${signatureOf ? signatureOf.charAt(0).toUpperCase() + signatureOf.slice(1).toLowerCase() : "N/A"}`, 88, 696);
-        // // 📌 Signatures
-        // doc.moveDown(1);
-        // doc.font("PoppinsSemiBold").text("Signatures", { underline: true });
-
-        // await addImageFromBase64(doc, patientSign, 50, doc.y + 10, 60, 30, "Patient Signature");
-        // await addImageFromBase64(doc, employeeSign, 250, doc.y, 60, 30, "Employee Signature");
-        // await addImageFromBase64(doc, approverSign, 450, doc.y, 60, 30, "Approver Signature");
-        //         const noteText = `This estimation is prepared based on the details available at the time of the request. 
-        // Actual charges may vary depending on unforeseen circumstances or changes in the patient’s condition. 
-        // The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
-        // Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.`;
-
-        //         // Check if there's enough space before adding the note
-        //         if (dynamicY + 150 > doc.page.height - 100) {
-        //             doc.addPage();
-        //             dynamicY = 70; // Reset Y position for new page
-        //         }
-
-        //         // Add "Note" title
-        //         doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(12).text("Note:", 30, dynamicY, { continued: true });
-
-        //         // Add the note content
-        //         doc.fillColor("black").font("PoppinsRegular").fontSize(10).text(` ${noteText}`, 65, dynamicY, { width: 500, align: "justify" });
-
-        //         // Move Y position down after the note
-        //         dynamicY += doc.heightOfString(noteText) + 15;
-        //         if (dynamicY + 150 > doc.page.height - 100) {  // Adjusted condition to check available space
-        //             doc.addPage();
-        //             dynamicY = 50; // ✅ Reset Y position for new page properly
-        //         }
-
-        //         // Signature Section follows dynamically
-        //         const startYAxis = dynamicY + 20;
-        //         const signerLabel = signatureOf === "patient" ? "Signature of Patient" : "Signature of Attender";
-
-
-
-        //         // Signature Titles
-        //         doc.fillColor("#213043").font("PoppinsSemiBold").fontSize(12);
-        //         doc.text(signerLabel, 30, startYAxis);
-        //         doc.text("Signature of Staff", 230, startYAxis);
-        //         doc.text("Signature of Approver", 430, startYAxis);
-
-        //         // Signature Boxes
-        //         doc.rect(30, startYAxis + 20, 150, 50).stroke();  // Patient/Attender Box
-        //         doc.rect(230, startYAxis + 20, 150, 50).stroke(); // Staff Box
-        //         doc.rect(430, startYAxis + 20, 150, 50).stroke(); // Approver Box
-
-        //         // Add Signatures (Base64 Images)
-        //         await addImageFromBase64(doc, patientSign, 30, startYAxis + 20, 140, 40, signerLabel);
-        //         await addImageFromBase64(doc, employeeSign, 230, startYAxis + 20, 140, 40, "Staff Signature");
-        //         await addImageFromBase64(doc, approverSign, 430, startYAxis + 20, 140, 40, "Approver Signature");
-
-        //         doc.fillColor("#000000").font("PoppinsSemiBold").fontSize(12);
-        //         doc.text(signatureOf === "patient" ? patientName : attenderName || "N/A", 50, startYAxis + 75, { align: "center", width: 100 });
-        //         doc.text(employeeName || "N/A", 235, startYAxis + 75, { align: "center", width: 100 });
-        //         doc.text(approverName || "N/A", 440, startYAxis + 75, { align: "center", width: 100 });
-
-        //         // Name Labels Below Names
-        //         doc.font("PoppinsRegular").fontSize(10);
-        //         doc.text("Name :", 30, startYAxis + 85);
-        //         doc.text("Name :", 230, startYAxis + 85);
-        //         doc.text("Name :", 430, startYAxis + 85);
-
-        //         // Line Under Name Labels
-        //         doc.moveTo(70, startYAxis + 95).lineTo(180, startYAxis + 95).stroke(); // Line under Patient/Attender
-        //         doc.moveTo(270, startYAxis + 95).lineTo(395, startYAxis + 95).stroke(); // Line under Staff
-        //         doc.moveTo(470, startYAxis + 95).lineTo(605, startYAxis + 95).stroke(); // Line under Approver
-
-        //         // Move Down for Additional Content
-        //         doc.moveDown(2);
         const leftMargin = 30;   // Left-side margin
         const rightMargin = 550; // ✅ Reduce width to create right-side space
         const contentWidth = rightMargin - leftMargin; // Width of text with padding
@@ -1602,14 +1642,14 @@ Actual charges may vary depending on unforeseen circumstances or changes in the 
 The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
 Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.`;
 
-        // Check if there's enough space before adding the note
+        // // Check if there's enough space before adding the note
         if (dynamicY + 150 > doc.page.height - 100) {
             doc.addPage();
             dynamicY = 80; // Reset Y position for new page
         }
 
         // Add "Note" title with proper margins
-        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(12)
+        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
             .text("NOTE:", leftMargin, dynamicY, { continued: true });
 
         // Add the note content, ensuring right margin space
@@ -1646,10 +1686,10 @@ Please note that the cost will increase if the duration of the patient’s stay 
         await addImageFromBase64(doc, approverSign, leftMargin + 400, startYAxis + 20, 140, 40, "Approver Signature");
 
         // Add Names Below Signatures with proper spacing
-        doc.fillColor("#000000").font("PoppinsSemiBold").fontSize(12);
-        doc.text(signatureOf === "patient" ? patientName.toUpperCase() : attenderName.toUpperCase() || "N/A", leftMargin + 20, startYAxis + 75, { align: "center", width: 100 });
-        doc.text(employeeName.toUpperCase() || "N/A", leftMargin + 220, startYAxis + 75, { align: "center", width: 100 });
-        doc.text(approverName.toUpperCase() || "N/A", leftMargin + 420, startYAxis + 75, { align: "center", width: 100 });
+        doc.fillColor("#000000").font("PoppinsRegular").fontSize(10);
+        doc.text(signatureOf === "patient" ? patientName.toUpperCase() : attenderName.toUpperCase() || "N/A", leftMargin + 40, startYAxis + 85, { align: "left", width: 130, lineGap: 2 });
+        doc.text(employeeName.toUpperCase() || "N/A", leftMargin + 240, startYAxis + 85, { align: "left", width: 130, lineGap: 2 });
+        doc.text(approverName.toUpperCase() || "N/A", leftMargin + 440, startYAxis + 85, { align: "left", width: 130, lineGap: 2 });
 
         // Name Labels Below Names
         doc.font("PoppinsRegular").fontSize(10);
@@ -1657,10 +1697,10 @@ Please note that the cost will increase if the duration of the patient’s stay 
         doc.text("NAME :", leftMargin + 200, startYAxis + 85);
         doc.text("NAME :", leftMargin + 400, startYAxis + 85);
 
-        // Line Under Name Labels
-        doc.moveTo(leftMargin + 40, startYAxis + 95).lineTo(leftMargin + 140, startYAxis + 95).stroke(); // Line under Patient/Attender
-        doc.moveTo(leftMargin + 240, startYAxis + 95).lineTo(leftMargin + 340, startYAxis + 95).stroke(); // Line under Staff
-        doc.moveTo(leftMargin + 440, startYAxis + 95).lineTo(leftMargin + 540, startYAxis + 95).stroke(); // Line under Approver
+        // // Line Under Name Labels
+        // doc.moveTo(leftMargin + 40, startYAxis + 95).lineTo(leftMargin + 140, startYAxis + 95).stroke(); // Line under Patient/Attender
+        // doc.moveTo(leftMargin + 240, startYAxis + 95).lineTo(leftMargin + 340, startYAxis + 95).stroke(); // Line under Staff
+        // doc.moveTo(leftMargin + 440, startYAxis + 95).lineTo(leftMargin + 540, startYAxis + 95).stroke(); // Line under Approver
 
         // Move Down for Additional Content
         doc.moveDown(2);
@@ -1671,11 +1711,12 @@ Please note that the cost will increase if the duration of the patient’s stay 
 
 
         writeStream.on("finish", async () => {
-            // const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // rashtrotthana
-            const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //demo
+            const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
+            // const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
             console.log(remoteFilePath);
             await uploadToFTP(tempFilePath, remoteFilePath);
-            const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            // const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
             console.log(pdfUrl);
 
             // Save PDF details to the database (assuming you have a function for this)
@@ -1821,15 +1862,36 @@ export const lockService = async (req: Request, res: Response): Promise<void> =>
         }
 
         if (estimation.lockedBy && estimation.lockedBy !== userId) {
-            res.status(409).json({ message: 'Service is locked by another user' });
+            const lockedUser = await prisma.user.findUnique({
+                where: { id: estimation.lockedBy },
+                select: { username: true },
+            });
+
+            const rawUsername = lockedUser?.username || 'Unknown User';
+
+            // Regex to remove _admin, _subadmin, _superadmin, _doctor and everything after
+            const displayName = rawUsername.split(/_(admin|subadmin|superadmin|doctor)/)[0];
+
+            res.status(409).json({
+                message: `Service is currently locked by ${displayName}`,
+                lockedByUserId: estimation.lockedBy,
+                lockedByUsername: displayName
+            });
             return;
         }
 
+
+        // If already locked by the same user, allow update (or skip updating if needed)
+        if (estimation.lockedBy === userId) {
+            res.status(200).json(estimation); // or skip update
+            return;
+        }
         const lockedService = await prisma.estimationDetails.update({
             where: { id: serviceId },
             data: { lockedBy: userId },
         });
         res.status(200).json(lockedService);
+
     } catch (error) {
         console.error('Error locking service:', error);
         res.status(500).json({ message: 'Failed to lock service' });
@@ -1855,4 +1917,28 @@ export const unlockService = async (req: Request, res: Response): Promise<void> 
         res.status(500).json({ message: 'Failed to unlock service' });
     }
 };
-
+export const updateSurgeryDate = async (req: Request, res: Response) => {
+    try {
+      const {estimationId} = req.params;
+      const { statusOfEstimation, overDueDateAndTIme, estimatedDate } = req.body;
+  
+      if (!estimationId) {
+         res.status(400).json({ message: 'Estimation ID is required' });
+         return
+      }
+  
+      const updatedEstimation = await prisma.estimationDetails.update({
+        where: { estimationId: estimationId },
+        data: {
+          statusOfEstimation,
+          overDueDateAndTIme, // this will be set to null as you pass it
+          estimatedDate,
+        }
+      });
+  
+      res.status(200).json(updatedEstimation);
+    } catch (error) {
+      console.error('Error updating estimation:', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  };

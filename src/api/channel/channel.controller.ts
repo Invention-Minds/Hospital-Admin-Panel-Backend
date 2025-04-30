@@ -108,10 +108,10 @@ export const assignDoctorToChannel = async (req: Request, res: Response) => {
         where: { channelId },
       });
   
-      if (existingAssignments.length >= 4) {
-         res.status(400).json({ error: 'Channel already has 4 doctors' });
-         return;
-      }
+      // if (existingAssignments.length >= 4) {
+      //    res.status(400).json({ error: 'Channel already has 4 doctors' });
+      //    return;
+      // }
   
       // Assign the doctor to the channel
       const newAssignment = await prisma.doctorAssignment.create({

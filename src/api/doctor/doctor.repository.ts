@@ -27,11 +27,11 @@ export default class DoctorRepository {
       },
     });
   }
-  public async getDoctorAvailability(doctorId: number, day: string,date: string) {
+  public async getDoctorAvailability(doctorId: number, day: string, date: string) {
     // const day = this.getDayOfWeek(date);
     const usEasternTime = moment().tz('America/New_York');
     const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
-   
+
     // Store the date and time in two separate variables
     // const indianDate = indianTime;
     console.log("Fetching availability for doctorId:", doctorId, "on day:", day);
@@ -39,56 +39,68 @@ export default class DoctorRepository {
     const indianDate = indianTime.toDate();
     const isFuture = dateObject > indianDate
     const isToday = dateObject.toDateString() === indianDate.toDateString();
+    // return await prisma.doctorAvailability.findFirst({
+    //   where: {
+    //     doctorId,
+    //     day,
+
+    //     OR: [
+    //       {
+    //         updatedAt: null, // Include availability where updatedAt is null (for older records)
+    //       },
+    //       {
+    //         updatedAt: {
+    //           lte: dateObject, // Get availability updated on or before the requested date
+    //         },
+    //       },
+    //     ],
+    //   },
+    //   orderBy: {
+    //     // updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+    //     updatedAt: isToday ? 'desc' : 'asc',
+    //   },
+
+
+    // });
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
     return await prisma.doctorAvailability.findFirst({
       where: {
         doctorId,
         day,
-      //   OR: [
-      //     {
-      //       updatedAt: {
-      //         lte: dateObject, // Get availability up to the requested date
-      //       },
-      //     },
-      //     {
-      //       updatedAt: null, // Include availability where updatedAt is null (for older records)
-      //     },
-      //   ],
-      // },
-      // orderBy: {
-      //   updatedAt: 'desc', // Get the most recent availability record for that date
-      // },
-    //   OR: [
-    //     {
-    //       updatedAt: {
-    //         lte: dateObject, // Get availability up to the requested date
-    //       },
-    //     },
-    //     {
-    //       updatedAt: null, // Include availability where updatedAt is null (for older records)
-    //     },
-    //   ],
-    // },
-    // orderBy: {
-    //   updatedAt: isToday ? 'desc' : 'asc', // For today, get the most recent availability record; otherwise, get past availability
-    // },
- 
         OR: [
-          {
-            updatedAt: null, // Include availability where updatedAt is null (for older records)
-          },
-          {
-            updatedAt: {
-              lte: dateObject, // Get availability updated on or before the requested date
-            },
-          },
+          { updatedAt: null },
+          ...(isToday
+            ? [
+              {
+                updatedAt: {
+                  gte: startOfToday,
+                  lte: endOfToday,
+                },
+              },
+              {
+                updatedAt: {
+                  lte: dateObject,
+                },
+              },
+            ]
+            : [
+              {
+                updatedAt: {
+                  lte: dateObject,
+                },
+              },
+            ]),
         ],
       },
       orderBy: {
-        updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
+        updatedAt: 'desc',
       },
-    
-      
     });
+
   }
 
   // Method to find a specific doctor by ID
@@ -122,65 +134,65 @@ export default class DoctorRepository {
     });
   }
   // Method to add a booked slot to the BookedSlot model
-public async addBookedSlot(doctorId: number, date: string, time: string) {
-  console.log('Booked slot added successfully');
-  return await this.prisma.bookedSlot.create({
-    data: {
-      doctorId,
-      date,
-      time,
-      complete: false,
-    },
-  });
-  
-}
-public async completeBookedSlot(doctorId: number, date: string, time: string) {
-  return await this.prisma.bookedSlot.updateMany({
-    where: {
-      doctorId,
-      date,
-      time,
-    },
-    data: {
-      complete: true,  // Set complete to true
-    },
-  });
-}
-// Method to get booked slots for a specific doctor and date
-public async getBookedSlots(doctorId: number, date: string) {
-  return await this.prisma.bookedSlot.findMany({
-    where: {
-      doctorId,
-      date,
-    },
-  });
-}
-async getAvailableDoctorsCountForDate(date: string): Promise<number> {
-  return await prisma.doctor.count({
-    where: {
-      unavailableDates: {
-        none: {
-          date: new Date(date),
+  public async addBookedSlot(doctorId: number, date: string, time: string) {
+    console.log('Booked slot added successfully');
+    return await this.prisma.bookedSlot.create({
+      data: {
+        doctorId,
+        date,
+        time,
+        complete: false,
+      },
+    });
+
+  }
+  public async completeBookedSlot(doctorId: number, date: string, time: string) {
+    return await this.prisma.bookedSlot.updateMany({
+      where: {
+        doctorId,
+        date,
+        time,
+      },
+      data: {
+        complete: true,  // Set complete to true
+      },
+    });
+  }
+  // Method to get booked slots for a specific doctor and date
+  public async getBookedSlots(doctorId: number, date: string) {
+    return await this.prisma.bookedSlot.findMany({
+      where: {
+        doctorId,
+        date,
+      },
+    });
+  }
+  async getAvailableDoctorsCountForDate(date: string): Promise<number> {
+    return await prisma.doctor.count({
+      where: {
+        unavailableDates: {
+          none: {
+            date: new Date(date),
+          },
         },
       },
-    },
-  });
-}
-async getUnavailableDoctors(date: string): Promise<number[]> {
-  const unavailableDoctors = await prisma.unavailableDates.findMany({
-    where: { date: new Date(date) },
-    select: { doctorId: true },
-  });
-  console.log('Unavailable doctors:', unavailableDoctors);
-  return unavailableDoctors
-    .filter((doctor) => doctor.doctorId !== null)
-    .map((doctor) => doctor.doctorId as number);
-}
+    });
+  }
+  async getUnavailableDoctors(date: string): Promise<number[]> {
+    const unavailableDoctors = await prisma.unavailableDates.findMany({
+      where: { date: new Date(date) },
+      select: { doctorId: true },
+    });
+    console.log('Unavailable doctors:', unavailableDoctors);
+    return unavailableDoctors
+      .filter((doctor) => doctor.doctorId !== null)
+      .map((doctor) => doctor.doctorId as number);
+  }
 
-async getAvailableDoctorsCount(date: string): Promise<number> {
-  const unavailableDoctorIds = await this.getUnavailableDoctors(date);
-  const totalDoctorsCount = await prisma.doctor.count();
-  return totalDoctorsCount - unavailableDoctorIds.length;
-}
+  async getAvailableDoctorsCount(date: string): Promise<number> {
+    const unavailableDoctorIds = await this.getUnavailableDoctors(date);
+    const totalDoctorsCount = await prisma.doctor.count();
+    return totalDoctorsCount - unavailableDoctorIds.length;
+  }
 
 }
