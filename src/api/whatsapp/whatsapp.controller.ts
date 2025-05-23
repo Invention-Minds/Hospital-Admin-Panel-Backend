@@ -15,6 +15,7 @@ import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import { start } from 'repl';
 import { Console } from 'console';
+import { callRepeatedAppointments, processRepeatedAppointments } from '../services/services.controller';
 
 // import { utcToZonedTime, format } from 'date-fns-tz';
 dotenv.config();
@@ -41,58 +42,8 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
 
   // Message for Patient (regardless of the status)
   if (status !== 'received') {
-    // messages.push({
-    //     "coding": "1",
-    //     "id": "15b0cc79c0da45771662021",
-    //     "msgtype": "1",
-    //     "text": "",
-    //     "templateinfo": `1498900~${patientName}~${doctorName}~${status}~${date}~${time}`,
-    //     "type": "",
-    //     "contenttype": "",
-    //     "filename": "",
-    //     "mediadata": "",
-    //     "b_urlinfo": "",
-    //     "addresses": [
-    //         {
-    //             "seq": "6310710c80900d37f7b9-20220901",
-    //             "to": patientPhoneNumber,
-    //             "from": fromPhoneNumber,
-    //             "tag": ""
-    //         }
-    //     ]
-    // });
-    // payload = {
-    //     from: fromPhoneNumber,
-    //     to: patientPhoneNumber,
-    //     type: "template",
-    //     message: {
-    //       templateid: "751725", // Replace with the actual template ID
-    //       placeholders:[patientName, doctorName, status, date, time], // Dynamic placeholders
-    //     },
-    //   };
-    //   console.log(payload, 'payload for patient');
   }
   if (status === 'received') {
-    // messages.push({
-    //     "coding": "1",
-    //     "id": "15b0cc79c0da45771662022",
-    //     "msgtype": "1",
-    //     "text": "",
-    //     "templateinfo": `1495968~${patientName}~${doctorName}`,
-    //     "type": "",
-    //     "contenttype": "",
-    //     "filename": "",
-    //     "mediadata": "",
-    //     "b_urlinfo": "",
-    //     "addresses": [
-    //         {
-    //             "seq": "6310710c80900d37f7b9-20220902",
-    //             "to": patientPhoneNumber,
-    //             "from": fromPhoneNumber,
-    //             "tag": ""
-    //         }
-    //     ]
-    // });
     payload = {
       from: fromPhoneNumber, // Sender's WhatsApp number
       to: patientPhoneNumber, // Recipient's WhatsApp number
@@ -106,26 +57,6 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   }
   // Message for Doctor (only if the status is 'confirmed')
   if (status === 'confirmed' || status === 'cancelled' || status === 'rescheduled') {
-    // messages.push({
-    //     "coding": "1",
-    //     "id": "15b0cc79c0da45771662022",
-    //     "msgtype": "1",
-    //     "text": "",
-    //     "templateinfo": `1498899~${doctorName}~${status}~${patientName}~${date}~${time}`,
-    //     "type": "",
-    //     "contenttype": "",
-    //     "filename": "",
-    //     "mediadata": "",
-    //     "b_urlinfo": "",
-    //     "addresses": [
-    //         {
-    //             "seq": "6310710c80900d37f7b9-20220902",
-    //             "to": doctorPhoneNumber,
-    //             "from": fromPhoneNumber,
-    //             "tag": ""
-    //         }
-    //     ]
-    // });
     payload = {
       from: fromPhoneNumber, // Sender's WhatsApp number
       to: doctorPhoneNumber, // Recipient's WhatsApp number
@@ -183,26 +114,6 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     console.log(payload, 'payload for doctor');
   }
   if (status === 'completed') {
-    // messages.push({
-    //     "coding": "1",
-    //     "id": "15b0cc79c0da45771662022",
-    //     "msgtype": "1",
-    //     "text": "",
-    //     "templateinfo": `1489098`,
-    //     "type": "",
-    //     "contenttype": "",
-    //     "filename": "",
-    //     "mediadata": "",
-    //     "b_urlinfo": "",
-    //     "addresses": [
-    //         {
-    //             "seq": "6310710c80900d37f7b9-20220902",
-    //             "to": patientPhoneNumber,
-    //             "from": fromPhoneNumber,
-    //             "tag": ""
-    //         }
-    //     ]
-    // });
     payload = {
       from: fromPhoneNumber, // Sender's WhatsApp number
       to: patientPhoneNumber, // Recipient's WhatsApp number
@@ -214,16 +125,6 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     };
   }
 
-  // const data = {
-  //     "apiver": "1.0",
-  //     "whatsapp": {
-  //         "ver": "2.0",
-  //         "dlr": {
-  //             "url": ""
-  //         },
-  //         "messages": messages
-  //     }
-  // };
 
   try {
     const response = await axios.post(url!, payload, { headers });
@@ -2239,8 +2140,8 @@ async function checkDoctorAvailability() {
       console.log(firstAppointment)
 
 
-      // const adminPhoneNumbers = ["919880544866", "916364833988"]
-      const adminPhoneNumbers = ["919342287945", "919342003000"];
+      const adminPhoneNumbers = ["919880544866", "916364833988"]
+      // const adminPhoneNumbers = ["919342287945", "919342003000"];
       
       const now = moment().tz("Asia/Kolkata").toDate();
 
@@ -2516,8 +2417,8 @@ async function checkPatientWaitingTime() {
 
 
           // Step 7: Send WhatsApp notifications to Admins & Doctor
-          const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
-          // const adminPhoneNumbers = ["919880544866", "916364833988"]
+          // const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
+          const adminPhoneNumbers = ["919880544866", "916364833988"]
           const adminsToSend = Array.isArray(adminPhoneNumbers)
             ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
             : [];
@@ -2955,3 +2856,20 @@ export const sendRadioReportMessage = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+// cron.schedule("0 7 * * *", async () => {
+//   await updateEstimation();
+//   await processRepeatedAppointments();
+// });
+// cron.schedule("* 8-19 * * *",updateDoctorAssignments);
+// cron.schedule("0 21 * * *", sendDoctorMessage);
+// cron.schedule("0 * * * *", async () => {
+//   await checkAndSendReminders();
+//   await remainderForAdmin();
+//   await reminderForServices();
+// });
+// cron.schedule("0 23 * * *", async () => {
+//   await markComplete();
+//     await markCompleteRadio();
+// });
+// cron.schedule("50 15 * * *",markComplete);

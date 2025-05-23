@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate} from './estimation.controller';
+import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate, getFollowUpEstimations} from './estimation.controller';
 import {authenticateToken} from '../../middleware/middleware'
 
 const router = Router();
@@ -8,6 +8,7 @@ router.post('/',authenticateToken, createEstimation);  // Changed from '/departm
 router.get('/department/:departmentId/:estimationType', authenticateToken, getEstimationsByDepartment);
 router.post('/estimation-details', authenticateToken, createEstimationDetails);
 router.get('/',authenticateToken, getAllEstimationDetails);
+router.get('/estimation-details/followups', authenticateToken, getFollowUpEstimations);
 router.put('/estimation-details/:estimationId', authenticateToken, updateEstimationDetails);
 router.post('/estimations/:estimationId/follow-ups', authenticateToken,updateFollowUps);
 router.put("/estimation-details/:estimationId/advance", authenticateToken,updateAdvanceDetails);

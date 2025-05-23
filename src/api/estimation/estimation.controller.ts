@@ -151,8 +151,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         console.log(estimationId)
         const payload = {
             from: fromPhoneNumber,
-            // to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
-            to: ["919342287945"],
+            to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
+            // to: ["919342287945"],
             // to:['919342003000'],
             type: "template",
             message: {
@@ -186,8 +186,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 console.log(estimationId)
                 const payload = {
                     from: fromPhoneNumber,
-                    // to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
-                    to: ["919342287945"],
+                    to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
+                    // to: ["919342287945"],
                     // to:['919342003000'],
                     type: "template",
                     message: {
@@ -400,7 +400,6 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 };
-
 export const updateEstimationDetails = async (req: Request, res: Response) => {
     try {
         const { estimationId } = req.params;
@@ -774,8 +773,8 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
         console.log("Connected to FTP Server!");
 
         // Ensure the "pdfs" directory exists
-        await client.ensureDir("/docminds/pdfs");
-        // await client.ensureDir("/docminds/demo_pdfs");
+        // await client.ensureDir("/docminds/pdfs");
+        await client.ensureDir("/docminds/demo_pdfs");
 
         // Upload the file
         await client.uploadFrom(localFilePath, remoteFilePath);
@@ -1538,7 +1537,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                 }
             });
         });
-        checkPageSpace(doc, 50);
+        // checkPageSpace(doc, 50);
         const itemsStartY = startExclusionsY + (exclusionsPerColumn + 2) * lineHeight;
 
 
@@ -1711,12 +1710,12 @@ Please note that the cost will increase if the duration of the patient’s stay 
 
 
         writeStream.on("finish", async () => {
-            const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
-            // const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
+            // const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
+            const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
             console.log(remoteFilePath);
             await uploadToFTP(tempFilePath, remoteFilePath);
-            // const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
-            const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            // const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
             console.log(pdfUrl);
 
             // Save PDF details to the database (assuming you have a function for this)
@@ -1942,3 +1941,22 @@ export const updateSurgeryDate = async (req: Request, res: Response) => {
       res.status(500).json({ message: 'Internal server error' });
     }
   };
+export const getFollowUpEstimations = async (req: Request, res: Response) => {
+    try {
+        const estimationFollowUpDetails = await prisma.estimationDetails.findMany({
+            where: {
+                followUpDates: {
+                  some: {}
+                }
+              },
+            include: {
+                followUpDates: true
+            }
+        });
+
+        res.status(200).json(estimationFollowUpDetails);
+    } catch (error) {
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}

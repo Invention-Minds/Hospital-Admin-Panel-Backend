@@ -10,7 +10,9 @@ import {
     bulkUpdateAccepted,
     bulkUpdateCancel,
     getAppointmentByServiceId,
-    createNewAppointment
+    createNewAppointment,
+    getCheckinAppointments,
+    todayCheckedInAppointments
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -25,6 +27,8 @@ router.put('/bulk-update', bulkUpdateAppointments);
 router.put('/:id', authenticateToken, updateAppointment);
 router.delete('/:id', authenticateToken, deleteAppointment);
 router.get('/total', authenticateToken, getTotalAppointments);
+router.get('/check-in', authenticateToken, getCheckinAppointments);
+router.get('/today-checkin', authenticateToken, todayCheckedInAppointments);
 router.get('/pending', authenticateToken, getPendingAppointments);
 router.get('/by-user', authenticateToken, getAppointmentsByUser);
 // router.get('/by-role',authenticateToken,);

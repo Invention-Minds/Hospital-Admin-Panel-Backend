@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
+import compression from 'compression';
 
 import doctorRoutes from './api/doctor/doctor.routes';
 import departmentRoutes from './api/department/department.routes';
@@ -22,6 +23,10 @@ import extraSlotCountRoutes from './api/extraslots/extraslots.router';
 import adRoutes from './api/ad/ad.routes';
 import serviceRadiologyRoutes from './api/service-radiology/service-radiology.routes';
 import whatsappBotRoutes from './api/whatsapp-bot/whatsapp-bot.routes';
+import doctorNotesRoutes from './api/doctor-notes/doctor-notes.routes';
+import prescriptionRoutes from './api/prescription/prescription.routes';
+import historyRoutes from './api/history-notes/history-notes.routes';
+import investigationRoutes from './api/investigation/investigation.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -36,7 +41,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(cors({
-  origin: ['http://localhost:4200','https://rashtrotthanahosptial.netlify.app/', 'https://hosptial-admin-panel.netlify.app/','http://localhost:58679/','https://www.rashtrotthanahospital.com/','http://localhost:63904/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in'], 
+  origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in', 'http://192.168.9.139:4200/'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -60,6 +65,12 @@ app.use('/api/extraslot-count', extraSlotCountRoutes);
 app.use('/api/ads',adRoutes);
 app.use('/api/radiology',serviceRadiologyRoutes);
 app.use('/api/callback', whatsappBotRoutes);
+app.use('/api/doctor-notes',doctorNotesRoutes);
+app.use('/api/prescription', prescriptionRoutes);
+app.use('/api/history-notes', historyRoutes);
+app.use('/api/investigation', investigationRoutes);
+
+app.use(compression())
 
 // Sample route to check server status
 app.get('/', (req, res) => {

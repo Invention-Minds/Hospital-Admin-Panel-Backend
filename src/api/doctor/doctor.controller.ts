@@ -639,23 +639,23 @@ export const updateDoctor = async (req: Request, res: Response) => {
       });
     }
 
-    // Delete and recreate unavailable dates
-    await prisma.unavailableDates.deleteMany({
-      where: {
-        doctorId: Number(id),
-      },
-    });
+    // // Delete and recreate unavailable dates
+    // await prisma.unavailableDates.deleteMany({
+    //   where: {
+    //     doctorId: Number(id),
+    //   },
+    // });
 
-    const unavailableDateEntries = unavailableDates.map((date: string) => ({
-      date: new Date(date),
-      doctorId: Number(id),
-    }));
+    // const unavailableDateEntries = unavailableDates.map((date: string) => ({
+    //   date: new Date(date),
+    //   doctorId: Number(id),
+    // }));
 
-    if (unavailableDateEntries.length > 0) {
-      await prisma.unavailableDates.createMany({
-        data: unavailableDateEntries,
-      });
-    }
+    // if (unavailableDateEntries.length > 0) {
+    //   await prisma.unavailableDates.createMany({
+    //     data: unavailableDateEntries,
+    //   });
+    // }
 
     // Return the updated doctor along with availability and unavailable dates
     const doctorWithRelations = await prisma.doctor.findUnique({
@@ -1279,3 +1279,20 @@ export const updateRoomNo = async (req: Request, res: Response): Promise<void> =
     res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred" });
   }
 };
+export const getAllDoctorWithDepartment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const doctors = await prisma.doctor.findMany({
+      select: {
+        id: true,
+        name: true,
+        departmentId: true,
+        departmentName: true
+      }
+    });
+    
+
+    res.status(200).json(doctors);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}

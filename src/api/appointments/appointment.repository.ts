@@ -35,7 +35,14 @@ export default class AppointmentRepository {
       },
     });
   }
-
+  async getCheckinAppointments(date: string) {
+    return await prisma.appointment.count({
+      where: {
+        date,
+        checkedIn: true,
+      },
+    });
+  }
   // Method to get the count of pending requests for the given date
   async getPendingAppointmentsCountForDate(date: string): Promise<number> {
     return await prisma.appointment.count({

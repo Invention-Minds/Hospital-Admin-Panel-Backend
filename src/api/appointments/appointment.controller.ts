@@ -436,7 +436,19 @@ export const getTotalAppointments = async (req: Request, res: Response): Promise
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
-
+export const getCheckinAppointments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date } = req.query; // Get today's date from query parameters
+    if (!date) {
+      res.status(400).json({ error: 'Date is required' });
+      return;
+    }
+    const count = await appointmentRepository.getCheckinAppointments(date as string);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
 // Endpoint to get pending requests for today
 export const getPendingAppointments = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -636,8 +648,8 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
 
     const whatsappPayload = {
       from: fromPhoneNumber,
-      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      to: ['919342287945'],
+      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      // to: ['919342287945'],
       // to:['919342003000'],
       type: "template",
       message: {
@@ -912,6 +924,25 @@ export const getAppointmentByServiceId = async (req: Request, res: Response): Pr
 
     console.log("✅ Appointments Retrieved:", appointments);
 
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const todayCheckedInAppointments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date } = req.query; // Get today's date from query parameters
+    if (!date) {
+      res.status(400).json({ error: 'Date is required' });
+      return;
+    }
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        date: date as string,
+        checkedIn: true,
+      },
+    });
     res.status(200).json(appointments);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });

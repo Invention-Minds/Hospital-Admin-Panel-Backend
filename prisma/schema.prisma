@@ -52,6 +52,7 @@ model Doctor {
   ExtraSlotCount   ExtraSlotCount[]
   SentMessage      SentMessage[]
   LeaveDates       LeaveDates[]
+  kmcNumber        String?
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -161,6 +162,19 @@ model Appointment {
   patientType         String?
   isfollowup          Boolean?
   isFollowupTime      DateTime?
+  BPd                 String?
+  BPs                 String?
+  RR                  String?
+  bloodGroup          String?
+  height              String?
+  pulse               String?
+  spo2                String?
+  temp                String?
+  weight              String?
+  arrivedTime         DateTime?
+  arrivedBy           String?
+  blockId             String?
+  arrived             Boolean?
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -220,6 +234,21 @@ model PatientDetails {
   city            String?
   area            String?
   pin             String?
+  BPd             String?
+  BPs             String?
+  RR              String?
+  bloodGroup      String?
+  height          String?
+  patientType     String?
+  pulse           String?
+  spo2            String?
+  temp            String?
+  weight          String?
+  dob             String?
+  rh              String?
+  hb              String?
+  sFerritin       String?
+  diagnosis       String?
   created_at      DateTime  @default(now())
   updated_at      DateTime?
 }
@@ -348,6 +377,8 @@ model Package {
   radioIds    String?
 
   services Service[] // Back relation to Service
+
+  orders InvestigationOrder[]
 }
 
 model RadioService {
@@ -539,6 +570,7 @@ model EstimationDetails {
   selectedRoomCost        String?
   patientEmail            String?
   rejectReason            String?
+  pacNotDoneReason        String?
 
   @@map("estimation_details")
 }
@@ -658,4 +690,132 @@ model BloodGroupRepeatedDate {
   bloodGroupAppointment   BloodGroupAppointment @relation(fields: [bloodGroupAppointmentId], references: [id])
 
   @@index([bloodGroupAppointmentId], map: "BloodGroupRepeatedDate_appointmentId_fkey")
+}
+
+model Prescription {
+  id              Int      @id @default(autoincrement())
+  prescriptionId  String   @unique
+  prescribedBy    String
+  prescribedById  String?
+  prescribedByKMC String?
+  prescribedDate  String
+  prn             String
+  patientName     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  tablets         Tablet[] @relation("PrescriptionTablets")
+}
+
+model Tablet {
+  id             Int          @id @default(autoincrement())
+  genericName    String
+  brandName      String
+  frequency      String
+  duration       String
+  instructions   String
+  quantity       Int
+  prescriptionId String
+  route          String?      @default("oral")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  prescription   Prescription @relation("PrescriptionTablets", fields: [prescriptionId], references: [prescriptionId], onDelete: Cascade)
+
+  @@index([prescriptionId], map: "Tablet_prescriptionId_fkey")
+}
+
+model TabletMaster {
+  id             Int              @id @default(autoincrement())
+  genericName    String
+  brandName      String
+  type           String
+  description    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @default(now()) @updatedAt
+  FavoriteTablet FavoriteTablet[]
+}
+
+model FavoriteTablet {
+  id           Int          @id @default(autoincrement())
+  userId       String
+  tabletId     Int
+  createdAt    DateTime     @default(now())
+  duration     String?
+  frequency    String?
+  instructions String?
+  tablet       TabletMaster @relation(fields: [tabletId], references: [id])
+
+  @@unique([userId, tabletId])
+  @@index([tabletId], map: "FavoriteTablet_tabletId_fkey")
+}
+
+model Allergy {
+  id          Int      @id @default(autoincrement())
+  prn         String
+  genericName String
+  notedBy     String?
+  createdAt   DateTime @default(now())
+}
+
+model DoctorNote {
+  id                 Int      @id @default(autoincrement())
+  prn                Int
+  date               String
+  chiefComplaints    String?  @db.Text
+  diagnosis          String?  @db.Text
+  generalExamination String?  @db.Text
+  clinicalNotes      String?  @db.Text
+  advice             String?  @db.Text
+  cvs                String?  @db.Text
+  rs                 String?  @db.Text
+  cns                String?  @db.Text
+  pa                 String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model HistoryNotes {
+  id             Int      @id @default(autoincrement())
+  prn            Int
+  date           String
+  medicalHistory String?  @db.Text
+  familyHistory  String?  @db.Text
+  socialHistory  String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Lab {
+  id          Int      @id @default(autoincrement())
+  description String
+  department  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders InvestigationOrder[]
+}
+
+model Radiology {
+  id          Int      @id @default(autoincrement())
+  description String
+  department  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders InvestigationOrder[]
+}
+
+model InvestigationOrder {
+  id         Int     @id @default(autoincrement())
+  prn        String
+  date       String
+  doctorId   Int
+  doctorName String
+  remarks    String?
+
+  labTests       Lab[]
+  radiologyTests Radiology[]
+  packages       Package[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
