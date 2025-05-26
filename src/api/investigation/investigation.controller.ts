@@ -60,3 +60,65 @@ export const getLabTests = async (req: Request, res: Response) => {
       res.status(500).json({ error: 'Failed to fetch radiology tests' });
     }
   };
+  export const createLabTest = async (req: Request, res: Response) => {
+    const { description, department } = req.body;
+  
+    if (!description) {
+       res.status(400).json({ error: 'Description is required' });
+       return
+    }
+  
+    try {
+      // Check if test already exists (optional)
+      const existing = await prisma.lab.findFirst({
+        where: { description: { equals: description } }
+      });
+      if (existing) { 
+        res.status(200).json(existing);
+        return
+      }
+  
+      const newLab = await prisma.lab.create({
+        data: {
+          description,
+          department
+        }
+      });
+  
+      res.status(201).json(newLab);
+    } catch (error) {
+      console.error('Error creating lab test:', error);
+      res.status(500).json({ error: 'Failed to create lab test' });
+    }
+  };
+  export const createRadiologyTest = async (req: Request, res: Response) => {
+    const { description, department } = req.body;
+  
+    if (!description) {
+       res.status(400).json({ error: 'Description is required' });
+       return
+    }
+  
+    try {
+      const existing = await prisma.radiology.findFirst({
+        where: { description: { equals: description } }
+      });
+      if (existing){
+        res.status(200).json(existing);
+        return;
+      }
+  
+      const newRadiology = await prisma.radiology.create({
+        data: {
+          description,
+          department
+        }
+      });
+  
+      res.status(201).json(newRadiology);
+    } catch (error) {
+      console.error('Error creating radiology test:', error);
+      res.status(500).json({ error: 'Failed to create radiology test' });
+    }
+  };
+    

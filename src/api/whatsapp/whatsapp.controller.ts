@@ -2857,19 +2857,19 @@ export const sendRadioReportMessage = async (req: Request, res: Response) => {
   }
 }
 
-// cron.schedule("0 7 * * *", async () => {
-//   await updateEstimation();
-//   await processRepeatedAppointments();
-// });
-// cron.schedule("* 8-19 * * *",updateDoctorAssignments);
-// cron.schedule("0 21 * * *", sendDoctorMessage);
-// cron.schedule("0 * * * *", async () => {
-//   await checkAndSendReminders();
-//   await remainderForAdmin();
-//   await reminderForServices();
-// });
-// cron.schedule("0 23 * * *", async () => {
-//   await markComplete();
-//     await markCompleteRadio();
-// });
-// cron.schedule("50 15 * * *",markComplete);
+cron.schedule("0 7 * * *", async () => {
+  await updateEstimation();
+  await processRepeatedAppointments();
+});
+cron.schedule("* 8-19 * * *",updateDoctorAssignments);
+cron.schedule("0 21 * * *", sendDoctorMessage);
+cron.schedule("0 * * * *", async () => {
+  await checkAndSendReminders();
+  await remainderForAdmin();
+  await reminderForServices();
+});
+cron.schedule("0 23 * * *", async () => {
+  await markComplete();
+    await markCompleteRadio();
+});
+cron.schedule("50 15 * * *",markComplete);

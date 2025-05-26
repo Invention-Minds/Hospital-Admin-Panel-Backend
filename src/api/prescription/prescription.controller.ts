@@ -84,6 +84,14 @@ export const getPrescriptionByPrn = async (req: Request, res: Response) => {
 export const createTablet = async (req: Request, res: Response) => {
   try {
     const { genericName, brandName, type, description } = req.body;
+    const existing = await prisma.tabletMaster.findFirst({
+      where: { brandName },
+    });
+
+    if (existing) {
+       res.status(200).json(existing);
+       return
+    }
 
     const newTablet = await prisma.tabletMaster.create({
       data: {
