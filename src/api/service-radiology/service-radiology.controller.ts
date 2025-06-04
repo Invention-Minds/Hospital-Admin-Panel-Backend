@@ -602,3 +602,23 @@ export const getDetailsByPRN = async(req: Request, res: Response): Promise<void>
     res.status(500).json({ message: 'Internal server error', error });
   }
 };
+export const getTodayConfirmedServices = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const today = new Date().toISOString().split('T')[0];
+    const appointments = await prisma.serviceAppointments.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Confirm' },
+          { appointmentStatus: 'confirmed'}
+        ],
+        appointmentDate: today,
+        checkedIn: true
+      },
+      include: { RadioService : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}

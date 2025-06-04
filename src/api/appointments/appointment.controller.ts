@@ -948,3 +948,359 @@ export const todayCheckedInAppointments = async (req: Request, res: Response): P
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
+
+export const confirmedAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        status: 'confirmed'
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const cancelledAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        status: 'cancelled'
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const completedAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        status: 'completed'
+      },
+      select: {
+        patientName: true,
+        phoneNumber: true,
+        email: true,
+        doctorName: true,
+        department: true,
+        date: true,
+        time: true,
+        created_at: true,
+        requestVia: true,
+        smsSent: true,
+        emailSent: true,
+        messageSent: true,
+        status: true,
+        patientType: true,
+        user: {
+          select: {
+            username: true,
+          },
+        },
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const PendingAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        status: 'pending'
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const getTransferAppointments = async(req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        status: 'confirmed',
+        isTransfer: true
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+ 
+export const getReferredAppointments = async(req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        status: 'completed',
+        isReferred: true
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const getFollowUpAppointments = async(req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        isfollowup: true
+      }
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const pastConsultations = async(req: Request, res: Response):Promise<void> => {
+  try{
+    const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD" format
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        date: {
+          lt: today, // Past dates
+        },
+      },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const futureConsultations = async(req: Request, res: Response):Promise<void> => {
+  try{
+    const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD" format
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        date: {
+          gt: today, // Future dates
+        },
+        status:'confirmed'
+      },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const confirmedMhc = async(req: Request, res: Response): Promise<void> => {
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        serviceId: {
+          not:null
+        },
+        status: 'confirmed'
+      }
+    })
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const mhcReportAppointment = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        serviceId:{
+          not: null
+        }
+      },
+      select:{
+        serviceId: true,
+        id:true,
+        waitingTime:true,
+        department:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+export const opdRequestWise = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      select:{
+        id:true,
+        requestVia:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const opdTimeWise = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      select:{
+        id:true,
+        time:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const opdTypeWise = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        type: {
+          not: null
+        }
+      },
+      select:{
+        id:true,
+        type:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+export const opdStatusWise = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      select:{
+        id:true,
+        status:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true,
+        checkedIn: true,
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const prnWiseAppointment = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where:{
+        prnNumber:{
+          not: null
+        }
+      },
+      select:{
+        id:true,
+        prnNumber: true,
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const opdGenderWise = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        gender: {
+          not: null
+        }
+      },
+      select:{
+        id:true,
+        gender:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}
+
+export const checkedOutAppointments = async(req: Request, res: Response): Promise<void> =>{
+  try{
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        checkedOut: {
+          not: null
+        }
+      },
+      select:{
+        id:true,
+        department:true,
+        doctorId: true,
+        doctorName: true,
+        date:true
+      }
+    })
+    res.status(200).json(appointments);
+  }
+  catch(error){
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+}

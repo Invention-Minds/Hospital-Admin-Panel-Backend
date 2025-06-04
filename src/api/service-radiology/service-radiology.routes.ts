@@ -15,6 +15,7 @@ import {
   createNewService,
   getAppointmentByServiceId,
   getDetailsByPRN,
+  getTodayConfirmedServices,
 } from './service-radiology.controller';
 // import {scheduleServiceCompletion} from './services.schedular';
 import { authenticateToken } from './../../middleware/middleware';
@@ -29,6 +30,7 @@ router.get('/', getServices);
 router.get('/packages', getPackages)
 router.get('/available-slots', getAvailableSlots);
 router.post('/new',createNewService);
+router.get('/today-services', authenticateToken, getTodayConfirmedServices)
 router.get('/appts-by-serviceId', getAppointmentByServiceId);// Fetch all services
 router.post('/get-details-by-prn', getDetailsByPRN)
 router.get('/:id', getServiceById);                 // Fetch a specific service by ID

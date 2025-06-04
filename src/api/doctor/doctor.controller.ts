@@ -1286,7 +1286,8 @@ export const getAllDoctorWithDepartment = async (req: Request, res: Response): P
         id: true,
         name: true,
         departmentId: true,
-        departmentName: true
+        departmentName: true,
+        userId: true
       }
     });
     
@@ -1296,3 +1297,31 @@ export const getAllDoctorWithDepartment = async (req: Request, res: Response): P
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
+
+export const getFourDoctors = async (req: Request, res: Response): Promise<void> => {
+  try{
+    const doctors = await prisma.doctor.findMany({
+      include: {
+        unavailableDates: true,
+        availability: true,
+      },
+    });
+        // Sort by name alphabetically, ignoring prefixes
+        doctors.sort((a, b) => {
+          const nameA = stripPrefix(a.name);
+          const nameB = stripPrefix(b.name);
+          return nameA.localeCompare(nameB);
+        });
+    
+        // Return only the first 4
+        const topDoctors = doctors.slice(0, 4);
+        res.status(200).json(topDoctors)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+const stripPrefix = (name: string) => {
+  return name.toLowerCase().replace(/^(dr\.|ms\.|mr\.|brig\.)\s*/i, '');
+};
+

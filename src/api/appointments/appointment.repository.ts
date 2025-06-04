@@ -28,8 +28,8 @@ export default class AppointmentRepository {
     });
     return !appointment; // Returns true if no appointment exists for the given date and time
   }
-  async getAppointmentsCountForDate(date: string): Promise<number> {
-    return await prisma.appointment.count({
+  async getAppointmentsCountForDate(date: string): Promise<any> {
+    return await prisma.appointment.findMany({
       where: {
         date,
       },
@@ -85,10 +85,11 @@ export default class AppointmentRepository {
     return [...adminAppointments, ...userAppointments];
   }
   async findAppointmentsByDoctorUserId(userId: number) {
+    const today = new Date().toISOString().split('T')[0]
     const doctor = await prisma.doctor.findFirst({ where: { id: userId } });
     console.log(doctor);
     if (!doctor) return [];
-    return await prisma.appointment.findMany({ where: { doctorId: doctor.id }, include: { doctor: true, user: true } });
+    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, checkedIn: true, date: today , status: 'confirmed'}, include: { doctor: true, user: true } });
   }
 
 

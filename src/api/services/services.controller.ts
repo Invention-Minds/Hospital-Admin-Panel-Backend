@@ -1053,3 +1053,129 @@ export const individualComplete = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+export const confirmedAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Confirm' },
+          { appointmentStatus: 'confirmed'}
+        ],
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const cancelledAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Cancel' },
+          { appointmentStatus: 'Cancelled'}
+        ],
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const completedAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Completed' },
+          { appointmentStatus: 'complete'},
+          { appointmentStatus: 'completed'}
+        ],
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const PendingAppointments = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.service.findMany({
+      where: {
+        appointmentStatus: 'pending'
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const getTodayConfirmedServices = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const today = new Date().toISOString().split('T')[0];
+    const appointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Confirm' },
+          { appointmentStatus: 'confirmed'}
+        ],
+        appointmentDate: today,
+        checkedIn: true
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const getTodayMHCConfirmedServices = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const today = new Date().toISOString().split('T')[0];
+    const appointments = await prisma.service.findMany({
+      where: {
+        OR: [
+          { appointmentStatus: 'Confirm' },
+          { appointmentStatus: 'confirmed'}
+        ],
+        appointmentDate: today,
+      },
+      include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+export const getMhcOverview = async (req: Request, res: Response):Promise<void> => {
+  try{
+    const appointments = await prisma.service.findMany({
+      select:{
+        id: true,
+        package: true,
+        appointmentDate: true,
+        appointmentStatus: true,
+        appointmentTime: true,
+        packageId: true,
+        
+      },
+      // include: { repeatedDates: true, package : true },
+    });
+    res.status(200).json(appointments)
+  }
+  catch(error){
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}

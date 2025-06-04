@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -10,6 +10,7 @@ const router = Router();
 // Define routes for doctors
 router.post('/',authenticateToken, createDoctor);  // Changed from '/doctors' to '/'
 router.get('/', getDoctors);      // Changed from '/doctors' to '/'
+router.get('/top-doctors', getFourDoctors);
 router.get('/get-doctor-details',authenticateToken,getDoctorDetails)
 router.get('/availability',getDoctorAvailability);
 router.get('/booked-slots',getBookedSlots);
@@ -24,7 +25,8 @@ router.get('/docbydept', getAllDoctorWithDepartment)
 router.post('/mark-complete', updateBookedSlot),
 router.get('/futureBookedSlots', getFutureBookedSlotsBoth);
 router.get('/futureslotsForSlotDuration',getFutureBookedSlots);
-router.post('/bulk-future-slots', getBulkFutureBookedSlots)
+router.post('/bulk-future-slots', getBulkFutureBookedSlots);
+
 router.get('/get-doctor-by-userId/:userId', authenticateToken, getDoctorByUserId)
 
 // POST: Add unavailable slots for a specific doctor

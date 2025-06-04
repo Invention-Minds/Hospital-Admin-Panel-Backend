@@ -1960,3 +1960,83 @@ export const getFollowUpEstimations = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 }
+
+export const getTodayConfirmedEstimations = async(req: Request, res: Response) =>{
+    try{
+        const confirmedEstimations = await prisma.estimationDetails.findMany({
+            where:{
+                statusOfEstimation: 'confirmed',
+            },
+            select:{
+                id: true,
+                patientName: true,
+                estimationId: true,
+                confirmedDateAndTime: true,
+                statusOfEstimation: true,
+                estimationStatus: true,
+                estimationType: true
+            }
+        })
+        res.status(200).json(confirmedEstimations)
+    }
+    catch(error){
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+export const getopdEstimation = async(req: Request, res: Response) =>{
+    try{
+        const confirmedEstimations = await prisma.estimationDetails.findMany({
+            where: {
+                estimationCreatedTime:{
+                    not: null
+                }
+            },
+            select:{
+                id: true,
+                patientName: true,
+                estimationId: true,
+                statusOfEstimation: true,
+                estimationStatus: true,
+                estimationType: true,
+                estimationCreatedTime: true,
+                patientUHID: true,
+                consultantId: true,
+            }
+        })
+        res.status(200).json(confirmedEstimations)
+    }
+    catch(error){
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+export const getStatusEstimation = async(req: Request, res: Response) =>{
+    try{
+        const confirmedEstimations = await prisma.estimationDetails.findMany({
+            select:{
+                id: true,
+                patientName: true,
+                estimationId: true,
+                statusOfEstimation: true,
+                estimationType: true,
+                estimationCreatedTime: true,
+                patientUHID: true,
+                consultantId: true,
+                approvedDateAndTime:true,
+                confirmedDateAndTime:true,
+                cancellationDateAndTime:true,
+                completedDateAndTime:true,
+                overDueDateAndTIme:true,
+                submittedDateAndTime:true,
+            }
+        })
+        res.status(200).json(confirmedEstimations)
+    }
+    catch(error){
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}

@@ -17,6 +17,13 @@ import {
   callRepeatedAppointments,
   updateServiceMessage,
   individualComplete,
+  confirmedAppointments,
+  cancelledAppointments,
+  completedAppointments,
+  PendingAppointments,
+  getTodayConfirmedServices,
+  getTodayMHCConfirmedServices,
+  getMhcOverview,
 } from './services.controller';
 import {scheduleServiceCompletion} from './services.schedular';
 import { authenticateToken } from './../../middleware/middleware';
@@ -28,13 +35,21 @@ const router = Router();
 // CRUD routes
 router.post('/', createService); // Create a new service
 router.get('/', getServices);  
-router.get('/packages', getPackages)
+router.get('/packages', getPackages);
+router.get('/confirmed-appts', authenticateToken, confirmedAppointments);
+router.get('/cancelled-appts', authenticateToken, cancelledAppointments);
+
+router.get('/completed-appts', authenticateToken, completedAppointments);
+router.get('/pending-appts', authenticateToken, PendingAppointments);
+router.get('/today-services', authenticateToken, getTodayConfirmedServices);
+router.get('/get-mhc-overview',authenticateToken ,getMhcOverview);
+router.get('/today-confirmed',authenticateToken ,getTodayMHCConfirmedServices);
 router.get('/available-slots', getAvailableSlots) ;
-router.post('/mark-complete', individualComplete)               // Fetch all services
+router.post('/mark-complete', individualComplete);               // Fetch all services
 router.get('/:id', getServiceById);                 // Fetch a specific service by ID
 router.put('/:id', authenticateToken, updateServiceStatus); // Update a service by ID
 router.delete('/:id', authenticateToken, deleteService); // Delete a service by ID
-router.post('/call-repeat',callRepeatedAppointments)
+router.post('/call-repeat',callRepeatedAppointments);
 // Repeated Dates Management
 router.post('/:id/repeated-dates', authenticateToken, addRepeatedDates); // Add repeated dates for a service
 router.get('/:id/repeated-dates', getRepeatedDatesByServiceId);         // Get repeated dates for a specific service
