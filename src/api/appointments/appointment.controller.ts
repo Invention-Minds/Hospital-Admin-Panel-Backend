@@ -954,7 +954,11 @@ export const confirmedAppointments = async (req: Request, res: Response):Promise
     const appointments = await prisma.appointment.findMany({
       where: {
         status: 'confirmed'
-      }
+      },
+      include:{
+        user: true,
+        doctor:true
+      },
     });
     res.status(200).json(appointments)
   }
@@ -967,7 +971,11 @@ export const cancelledAppointments = async (req: Request, res: Response):Promise
     const appointments = await prisma.appointment.findMany({
       where: {
         status: 'cancelled'
-      }
+      },
+      include:{
+        user: true,
+        doctor:true
+      },
     });
     res.status(200).json(appointments)
   }
@@ -1014,7 +1022,11 @@ export const PendingAppointments = async (req: Request, res: Response):Promise<v
     const appointments = await prisma.appointment.findMany({
       where: {
         status: 'pending'
-      }
+      },
+      include:{
+        user: true,
+        doctor:true
+      },
     });
     res.status(200).json(appointments)
   }
@@ -1044,7 +1056,11 @@ export const getReferredAppointments = async(req: Request, res: Response):Promis
       where:{
         status: 'completed',
         isReferred: true
-      }
+      },
+      include:{
+        user: true,
+        doctor:true
+      },
     });
     res.status(200).json(appointments)
   }
@@ -1058,7 +1074,11 @@ export const getFollowUpAppointments = async(req: Request, res: Response):Promis
     const appointments = await prisma.appointment.findMany({
       where:{
         isfollowup: true
-      }
+      },
+      include:{
+        user: true,
+        doctor:true
+      },
     });
     res.status(200).json(appointments)
   }
