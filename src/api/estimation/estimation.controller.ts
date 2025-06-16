@@ -1300,8 +1300,77 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         doc.text(`PREFERRED DATE:`, 300, 215);
         doc.text(`${formattedPreferDate || "N/A"}`, 400, 215);
 
-        doc.text(`ESTIMATION NAME:`, 30, 235);
-        doc.text(`${estimationName.toUpperCase() || "N/A"}`, 140, 235);
+        // doc.text(`ESTIMATION NAME:`, 30, 235);
+        // doc.text(`${estimationName.toUpperCase() || "N/A"}`, 140, 235);
+        // const EstimationProcedures = estimationName
+        //     ? estimationName.split(',').map((p:any) => p.trim()).filter((p:any) => p)
+        //     : [];
+        // let startx = 140;
+        // let starty = 235;
+        // let rowHeight = 20;
+
+        // // Table headers
+        // doc.fontSize(10).text('No.', startx, starty);
+        // doc.text('Procedure Name', startx + 40, starty);
+
+        // // Draw rows
+        // EstimationProcedures.forEach((procedure: any, index: any) => {
+        //     const y = starty + rowHeight * (index + 1);
+        //     doc.text(`${index + 1}`, startx, y);
+        //     doc.text(procedure, startx + 40, y);
+        // });
+
+        const EstimationProcedures = estimationName
+            ? estimationName.split(',').map((p: any) => p.trim()).filter((p: any) => p)
+            : [];
+
+        //   const startx = 140;
+        let starty = 235;
+        //   const col1Width = 30;
+        //   const col2Width = 200;
+        const docWidth = doc.page.width; // Typically 595.28 pt for A4
+        const margin = 30;
+        const usableWidth = docWidth - margin * 2;
+
+        const startx = margin;
+        const col1Width = 50;
+        const col2Width = usableWidth - col1Width;
+        const padding = 5;
+        const lineheight = 12;
+
+        // Draw Header
+        doc.fillColor("#0098A3").fontSize(10).font('PoppinsSemiBold');
+        doc.rect(startx, starty, col1Width, lineheight * 2).stroke();
+        doc.rect(startx + col1Width, starty, col2Width, lineheight * 2).stroke();
+        doc.text('No.', startx + padding, starty + padding);
+        doc.text('Procedure Name', startx + col1Width + padding, starty + padding);
+
+        doc.fillColor("black").font('PoppinsRegular');
+
+        // Move to next row position
+        let currentY = starty + lineheight * 2;
+
+        EstimationProcedures.forEach((procedure: any, index: number) => {
+            const wrappedTextHeight = doc.heightOfString(procedure, {
+                width: col2Width - 2 * padding
+            });
+
+            const rowHeight = Math.max(lineheight, wrappedTextHeight + 2 * padding);
+
+            // Draw cells
+            doc.rect(startx, currentY, col1Width, rowHeight).stroke();
+            doc.rect(startx + col1Width, currentY, col2Width, rowHeight).stroke();
+
+            // Add text
+            doc.text(`${index + 1}`, startx + padding, currentY + padding);
+            doc.text(procedure, startx + col1Width + padding, currentY + padding, {
+                width: col2Width - 2 * padding
+            });
+
+            currentY += rowHeight;
+        });
+
+
 
         // Stay Details
         doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXPECTED NO. OF DAYS STAY:`, 30, doc.y + 20);
@@ -1320,6 +1389,63 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         checkPageSpace(doc, 50);
 
 
+        // const costFields = {
+        //     General: costForGeneral,
+        //     Private: costForPrivate,
+        //     SemiPrivate: costForSemiPrivate,
+        //     VIP: costForVip,
+        //     Deluxe: costForDeluxe,
+        //     Presidential: costForPresidential
+        // };
+
+        // // Example estimation names (split if there are multiple surgeries)
+        // const estimationNames = estimationName ? estimationName.split(',') : [];
+
+        // // Adjust initial position for displaying room costs
+        // let yPosition = doc.y + 10;
+        // let index = 0; // Index for numbering room types
+
+        // Object.entries(costFields).forEach(([key, value]) => {
+        //     if (value) {
+        //         const costs = value.split(',');
+
+        //         const formattedCosts = costs.map((cost: any, costIndex: any) => {
+        //             let surgeryLabel = estimationNames[costIndex]?.trim()?.toUpperCase() || `Cost ${costIndex + 1}`;
+        //             return `${surgeryLabel} COST: ₹${cost.trim()}`;
+        //         });
+
+        //         const labelText = `${key.toUpperCase()} WARD:`;
+        //         const costText = formattedCosts.join(', ').toUpperCase();
+
+        //         // Draw the ward label first
+        //         doc.fillColor("#0098A3").font('PoppinsSemiBold').text(labelText, 43, yPosition, {
+        //             continued: false
+        //         });
+
+        //         // Measure the height of the cost block before drawing
+        //         const costHeight = doc.heightOfString(costText, {
+        //             width: 350,
+        //             lineGap: 4
+        //         });
+
+        //         // Draw the cost text with proper wrapping
+        //         doc.font('PoppinsSemiBold').fillColor("black").text(costText, 180, yPosition, {
+        //             width: 350,
+        //             lineGap: 4
+        //         });
+
+        //         // ✅ Increase yPosition based on actual height
+        //         yPosition += costHeight + 8;
+        //     }
+        // });
+
+
+        // doc.text(` ${costForGeneral || "N/A"}`, 43, 275);
+        // doc.fontSize(8).font('PoppinsRegular').text(`NOTE: THE COST OF THE ROOM INCLUDES DAILY NURSING`, 43, doc.y + 20);
+        // Styled like second NOTE design
+
+        const estimationNames = estimationName ? estimationName.split(',').map((n: any) => n.trim()) : [];
+
         const costFields = {
             General: costForGeneral,
             Private: costForPrivate,
@@ -1329,86 +1455,76 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             Presidential: costForPresidential
         };
 
-        // Example estimation names (split if there are multiple surgeries)
-        const estimationNames = estimationName ? estimationName.split(',') : [];
+        const tableX = 43;
+        let tableY = doc.y + 10;
+        const colWidths = [30, 100, 200, 100]; // No., Room Type, Procedure Name, Cost
 
-        // Adjust initial position for displaying room costs
-        let yPosition = doc.y + 10;
-        let index = 0; // Index for numbering room types
+        // Header
+        doc.fillColor("#0098A3").fontSize(10).font('PoppinsSemiBold');
+        const headerHeight = 20;
 
-        // Object.entries(costFields).forEach(([key, value]) => {
-        //     if (value) {
-        //         const costs = value.split(','); // Split costs by comma
+        // Draw header boxes
+        doc.rect(tableX, tableY, colWidths[0], headerHeight).stroke();
+        doc.rect(tableX + colWidths[0], tableY, colWidths[1], headerHeight).stroke();
+        doc.rect(tableX + colWidths[0] + colWidths[1], tableY, colWidths[2], headerHeight).stroke();
+        doc.rect(tableX + colWidths[0] + colWidths[1] + colWidths[2], tableY, colWidths[3], headerHeight).stroke();
 
-        //         // Assign surgery names or default cost labels
-        //         const formattedCosts = costs.map((cost: any, costIndex: any) => {
-        //             let surgeryLabel = estimationNames[costIndex] ? estimationNames[costIndex].trim().trim().toUpperCase() : `Cost ${costIndex + 1}`;
-        //             return `${surgeryLabel} cost: ₹${cost.trim()}`;
-        //         });
+        // Header text
+        doc.text('No.', tableX + padding, tableY + padding);
+        doc.text('Room Type', tableX + colWidths[0] + padding, tableY + padding);
+        doc.text('Procedure Name', tableX + colWidths[0] + colWidths[1] + padding, tableY + padding);
+        doc.text('Cost (₹)', tableX + colWidths[0] + colWidths[1] + colWidths[2] + padding, tableY + padding);
 
-        //         doc.fillColor("#0098A3").font('PoppinsSemiBold').text(`${key.toUpperCase()} WARD:`, 43, yPosition, { continued: false });
+        // Move to next row
+        doc.fillColor("black").font('PoppinsRegular');
+        let currenty = tableY + headerHeight;
+        let serialNo = 1;
 
-        //         // Set font to semi-bold before printing surgery labels
-        //         doc.font('PoppinsSemiBold'); // Use a semi-bold font
-        //         doc.fillColor("black").text(formattedCosts.join(', ').toUpperCase(), 180, yPosition, {
-        //             continued: false,
-        //             width: 350, // Width for wrapping
-        //             lineGap: 4, // Add spacing between lines if needed
-        //         });
-        //         yPosition += 15; // Move to next line for the next room type
+        Object.entries(costFields).forEach(([roomType, costValue]) => {
+            if (costValue) {
+                const costList = costValue.split(',').map((c: any) => c.trim());
 
-        //         index++; // Increment index for room type numbering
-        //     }
-        // });
+                costList.forEach((cost: any, i: any) => {
+                    const procedureName = estimationNames[i] || `Procedure`;
 
-        Object.entries(costFields).forEach(([key, value]) => {
-            if (value) {
-                const costs = value.split(',');
+                    // Calculate the height required for the procedure name
+                    const procedureHeight = doc.heightOfString(procedureName, {
+                        width: colWidths[2] - 2 * padding
+                    });
 
-                const formattedCosts = costs.map((cost: any, costIndex: any) => {
-                    let surgeryLabel = estimationNames[costIndex]?.trim()?.toUpperCase() || `Cost ${costIndex + 1}`;
-                    return `${surgeryLabel} COST: ₹${cost.trim()}`;
+                    const rowHeight = Math.max(20, procedureHeight + 2 * padding);
+
+                    // Draw row boxes
+                    doc.rect(tableX, currenty, colWidths[0], rowHeight).stroke();
+                    doc.rect(tableX + colWidths[0], currenty, colWidths[1], rowHeight).stroke();
+                    doc.rect(tableX + colWidths[0] + colWidths[1], currenty, colWidths[2], rowHeight).stroke();
+                    doc.rect(tableX + colWidths[0] + colWidths[1] + colWidths[2], currenty, colWidths[3], rowHeight).stroke();
+
+                    // Text inside cells
+                    doc.text(`${serialNo}`, tableX + padding, currenty + padding);
+                    doc.text(roomType.toUpperCase(), tableX + colWidths[0] + padding, currenty + padding);
+                    doc.text(procedureName.toUpperCase(), tableX + colWidths[0] + colWidths[1] + padding, currenty + padding, {
+                        width: colWidths[2] - 2 * padding
+                    });
+                    doc.text(`₹${cost}`, tableX + colWidths[0] + colWidths[1] + colWidths[2] + padding, currenty + padding);
+
+                    serialNo++;
+                    currenty += rowHeight;
                 });
-
-                const labelText = `${key.toUpperCase()} WARD:`;
-                const costText = formattedCosts.join(', ').toUpperCase();
-
-                // Draw the ward label first
-                doc.fillColor("#0098A3").font('PoppinsSemiBold').text(labelText, 43, yPosition, {
-                    continued: false
-                });
-
-                // Measure the height of the cost block before drawing
-                const costHeight = doc.heightOfString(costText, {
-                    width: 350,
-                    lineGap: 4
-                });
-
-                // Draw the cost text with proper wrapping
-                doc.font('PoppinsSemiBold').fillColor("black").text(costText, 180, yPosition, {
-                    width: 350,
-                    lineGap: 4
-                });
-
-                // ✅ Increase yPosition based on actual height
-                yPosition += costHeight + 8;
             }
         });
 
 
-        // doc.text(` ${costForGeneral || "N/A"}`, 43, 275);
-        // doc.fontSize(8).font('PoppinsRegular').text(`NOTE: THE COST OF THE ROOM INCLUDES DAILY NURSING`, 43, doc.y + 20);
-        // Styled like second NOTE design
-        const nursingNoteY = doc.y + 20;
-        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
-            .text("NOTE:", 43, nursingNoteY, { continued: true });
+        // const nursingNoteY = doc.y + 20;
+        // doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
+        //     .text("NOTE:", 43, nursingNoteY, { continued: true });
 
-        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
-            .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
-    
+        // doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+        //     .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
+
         // Move Y down to avoid overlap with next content
         doc.moveDown(1);
-        
+
 
         // Update Y position
         doc.moveDown(1);
@@ -1427,20 +1543,60 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         console.log(afterRoomCostY)
         const startY = afterRoomCostY + 10; // Calculate height based on the text
         const lineHeight = 20;
-        const columns = 3;
+        // const columns = 3;
+        const processedInclusions: string[] = [];
 
-        const itemsPerColumn = Math.ceil(inclusions.length / columns);
-        const inclusionsColumns = [
-            inclusions.slice(0, itemsPerColumn),
-            inclusions.slice(itemsPerColumn, itemsPerColumn * 2),
-            inclusions.slice(itemsPerColumn * 2, itemsPerColumn * 3),
-            inclusions.slice(itemsPerColumn * 3)
-        ];
-        let num = 1
-        // Render inclusions in 4 columns
+        inclusions.forEach((item:any) => {
+          if (!item) return;
+        
+          const formatted = formatWithSpaces(item).toUpperCase();
+        
+          if (formatted.includes("SURGEON OTANESTHESIA")) {
+            processedInclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
+          } else {
+            processedInclusions.push(formatted);
+          }
+        });
+        
+        const totalInclusions = processedInclusions.length;
+        const columns = 4;
+        const itemsPer = Math.ceil(totalInclusions / columns);
+
+        const inclusionColumns = Array.from({ length: columns }, (_, i) =>
+            processedInclusions.slice(i * itemsPer, (i + 1) * itemsPer)
+        );
+
+        let inclusionCounter = 1;
+        let maxInclusionY = startY;
+
+        inclusionColumns.forEach((column, colIndex) => {
+            column.forEach((item, rowIndex) => {
+                const xPos = startX + colIndex * columnWidth;
+                const yPos = startY + rowIndex * lineHeight;
+
+                doc.fontSize(10)
+                    .fillColor("black")
+                    .font("PoppinsRegular")
+                    .text(`${inclusionCounter}. ${item}`, xPos, yPos);
+
+                if (yPos > maxInclusionY) maxInclusionY = yPos;
+                inclusionCounter++;
+            });
+        });
+
+
+        // const itemsPerColumn = Math.ceil(inclusions.length / columns);
+        // const inclusionsColumns = [
+        //     inclusions.slice(0, itemsPerColumn),
+        //     inclusions.slice(itemsPerColumn, itemsPerColumn * 2),
+        //     inclusions.slice(itemsPerColumn * 2, itemsPerColumn * 3),
+        //     inclusions.slice(itemsPerColumn * 3)
+        // ];
+        // let num = 1
+        // let maxInclusionY = startY; // Initialize with starting Y
         // inclusionsColumns.forEach((column, colIndex) => {
         //     column.forEach((item: string, rowIndex: number) => {
-        //         if (item) { // Ensure item exists
+        //         if (item) {
         //             const xPos = startX + (colIndex * columnWidth);
         //             const yPos = startY + (rowIndex * lineHeight);
         //             const formattedItem = formatWithSpaces(item);
@@ -1448,36 +1604,50 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         //             doc.fontSize(10).fillColor("black").font('PoppinsRegular')
         //                 .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
 
-        //             num++; // Increment global number
-
-        //         } else {
-        //             console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
+        //             if (yPos > maxInclusionY) maxInclusionY = yPos; // Track the deepest Y used
+        //             num++;
         //         }
         //     });
-        // });.
-        let maxInclusionY = startY; // Initialize with starting Y
-        inclusionsColumns.forEach((column, colIndex) => {
-            column.forEach((item: string, rowIndex: number) => {
-                if (item) {
-                    const xPos = startX + (colIndex * columnWidth);
-                    const yPos = startY + (rowIndex * lineHeight);
-                    const formattedItem = formatWithSpaces(item);
-
-                    doc.fontSize(10).fillColor("black").font('PoppinsRegular')
-                        .text(`${num}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
-
-                    if (yPos > maxInclusionY) maxInclusionY = yPos; // Track the deepest Y used
-                    num++;
-                }
-            });
-        });
+        // });
 
         checkPageSpace(doc, 50);
 
+
         // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, doc.y + 10);
-        const exclusionHeaderY = maxInclusionY + lineHeight + 10;
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, exclusionHeaderY);
+        // const exclusionHeaderY = maxInclusionY + lineHeight + 10;
+
+        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+        // .text(`ESTIMATION COST: ${estimationCost || 0}`, 30, 80, { continued: false });
+
+        // const nursingNoteY = doc.y + 20;
+        // doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
+        //     .text("NOTE:", 43, nursingNoteY, { continued: true });
+
+        // doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+        //     .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
+
+        // checkPageSpace(doc, 50);
+
+        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, exclusionHeaderY + 10);
         // const startExclusionsY = doc.y + 5;
+
+        checkPageSpace(doc, 50);  // Just after inclusion columns
+
+        // Add ESTIMATION COST and NOTE section here
+        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+            .text(`ESTIMATION COST: ${selectedRoomCost || 0}`, 30, doc.y + 10);
+
+        const nursingNoteY = doc.y + 10;
+        doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
+            .text("NOTE:", 43, nursingNoteY, { continued: true });
+
+        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+            .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
+
+        // Then start exclusions
+        const exclusionHeaderY = doc.y + 20;
+        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14)
+            .text(`EXCLUSIONS: `, 30, exclusionHeaderY);
 
 
         const startExclusionsY = doc.y + 10;
@@ -1494,9 +1664,9 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             const replacements: { [key: string]: string } = {
                 "LABORATORY IMAGING": "LABORATORY AND IMAGING",
                 "WARD ICUSTAY": "WARD ICU STAY",
-                "SURGEON OTANESTHESIA": "SURGEON OT ANESTHESIA",
+                // "SURGEON OTANESTHESIA": "SURGEON OT ANESTHESIA",
                 "INSTRUMENT EQUIPMENT": "INSTRUMENTS",
-                "BEDSIDE PROCEDURE": "PROCEDURE"
+                "BEDSIDE PROCEDURE": "ADD. PROCEDURE"
             };
 
             // Apply replacements
@@ -1506,39 +1676,105 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
             return formattedText;
         }
+        const processedExclusions: string[] = [];
+
+        exclusions.forEach((item: string) => {
+            const formattedItem = formatWithSpaces(item).toUpperCase();
+
+            if (formattedItem.includes("SURGEON OTANESTHESIA")) {
+                processedExclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
+            } else {
+                processedExclusions.push(formattedItem);
+            }
+        });
+        // const columns = 3;
+        const exclusionPer = Math.ceil(processedExclusions.length / columns);
+        const exclusionColumns = Array.from({ length: columns }, (_, colIndex) =>
+            processedExclusions.slice(colIndex * exclusionPer, (colIndex + 1) * exclusionPer)
+        );
+        let exclusionNum = 1;
+
+        exclusionColumns.forEach((column, colIndex) => {
+            column.forEach((item, rowIndex) => {
+                const xPos = startX + (colIndex * columnWidth);
+                const yPos = startExclusionsY + (rowIndex * lineHeight);
+
+                doc.fontSize(10)
+                    .fillColor("black")
+                    .font("PoppinsRegular")
+                    .text(`${exclusionNum}. ${item}`, xPos, yPos);
+
+                exclusionNum++;
+            });
+        });
 
 
         // Split exclusions into 4 parts
-        const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
-        const exclusionsColumns = [
-            exclusions.slice(0, exclusionsPerColumn),
-            exclusions.slice(exclusionsPerColumn, exclusionsPerColumn * 2),
-            exclusions.slice(exclusionsPerColumn * 2, exclusionsPerColumn * 3),
-            exclusions.slice(exclusionsPerColumn * 3)
-        ];
+        // const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
+        // const exclusionsColumns = [
+        //     exclusions.slice(0, exclusionsPerColumn),
+        //     exclusions.slice(exclusionsPerColumn, exclusionsPerColumn * 2),
+        //     exclusions.slice(exclusionsPerColumn * 2, exclusionsPerColumn * 3),
+        //     exclusions.slice(exclusionsPerColumn * 3)
+        // ];
 
-        // Render exclusions in 4 columns
-        let exclusionNum = 1
-        exclusionsColumns.forEach((column, colIndex) => {
-            column.forEach((item: string, rowIndex: number) => {
-                if (item) { // Ensure item exists
+        // // Render exclusions in 4 columns
+        // let exclusionNum = 1
+        // exclusionsColumns.forEach((column, colIndex) => {
+        //     column.forEach((item: string, rowIndex: number) => {
+        //         if (item) {
+        //             const xPos = startX + (colIndex * columnWidth);
+        //             let yPos = startExclusionsY + (rowIndex * lineHeight);
+        //             const formattedItem = formatWithSpaces(item);
 
-                    const xPos = startX + (colIndex * columnWidth);
-                    const yPos = startExclusionsY + (rowIndex * lineHeight);
-                    const formattedItem = formatWithSpaces(item);
+        //             if (formattedItem.includes("SURGEON OTANESTHESIA")) {
+        //                 const surgeonParts = [
+        //                     "SURGEON & ASST. SURGEON",
+        //                     "OT",
+        //                     "ANESTHESIA"
+        //                 ];
 
-                    doc.fontSize(10)
-                        .fillColor("black")
-                        .font('PoppinsRegular')
-                        .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
-                    exclusionNum++;
-                } else {
-                    console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
-                }
-            });
-        });
+        //                 surgeonParts.forEach((subItem) => {
+        //                     doc.fontSize(10)
+        //                         .fillColor("black")
+        //                         .font("PoppinsRegular")
+        //                         .text(`${exclusionNum}. ${subItem}`, xPos, yPos);
+
+        //                     exclusionNum++;
+        //                     yPos += lineHeight;
+        //                 });
+        //             } else {
+        //                 doc.fontSize(10)
+        //                     .fillColor("black")
+        //                     .font("PoppinsRegular")
+        //                     .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
+        //                 exclusionNum++;
+        //             }
+        //         } else {
+        //             console.warn("Skipping an invalid exclusion item:", item);
+        //         }
+        //     });
+        // });
+        // exclusionsColumns.forEach((column, colIndex) => {
+        //     column.forEach((item: string, rowIndex: number) => {
+        //         if (item) { // Ensure item exists
+
+        //             const xPos = startX + (colIndex * columnWidth);
+        //             const yPos = startExclusionsY + (rowIndex * lineHeight);
+        //             const formattedItem = formatWithSpaces(item);
+
+        //             doc.fontSize(10)
+        //                 .fillColor("black")
+        //                 .font('PoppinsRegular')
+        //                 .text(`${exclusionNum}. ${formattedItem.charAt(0).toUpperCase() + formattedItem.slice(1).toUpperCase()}`, xPos, yPos);
+        //             exclusionNum++;
+        //         } else {
+        //             console.warn("Skipping an invalid inclusion item:", item); // Log skipped items
+        //         }
+        //     });
+        // });
         // checkPageSpace(doc, 50);
-        const itemsStartY = startExclusionsY + (exclusionsPerColumn + 2) * lineHeight;
+        const itemsStartY = startExclusionsY + (exclusionPer + 2) * lineHeight;
 
 
         // let dynamicY = doc.y +20;
@@ -1547,7 +1783,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const labelX = 30;   // X position for labels
         const valueX = 160;  // X position for values (aligned for all)
         const maxWidth = 500; // Adjust width to avoid wrapping issues
-
+        const valueWidth = 380;
         // Define label color & text properties
         const labelColor = "#0098A3"; // Highlight color
         const valueColor = "black";   // Default text color
@@ -1563,10 +1799,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         // Function to draw a label and aligned value in a single line
         const drawLabelValue = (label: any, value: any, yPosition: any) => {
-            doc.fillColor(labelColor).font("PoppinsSemiBold").fontSize(labelFontSize).text(label, labelX, yPosition);
+            doc.fillColor(labelColor).font("PoppinsSemiBold").fontSize(labelFontSize).text(label, labelX, yPosition, { width: valueWidth });
 
             doc.fillColor(valueColor).font("PoppinsRegular").fontSize(valueFontSize)
-                .text(` ${formatValueString(value)}`, valueX, yPosition, { width: maxWidth, align: "left" });
+                .text(` ${formatValueString(value)}`, valueX, yPosition, { width: valueWidth, align: "left" });
         };
         const requiredSpace = 100; // Approx space needed for implants + procedures + instruments + remarks
         const pageHeightThreshold = doc.page.height - 100;
@@ -1580,7 +1816,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         drawLabelValue("IMPLANTS:", implants?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(implants).toUpperCase()) + 8; // Add spacing
 
-        drawLabelValue("PROCEDURES:", procedures?.toUpperCase(), dynamicY);
+        drawLabelValue("ADD. PROCEDURES:", procedures?.toUpperCase(), dynamicY);
         dynamicY += doc.heightOfString(formatValueString(procedures).toUpperCase()) + 8;
 
         drawLabelValue("INSTRUMENTS:", instrumentals?.toUpperCase(), dynamicY);
@@ -1591,11 +1827,11 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
 
 
-        if (surgeryPackage?.toLowerCase() === "multiple surgeries") {
-            // doc.text(`Multiple Surgery Cost: ${multipleEstimationCost || "N/A"}`, 30, 625);
-            doc.fontSize(12).text(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`, 30, dynamicY);
-            dynamicY += doc.heightOfString(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`) + 10;
-        }
+        // if (surgeryPackage?.toLowerCase() === "multiple surgeries") {
+        //     // doc.text(`Multiple Surgery Cost: ${multipleEstimationCost || "N/A"}`, 30, 625);
+        //     doc.fontSize(12).text(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`, 30, dynamicY);
+        //     dynamicY += doc.heightOfString(`MULTIPLE SURGERY COST:  ${multipleEstimationCost || "N/A"}`) + 10;
+        // }
 
         if (dynamicY + requiredSpace > pageHeightThreshold) {
             doc.addPage();
@@ -1605,10 +1841,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             ? new Date(estimatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
             : "N/A";
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`ESTIMATED DATE: ${formattedDate || "N/A"}`, 30, dynamicY, { continued: false });
+            .text(`ADMISSION DATE: ${formattedDate || "N/A"}`, 30, dynamicY + 20, { continued: false });
 
-        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`SELECTED WARD: ${selectedRoomCost.toUpperCase() || "N/A"}`, 300, dynamicY); // Same Y-coordinate
+        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+        //     .text(`SELECTED WARD: ${selectedRoomCost.toUpperCase() || "N/A"}`, 300, dynamicY); // Same Y-coordinate
 
         // Now update dynamicY only once after both texts are placed
         dynamicY += doc.heightOfString(`ESTIMATED DATE: ${estimatedDate || "N/A"}`) + 10;
@@ -1621,25 +1857,63 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // checkPageSpace(doc, 50);
 
         // Cost Details (Bold & Dynamic)
-        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`ESTIMATION COST: ${estimationCost || 0}`, 30, dynamicY, { continued: false });
+        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+        //     .text(`ADDITIONAL COST: ${totalEstimationAmount - selectedRoomCost || 0}`, 30, dynamicY, { continued: false });
+        const roomCostNumbers = (selectedRoomCost.match(/\d+/g) || []).map(Number);
+        const summedRoomCost = roomCostNumbers.reduce((sum: any, num: any) => sum + num, 0);
+        const additionalCost = totalEstimationAmount - summedRoomCost;
 
-        doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`TOTAL COST: ${totalEstimationAmount || 0}`, 300, dynamicY); // Same Y-coordinate
+        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+        //     .text(`ADDITIONAL COST: ${additionalCost > 0 ? additionalCost : 0}`, 30, dynamicY, { continued: false });
+
+
+        // doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
+        //     .text(`TENTATIVE COST: ${totalEstimationAmount || 0}`, 300, dynamicY); // Same Y-coordinate
+        const tablex = 30;
+        let tabley = doc.y + 20;
+        const colWidth = [200, 200]; // Label column and value column
+        const rowHeight = 20;
+
+        // Table rows
+        const tableData = [
+            ["INCLUSION ESTIMATION COST", `₹${summedRoomCost}`],
+            ["ADDITIONAL COST", `₹${additionalCost > 0 ? additionalCost : 0}`],
+            ["TENTATIVE COST", `₹${totalEstimationAmount}`],
+        ];
+
+        // Draw rows
+        tableData.forEach(([label, value], index) => {
+            const y = tabley + index * rowHeight;
+
+            // Draw box for label
+            doc.rect(tablex, y, colWidth[0], rowHeight).stroke();
+            // Draw box for value
+            doc.rect(tablex + colWidth[0], y, colWidth[1], rowHeight).stroke();
+
+            // Add text
+            doc.font("PoppinsSemiBold").fontSize(10).fillColor("black").text(label, tablex + 5, y + 5);
+            doc.font("PoppinsRegular").text(value, tablex + colWidth[0] + 5, y + 5);
+        });
+
+        // Update Y position
+        doc.y = tabley + tableData.length * rowHeight + 10;
+
 
         // Now update dynamicY only once after both texts are placed
-        dynamicY += doc.heightOfString(`ESTIMATION COST: ${estimationCost || 0}`) + 10;
+        // dynamicY += doc.heightOfString(`ESTIMATION COST: ${estimationCost || 0}`) + 10;
+        dynamicY = doc.y; // Add some space after the cost details
 
 
         const leftMargin = 30;   // Left-side margin
-        const rightMargin = 550; // ✅ Reduce width to create right-side space
+        const rightMargin = 50; // ✅ Reduce width to create right-side space
         const contentWidth = rightMargin - leftMargin; // Width of text with padding
 
         // Define note text
         const noteText = `This estimation is prepared based on the details available at the time of the request. 
 Actual charges may vary depending on unforeseen circumstances or changes in the patient’s condition. 
 The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
-Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.`;
+Please note that the cost will increase if the duration of the patient’s stay exceeds the expected number of days.
+Additional treatments may be suggested by the doctor, depending on the patient’s condition.`;
 
         // // Check if there's enough space before adding the note
         if (dynamicY + 150 > doc.page.height - 100) {
@@ -1703,7 +1977,9 @@ Please note that the cost will increase if the duration of the patient’s stay 
 
         // Move Down for Additional Content
         doc.moveDown(2);
-
+        const declarationText = `I confirm that the admission details were explained to me clearly in a language I understand. I have understood the information and consent to proceed with admission and treatment as per hospital norms.`
+        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+            .text(` ${declarationText.toUpperCase()}`, 30, startYAxis + 120, { width: 520, align: "left" });
 
         // End PDF
         doc.end();
@@ -1918,37 +2194,37 @@ export const unlockService = async (req: Request, res: Response): Promise<void> 
 };
 export const updateSurgeryDate = async (req: Request, res: Response) => {
     try {
-      const {estimationId} = req.params;
-      const { statusOfEstimation, overDueDateAndTIme, estimatedDate } = req.body;
-  
-      if (!estimationId) {
-         res.status(400).json({ message: 'Estimation ID is required' });
-         return
-      }
-  
-      const updatedEstimation = await prisma.estimationDetails.update({
-        where: { estimationId: estimationId },
-        data: {
-          statusOfEstimation,
-          overDueDateAndTIme, // this will be set to null as you pass it
-          estimatedDate,
+        const { estimationId } = req.params;
+        const { statusOfEstimation, overDueDateAndTIme, estimatedDate } = req.body;
+
+        if (!estimationId) {
+            res.status(400).json({ message: 'Estimation ID is required' });
+            return
         }
-      });
-  
-      res.status(200).json(updatedEstimation);
+
+        const updatedEstimation = await prisma.estimationDetails.update({
+            where: { estimationId: estimationId },
+            data: {
+                statusOfEstimation,
+                overDueDateAndTIme, // this will be set to null as you pass it
+                estimatedDate,
+            }
+        });
+
+        res.status(200).json(updatedEstimation);
     } catch (error) {
-      console.error('Error updating estimation:', error);
-      res.status(500).json({ message: 'Internal server error' });
+        console.error('Error updating estimation:', error);
+        res.status(500).json({ message: 'Internal server error' });
     }
-  };
+};
 export const getFollowUpEstimations = async (req: Request, res: Response) => {
     try {
         const estimationFollowUpDetails = await prisma.estimationDetails.findMany({
             where: {
                 followUpDates: {
-                  some: {}
+                    some: {}
                 }
-              },
+            },
             include: {
                 followUpDates: true
             }
@@ -1961,13 +2237,13 @@ export const getFollowUpEstimations = async (req: Request, res: Response) => {
     }
 }
 
-export const getTodayConfirmedEstimations = async(req: Request, res: Response) =>{
-    try{
+export const getTodayConfirmedEstimations = async (req: Request, res: Response) => {
+    try {
         const confirmedEstimations = await prisma.estimationDetails.findMany({
-            where:{
+            where: {
                 statusOfEstimation: 'confirmed',
             },
-            select:{
+            select: {
                 id: true,
                 patientName: true,
                 estimationId: true,
@@ -1979,21 +2255,21 @@ export const getTodayConfirmedEstimations = async(req: Request, res: Response) =
         })
         res.status(200).json(confirmedEstimations)
     }
-    catch(error){
+    catch (error) {
         console.error('Error fetching estimation details:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-export const getopdEstimation = async(req: Request, res: Response) =>{
-    try{
+export const getopdEstimation = async (req: Request, res: Response) => {
+    try {
         const confirmedEstimations = await prisma.estimationDetails.findMany({
             where: {
-                estimationCreatedTime:{
+                estimationCreatedTime: {
                     not: null
                 }
             },
-            select:{
+            select: {
                 id: true,
                 patientName: true,
                 estimationId: true,
@@ -2007,16 +2283,16 @@ export const getopdEstimation = async(req: Request, res: Response) =>{
         })
         res.status(200).json(confirmedEstimations)
     }
-    catch(error){
+    catch (error) {
         console.error('Error fetching estimation details:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-export const getStatusEstimation = async(req: Request, res: Response) =>{
-    try{
+export const getStatusEstimation = async (req: Request, res: Response) => {
+    try {
         const confirmedEstimations = await prisma.estimationDetails.findMany({
-            select:{
+            select: {
                 id: true,
                 patientName: true,
                 estimationId: true,
@@ -2025,17 +2301,17 @@ export const getStatusEstimation = async(req: Request, res: Response) =>{
                 estimationCreatedTime: true,
                 patientUHID: true,
                 consultantId: true,
-                approvedDateAndTime:true,
-                confirmedDateAndTime:true,
-                cancellationDateAndTime:true,
-                completedDateAndTime:true,
-                overDueDateAndTIme:true,
-                submittedDateAndTime:true,
+                approvedDateAndTime: true,
+                confirmedDateAndTime: true,
+                cancellationDateAndTime: true,
+                completedDateAndTime: true,
+                overDueDateAndTIme: true,
+                submittedDateAndTime: true,
             }
         })
         res.status(200).json(confirmedEstimations)
     }
-    catch(error){
+    catch (error) {
         console.error('Error fetching estimation details:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
