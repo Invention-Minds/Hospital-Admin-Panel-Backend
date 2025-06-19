@@ -1542,7 +1542,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         let afterRoomCostY = doc.y;
         console.log(afterRoomCostY)
         const startY = afterRoomCostY + 10; // Calculate height based on the text
-        const lineHeight = 20;
+        const lineHeight = 30;
         // const columns = 3;
         const processedInclusions: string[] = [];
 
@@ -1635,7 +1635,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         // Add ESTIMATION COST and NOTE section here
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`ESTIMATION COST: ${selectedRoomCost || 0}`, 30, doc.y + 10);
+            .text(`ESTIMATION COST: ${selectedRoomCost || 0}`, 30,maxInclusionY + 20);
 
         const nursingNoteY = doc.y + 10;
         doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
