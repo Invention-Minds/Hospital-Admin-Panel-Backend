@@ -1210,10 +1210,12 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         }
 
         function checkPageSpace(doc: any, additionalSpace = 0) {
+            console.log(doc.y, additionalSpace);
             if (doc.y + additionalSpace > 700) {
                 doc.addPage();
                 addBackground(doc);
                 addCreatedAtFooter(doc);
+                doc.y = 80;
             }
         }
         function addCreatedAtFooter(doc: any) {
@@ -1527,13 +1529,13 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
 
         // Update Y position
-        doc.moveDown(1);
+        // doc.moveDown(1);
 
 
         let afterNoteY = doc.y;
         console.log('note', afterNoteY)
         doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`INCLUSION: `, 30, afterNoteY + 10);
-        checkPageSpace(doc, 50);
+        // checkPageSpace(doc, 50);
 
 
         const startX = 30;  // X position of first column
@@ -1546,18 +1548,18 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // const columns = 3;
         const processedInclusions: string[] = [];
 
-        inclusions.forEach((item:any) => {
-          if (!item) return;
-        
-          const formatted = formatWithSpaces(item).toUpperCase();
-        
-          if (formatted.includes("SURGEON OTANESTHESIA")) {
-            processedInclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
-          } else {
-            processedInclusions.push(formatted);
-          }
+        inclusions.forEach((item: any) => {
+            if (!item) return;
+
+            const formatted = formatWithSpaces(item).toUpperCase();
+
+            if (formatted.includes("SURGEON OTANESTHESIA")) {
+                processedInclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
+            } else {
+                processedInclusions.push(formatted);
+            }
         });
-        
+
         const totalInclusions = processedInclusions.length;
         const columns = 4;
         const itemsPer = Math.ceil(totalInclusions / columns);
@@ -1610,8 +1612,6 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         //     });
         // });
 
-        checkPageSpace(doc, 50);
-
 
         // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, doc.y + 10);
         // const exclusionHeaderY = maxInclusionY + lineHeight + 10;
@@ -1631,11 +1631,11 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`EXCLUSIONS: `, 30, exclusionHeaderY + 10);
         // const startExclusionsY = doc.y + 5;
 
-        checkPageSpace(doc, 50);  // Just after inclusion columns
+        // checkPageSpace(doc, 50);  // Just after inclusion columns
 
         // Add ESTIMATION COST and NOTE section here
         doc.fillColor("black").font('PoppinsSemiBold').fontSize(12)
-            .text(`ESTIMATION COST: ${selectedRoomCost || 0}`, 30,maxInclusionY + 20);
+            .text(`ESTIMATION COST: ${selectedRoomCost || 0}`, 30, maxInclusionY + 20);
 
         const nursingNoteY = doc.y + 10;
         doc.fillColor("#0098A3").font("PoppinsSemiBold").fontSize(10)
@@ -1643,71 +1643,141 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         doc.fillColor("black").font("PoppinsRegular").fontSize(10)
             .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
+            checkPageSpace(doc, 80); // Increase space threshold (e.g., header + first few rows)
+            doc.moveDown(1); // only after possible page break
+            
+            doc.fillColor("#0098A3")
+                .font('PoppinsSemiBold')
+                .fontSize(14)
+                .text(`EXCLUSIONS: `, 30); // Use current doc.y, no Y override
+
+        console.log(doc.y,'doc.y')
 
         // Then start exclusions
-        const exclusionHeaderY = doc.y + 20;
-        doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14)
-            .text(`EXCLUSIONS: `, 30, exclusionHeaderY);
+        // const exclusionHeaderY = doc.y + 20;
+        // console.log(exclusionHeaderY)
+        // doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14)
+        //     .text(`EXCLUSIONS: `, 30, exclusionHeaderY);
 
 
+        // const startExclusionsY = doc.y + 10;
+        // function formatWithSpaces(text: string): string {
+        //     if (!text) return '';
+
+        //     // Insert spaces before uppercase letters (CamelCase handling)
+        //     let formattedText = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+        //     // Convert to uppercase to ensure case-insensitive replacements
+        //     formattedText = formattedText.toUpperCase();
+
+        //     // Define replacements for specific terms
+        //     const replacements: { [key: string]: string } = {
+        //         "LABORATORY IMAGING": "LABORATORY AND IMAGING",
+        //         "WARD ICUSTAY": "WARD ICU STAY",
+        //         // "SURGEON OTANESTHESIA": "SURGEON OT ANESTHESIA",
+        //         "INSTRUMENT EQUIPMENT": "INSTRUMENTS",
+        //         "BEDSIDE PROCEDURE": "ADD. PROCEDURE"
+        //     };
+
+        //     // Apply replacements
+        //     Object.keys(replacements).forEach(key => {
+        //         formattedText = formattedText.replace(new RegExp(key, 'gi'), replacements[key]);
+        //     });
+
+        //     return formattedText;
+        // }
+        // const processedExclusions: string[] = [];
+
+        // exclusions.forEach((item: string) => {
+        //     const formattedItem = formatWithSpaces(item).toUpperCase();
+
+        //     if (formattedItem.includes("SURGEON OTANESTHESIA")) {
+        //         processedExclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
+        //     } else {
+        //         processedExclusions.push(formattedItem);
+        //     }
+        // });
+        // // const columns = 3;
+
+        // const exclusionColumns = Array.from({ length: columns }, (_, colIndex) =>
+        //     processedExclusions.slice(colIndex * exclusionPer, (colIndex + 1) * exclusionPer)
+        // );
+        // let exclusionNum = 1;
+
+        // exclusionColumns.forEach((column, colIndex) => {
+        //     column.forEach((item, rowIndex) => {
+        //         const xPos = startX + (colIndex * columnWidth);
+        //         const yPos = startExclusionsY + (rowIndex * lineHeight);
+
+        //         doc.fontSize(10)
+        //             .fillColor("black")
+        //             .font("PoppinsRegular")
+        //             .text(`${exclusionNum}. ${item}`, xPos, yPos);
+
+        //         exclusionNum++;
+        //     });
+        // });
         const startExclusionsY = doc.y + 10;
+
         function formatWithSpaces(text: string): string {
             if (!text) return '';
 
-            // Insert spaces before uppercase letters (CamelCase handling)
-            let formattedText = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+            let formattedText = text.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase();
 
-            // Convert to uppercase to ensure case-insensitive replacements
-            formattedText = formattedText.toUpperCase();
-
-            // Define replacements for specific terms
             const replacements: { [key: string]: string } = {
                 "LABORATORY IMAGING": "LABORATORY AND IMAGING",
                 "WARD ICUSTAY": "WARD ICU STAY",
-                // "SURGEON OTANESTHESIA": "SURGEON OT ANESTHESIA",
                 "INSTRUMENT EQUIPMENT": "INSTRUMENTS",
                 "BEDSIDE PROCEDURE": "ADD. PROCEDURE"
             };
 
-            // Apply replacements
             Object.keys(replacements).forEach(key => {
                 formattedText = formattedText.replace(new RegExp(key, 'gi'), replacements[key]);
             });
 
             return formattedText;
         }
+
         const processedExclusions: string[] = [];
 
         exclusions.forEach((item: string) => {
-            const formattedItem = formatWithSpaces(item).toUpperCase();
-
+            const formattedItem = formatWithSpaces(item);
             if (formattedItem.includes("SURGEON OTANESTHESIA")) {
                 processedExclusions.push("SURGEON & ASST. SURGEON", "OT", "ANESTHESIA");
             } else {
                 processedExclusions.push(formattedItem);
             }
         });
-        // const columns = 3;
-        const exclusionPer = Math.ceil(processedExclusions.length / columns);
-        const exclusionColumns = Array.from({ length: columns }, (_, colIndex) =>
-            processedExclusions.slice(colIndex * exclusionPer, (colIndex + 1) * exclusionPer)
-        );
+
         let exclusionNum = 1;
+        currentY = startExclusionsY;
+        const itemsPerRow = columns; // 4 if you've defined it that way
+        const bottomMargin = 100;
 
-        exclusionColumns.forEach((column, colIndex) => {
-            column.forEach((item, rowIndex) => {
-                const xPos = startX + (colIndex * columnWidth);
-                const yPos = startExclusionsY + (rowIndex * lineHeight);
+        for (let i = 0; i < processedExclusions.length; i += itemsPerRow) {
+            if (currentY + lineHeight > doc.page.height - bottomMargin) {
+                doc.addPage();
+                addBackground(doc);
+                addCreatedAtFooter(doc);
+                currentY = 80; // Reset Y for new page
+            }
 
+            for (let j = 0; j < itemsPerRow; j++) {
+                const item = processedExclusions[i + j];
+                if (!item) continue;
+
+                const xPos = startX + j * columnWidth;
                 doc.fontSize(10)
                     .fillColor("black")
                     .font("PoppinsRegular")
-                    .text(`${exclusionNum}. ${item}`, xPos, yPos);
+                    .text(`${exclusionNum}. ${item}`, xPos, currentY);
 
                 exclusionNum++;
-            });
-        });
+            }
 
+            currentY += lineHeight;
+        }
+        const exclusionPer = Math.ceil(processedExclusions.length / columns);
 
         // Split exclusions into 4 parts
         // const exclusionsPerColumn = Math.ceil(exclusions.length / columns);
@@ -1774,8 +1844,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         //     });
         // });
         // checkPageSpace(doc, 50);
-        const itemsStartY = startExclusionsY + (exclusionPer + 2) * lineHeight;
-
+        // const itemsStartY = startExclusionsY + (exclusionPer + 2) * lineHeight;
+        const itemsStartY = doc.y + 20; // Start below the exclusions section
 
         // let dynamicY = doc.y +20;
 

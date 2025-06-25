@@ -28,7 +28,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   console.log('req.body:', req.body);
   const { doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status, requestVia, prefix } = req.body;
   let patientName = req.body.patientName;
-  patientName = prefix + ' ' +patientName;
+  patientName = prefix + ' ' + patientName;
   console.log(patientName, doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status);
   // const date = formatDateYear(date)
 
@@ -63,7 +63,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       type: "template", // Type of the message
       message: {
         templateid: "774273", // Replace with the actual template ID
-        placeholders: [doctorName, status, patientName, time,formatDateYear(new Date(date))], // Dynamic placeholders
+        placeholders: [doctorName, status, patientName, time, formatDateYear(new Date(date))], // Dynamic placeholders
       },
     }
     let patientPayload = {}
@@ -80,7 +80,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       const patientResponse = await axios.post(url!, patientPayload, { headers });
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
     }
-    else if(status === 'cancelled'){
+    else if (status === 'cancelled') {
       patientPayload = {
         from: fromPhoneNumber,
         to: patientPhoneNumber,
@@ -94,7 +94,7 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
 
     }
-     else {
+    else {
       patientPayload = {
         from: fromPhoneNumber,
         to: patientPhoneNumber,
@@ -201,7 +201,7 @@ export const checkAndSendReminders = async () => {
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         let prefix = appointment.prefix || '';
-        const name = prefix + ' ' +appointment.patientName;
+        const name = prefix + ' ' + appointment.patientName;
 
         // const messages = [
         //     // Message for Patient
@@ -384,7 +384,7 @@ export const checkAndSendReminders = async () => {
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         let prefix = appointment.prefix || '';
-        const name = prefix + ' ' +appointment.patientName;
+        const name = prefix + ' ' + appointment.patientName;
 
         // const messages = [
         //     // Message for Patient
@@ -420,7 +420,7 @@ export const checkAndSendReminders = async () => {
           type: "template", // Type of the message
           message: {
             templateid: "751381", // Replace with the actual template ID
-            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date)) ], // Dynamic placeholders
+            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
           },
         };
 
@@ -998,7 +998,7 @@ export const sendServiceWhatsappMessage = async (req: Request, res: Response) =>
         type: "template", // Message type
         message: {
           templateid: "751387", // Template ID
-          placeholders: [name, packageName, appointmentStatus, appointmentTime , formatDateYear(new Date(appointmentDate))], // Placeholders for the template
+          placeholders: [name, packageName, appointmentStatus, appointmentTime, formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
     }
@@ -1073,7 +1073,7 @@ export const sendRadiologyMessage = async (req: Request, res: Response) => {
         type: "template", // Message type
         message: {
           templateid: "765787", // Template ID
-          placeholders: [name, radioServiceName, appointmentStatus, appointmentTime ,formatDateYear(new Date(appointmentDate))], // Placeholders for the template
+          placeholders: [name, radioServiceName, appointmentStatus, appointmentTime, formatDateYear(new Date(appointmentDate))], // Placeholders for the template
         },
       };
     }
@@ -1365,7 +1365,12 @@ export const updateEstimation = async () => {
     const updatedEstimations = await Promise.all(
       estimations.map(async (estimation) => {
         console.log(estimation.estimationCreatedTime)
-        const estimationCreatedTime = estimation.estimationCreatedTime!;
+        // const estimationCreatedTime = estimation.estimationCreatedTime!;
+        const estimationCreatedTime = estimation.estimationCreatedTime
+          ? new Date(estimation.estimationCreatedTime)
+          : estimation.submittedDateAndTime
+            ? new Date(estimation.submittedDateAndTime)
+            : null;
         const estimatedDate = estimation.estimatedDate ? new Date(estimation.estimatedDate) : null;
         console.log(estimatedDate)
         let ageBucket: number = 0
@@ -2142,7 +2147,7 @@ async function checkDoctorAvailability() {
 
       const adminPhoneNumbers = ["919880544866", "916364833988"]
       // const adminPhoneNumbers = ["919342287945", "919342003000"];
-      
+
       const now = moment().tz("Asia/Kolkata").toDate();
 
       const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
@@ -2768,7 +2773,7 @@ function convertTimeToMinutes(time: string): number {
 
 export const sendLabReportMessage = async (req: Request, res: Response) => {
   try {
-    const { firstName,lastName,prefix, phoneNumber } = req.body;
+    const { firstName, lastName, prefix, phoneNumber } = req.body;
     const patientName = `${prefix} ${firstName} ${lastName}`;
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const url = process.env.WHATSAPP_API_URL;
@@ -2813,7 +2818,7 @@ export const sendLabReportMessage = async (req: Request, res: Response) => {
 }
 export const sendRadioReportMessage = async (req: Request, res: Response) => {
   try {
-    const { firstName,lastName,prefix, phoneNumber, radioServiceName } = req.body;
+    const { firstName, lastName, prefix, phoneNumber, radioServiceName } = req.body;
     const patientName = ` ${prefix} ${firstName} ${lastName}`;
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
     const url = process.env.WHATSAPP_API_URL;
@@ -2861,7 +2866,7 @@ cron.schedule("0 7 * * *", async () => {
   await updateEstimation();
   await processRepeatedAppointments();
 });
-cron.schedule("* 8-19 * * *",updateDoctorAssignments);
+cron.schedule("* 8-19 * * *", updateDoctorAssignments);
 cron.schedule("0 21 * * *", sendDoctorMessage);
 cron.schedule("0 * * * *", async () => {
   await checkAndSendReminders();
@@ -2870,6 +2875,6 @@ cron.schedule("0 * * * *", async () => {
 });
 cron.schedule("0 23 * * *", async () => {
   await markComplete();
-    await markCompleteRadio();
+  await markCompleteRadio();
 });
-cron.schedule("50 15 * * *",markComplete);
+cron.schedule("50 15 * * *", markComplete);
