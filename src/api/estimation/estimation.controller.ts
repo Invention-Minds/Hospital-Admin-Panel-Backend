@@ -1536,7 +1536,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         let afterNoteY = doc.y;
         console.log('note', afterNoteY)
         doc.fillColor("#0098A3").font('PoppinsSemiBold').fontSize(14).text(`INCLUSION: `, 30, afterNoteY + 10);
-        // checkPageSpace(doc, 50);
+        checkPageSpace(doc, 80);
 
 
         const startX = 30;  // X position of first column
