@@ -21,6 +21,9 @@ model Department {
   name       String       @unique
   doctors    Doctor[]
   Estimation Estimation[]
+  createdAt  DateTime?    @default(now())
+  updatedAt  DateTime?    @updatedAt
+  userId     Int?
 }
 
 model Doctor {
@@ -53,6 +56,8 @@ model Doctor {
   SentMessage      SentMessage[]
   LeaveDates       LeaveDates[]
   kmcNumber        String?
+  createdBy        String?
+  updatedBy        String?
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -74,6 +79,8 @@ model User {
   Notification   Notification[]
   activeTokens   ActiveToken[]
   appointments   Appointment[]  @relation("UserAppointments")
+  createdBy      String?
+  updatedBy      String?
 
   @@map("users")
 }
@@ -90,16 +97,20 @@ model DoctorAvailability {
   startDate     String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime? @updatedAt
+  createdBy     String?
   doctor        Doctor?   @relation("DoctorToAvailability", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "DoctorAvailability_doctorId_fkey")
 }
 
 model UnavailableDates {
-  id       Int      @id @default(autoincrement())
-  doctorId Int?
-  date     DateTime
-  doctor   Doctor?  @relation("DoctorToUnavailableDate", fields: [doctorId], references: [id])
+  id        Int       @id @default(autoincrement())
+  doctorId  Int?
+  date      DateTime
+  createdBy String?
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+  doctor    Doctor?   @relation("DoctorToUnavailableDate", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "UnavailableDates_doctorId_fkey")
 }
@@ -183,23 +194,28 @@ model Appointment {
 }
 
 model BookedSlot {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   doctorId  Int?
   date      String
   time      String
-  createdAt DateTime @default(now())
-  complete  Boolean? @default(false)
-  doctor    Doctor?  @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
+  createdAt DateTime  @default(now())
+  complete  Boolean?  @default(false)
+  updatedAt DateTime? @updatedAt
+  createdBy String?
+  doctor    Doctor?   @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "BookedSlot_doctorId_fkey")
 }
 
 model UnavailableSlot {
-  id       Int     @id @default(autoincrement())
-  doctorId Int?
-  time     String
-  date     String
-  doctor   Doctor? @relation("DoctorToUnavailableSlot", fields: [doctorId], references: [id])
+  id        Int       @id @default(autoincrement())
+  doctorId  Int?
+  time      String
+  date      String
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+  createdBy String?
+  doctor    Doctor?   @relation("DoctorToUnavailableSlot", fields: [doctorId], references: [id])
 
   @@unique([doctorId, date, time])
 }
@@ -267,11 +283,14 @@ model ActiveToken {
 }
 
 model ExtraSlot {
-  id       Int     @id @default(autoincrement())
-  doctorId Int?
-  date     String
-  time     String
-  doctor   Doctor? @relation("DoctorToExtraSlot", fields: [doctorId], references: [id])
+  id        Int       @id @default(autoincrement())
+  doctorId  Int?
+  date      String
+  time      String
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+  createdBy String?
+  doctor    Doctor?   @relation("DoctorToExtraSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId, date, time], map: "unique_slot")
 }
@@ -375,6 +394,7 @@ model Package {
   updatedAt   DateTime @updatedAt
   deptIds     String?
   radioIds    String?
+  createdBy   String?
 
   services Service[] // Back relation to Service
 
@@ -387,6 +407,7 @@ model RadioService {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  createdBy   String?
 
   services            Service[] // Back relation to Service
   ServiceAppointments ServiceAppointments[]
@@ -480,6 +501,7 @@ model ExtraSlotCount {
   extraHoursAfter  String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  createdBy        String?
   timeRange        String?
 }
 
@@ -580,6 +602,9 @@ model FollowUpDate {
   remarks           String // Remarks or comments
   date              String // Follow-up date
   estimationId      String // Relation to the Estimation table
+  createdBy         String?
+  createdAt         DateTime?          @default(now())
+  updatedAt         DateTime?          @updatedAt
   EstimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
 
   @@map("follow_up_date")
@@ -731,6 +756,7 @@ model TabletMaster {
   description    String?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @default(now()) @updatedAt
+  createdBy      String?
   FavoriteTablet FavoriteTablet[]
 }
 
@@ -771,6 +797,9 @@ model DoctorNote {
   pa                 String?  @db.Text
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  doctorId           Int?
+  createdBy          String?
+  updatedBy          String?
 }
 
 model HistoryNotes {
@@ -782,6 +811,9 @@ model HistoryNotes {
   socialHistory  String?  @db.Text
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  doctorId       Int?
+  createdBy      String?
+  updatedBy      String?
 }
 
 model Lab {

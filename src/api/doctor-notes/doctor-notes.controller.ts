@@ -59,7 +59,7 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
   try {
     const { prn } = req.params;
     const date = req.query.date as string;
-    const data = req.body;
+    const payload = req.body;
 
     if (!date) {
        res.status(400).json({ message: 'Date is required' });
@@ -79,7 +79,11 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
       // Update existing note
       result = await prisma.doctorNote.update({
         where: { id: existing.id },
-        data,
+        data: {
+          ...payload,
+          prn: Number(prn), // Ensure PRN is stored as a number
+          date, // Ensure date is stored correctly
+        },
       });
     } else {
       // Create new note
@@ -87,7 +91,7 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
         data: {
           prn: Number(prn),
           date,
-          ...data
+          ...payload,
         }
       });
     }

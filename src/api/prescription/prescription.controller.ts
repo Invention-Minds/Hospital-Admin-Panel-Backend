@@ -99,6 +99,7 @@ export const createTablet = async (req: Request, res: Response) => {
         brandName,
         type,
         description,
+        createdBy: req.body.doctorId
       },
     });
 

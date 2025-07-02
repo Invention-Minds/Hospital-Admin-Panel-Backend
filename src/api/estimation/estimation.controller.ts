@@ -507,8 +507,8 @@ export const updateEstimationDetails = async (req: Request, res: Response) => {
 export const updateFollowUps = async (req: Request, res: Response) => {
     try {
         const { estimationId } = req.params; // Extract the estimationId from the route params
-        const { followUpData, date, remarks } = req.body; // Extract follow-up data from the request body
-        console.log(followUpData, date, remarks)
+        const { followUpData, date, remarks, createdBy } = req.body; // Extract follow-up data from the request body
+        console.log(followUpData, date, remarks,createdBy)
         // const date = followUpData.date;
         // const remarks = followUpData.remarks;
         // Validate if the estimation exists
@@ -534,6 +534,7 @@ export const updateFollowUps = async (req: Request, res: Response) => {
                 date,
                 remarks,
                 estimationId,
+                createdBy
             },
         });
 
@@ -2386,3 +2387,45 @@ export const getStatusEstimation = async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 }
+export const listLockedEstimations = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const lockedEstimations = await prisma.estimationDetails.findMany({
+        where: {
+          lockedBy: {
+            not: null, // only locked items
+          },
+        },
+        select: {
+          id: true,
+          estimationId: true,
+          lockedBy: true, // will contain userId
+        },
+      });
+  
+      res.status(200).json(lockedEstimations);
+    } catch (error) {
+      console.error('Error fetching locked estimations:', error);
+      res.status(500).json({ message: 'Failed to fetch locked estimations' });
+    }
+  };
+  export const bulkUnlockServices = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { ids } = req.body;
+  
+      if (!Array.isArray(ids) || ids.length === 0) {
+        res.status(400).json({ message: 'No estimation IDs provided' });
+        return;
+      }
+  
+      await prisma.estimationDetails.updateMany({
+        where: { id: { in: ids } },
+        data: { lockedBy: null },
+      });
+  
+      res.status(200).json({ message: 'Estimations unlocked successfully' });
+    } catch (error) {
+      console.error('Error unlocking estimations:', error);
+      res.status(500).json({ message: 'Failed to unlock estimations' });
+    }
+  };
+  

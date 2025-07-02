@@ -134,7 +134,7 @@ export default class DoctorRepository {
     });
   }
   // Method to add a booked slot to the BookedSlot model
-  public async addBookedSlot(doctorId: number, date: string, time: string) {
+  public async addBookedSlot(doctorId: number, date: string, time: string, userId: string) {
     console.log('Booked slot added successfully');
     return await this.prisma.bookedSlot.create({
       data: {
@@ -142,6 +142,7 @@ export default class DoctorRepository {
         date,
         time,
         complete: false,
+        createdBy: userId,  // Assuming userId is the ID of the user who booked the slot
       },
     });
 

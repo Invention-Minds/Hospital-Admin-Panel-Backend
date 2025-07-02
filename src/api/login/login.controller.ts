@@ -142,7 +142,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
 
 export const userRegister = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { username, password, isReceptionist, employeeId, role, subAdminType, adminType } = req.body;
+    const { username, password, isReceptionist, employeeId, role, subAdminType, adminType, createdBy } = req.body;
     // const { username, password, isReceptionist, role } = req.body;
     // const { username, password } = req.body;
     // const role = extractRoleFromUsername(username); 
@@ -157,7 +157,7 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
       return; // Ensure the function stops execution after sending a response
     }
 
-    const newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType);
+    const newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);
     res.status(201).json(newUser);
   } catch (error) {
     console.error('Error during user registration:', error);
@@ -194,9 +194,9 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
-    const { employeeId, newPassword } = req.body;
+    const { employeeId, newPassword,updatedBy } = req.body;
 
-    await resetPassword(employeeId, newPassword);
+    await resetPassword(employeeId, newPassword,updatedBy);
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -205,8 +205,8 @@ export const userResetPassword = async (req: Request, res: Response) => {
 
 export const userChangePassword = async (req: Request, res: Response) => {
   try {
-    const { userId, oldPassword, newPassword } = req.body;
-    await changePassword(userId, oldPassword, newPassword);
+    const { userId, oldPassword, newPassword, updatedBy } = req.body;
+    await changePassword(userId, oldPassword, newPassword, updatedBy);
     res.status(200).json({ message: 'Password change successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });

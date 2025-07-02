@@ -21,7 +21,7 @@ class AppointmentRepository {
     })
   }
 
-  async createUser(username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, adminType: string, subAdminType: string) {
+  async createUser(username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, adminType: string, subAdminType: string, createdBy:string) {
     return prisma.user.create({
       data: {
         username,
@@ -30,7 +30,8 @@ class AppointmentRepository {
         isReceptionist,
         employeeId,
         adminType,
-        subAdminType
+        subAdminType,
+        createdBy
       },
     });
   }
@@ -81,10 +82,10 @@ class AppointmentRepository {
   //   }
   // }
 
-  async updatePasswordByUserId(userId: number, newPassword: string) {
+  async updatePasswordByUserId(userId: number, newPassword: string,updatedBy: string) {
     return prisma.user.update({
       where: { id: userId },
-      data: { password: newPassword },
+      data: { password: newPassword, updatedBy: updatedBy },
     });
   }
   async deleteUserByUsername(userId: number) {

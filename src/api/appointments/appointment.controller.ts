@@ -203,7 +203,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     }
 
     if (newAppointment.status === 'confirmed') {
-      await doctorRepository.addBookedSlot(doctorId, date, time);
+      await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
       res.status(201).json(newAppointment);
     }
 
@@ -247,12 +247,13 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           serviceId,
           type,
           prefix,
-          patientType
+          patientType,
+          userId
         } = appointment;
 
 
 
-        await doctorRepository.addBookedSlot(doctorId, date, time);
+        await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
         // 🔹 Create the appointment
         const name = `${prefix} ${patientName}`;
         try {

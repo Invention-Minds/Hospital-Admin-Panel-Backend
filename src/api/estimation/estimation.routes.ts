@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate, getFollowUpEstimations, getTodayConfirmedEstimations, getopdEstimation, getStatusEstimation} from './estimation.controller';
+import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate, getFollowUpEstimations, getTodayConfirmedEstimations, getopdEstimation, getStatusEstimation, listLockedEstimations, bulkUnlockServices} from './estimation.controller';
 import {authenticateToken} from '../../middleware/middleware'
 
 const router = Router();
@@ -23,10 +23,13 @@ router.put('/estimation-details/:estimationId/updateDate', updateSurgeryDate);
 router.post('/new-estimation-details', authenticateToken, createNewEstimationDetails);
 router.post('/generate-pdf', generateEstimationPDF)
 router.get('/department/:estimationType', authenticateToken, getEstimationsByType);
+router.put('/unlock-bulk', authenticateToken, bulkUnlockServices);
 
 
 // Route to lock an appointment
 router.put('/:id/lock', authenticateToken, lockService);
+router.get('/locked', authenticateToken, listLockedEstimations);
+
 
 // Route to unlock an appointment
 router.put('/:id/unlock', authenticateToken, unlockService);

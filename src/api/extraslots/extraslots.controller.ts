@@ -96,7 +96,7 @@ export const getExtraSlotsByDoctor = async (req: Request, res: Response) => {
 
 export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
     try {
-      const { doctorId, date, timeRange, extraHoursBefore, extraHoursAfter } = req.body;
+      const { doctorId, date, timeRange, extraHoursBefore, extraHoursAfter, createdBy } = req.body;
   
       if (!doctorId || !date || !timeRange) {
          res.status(400).json({ error: 'doctorId, date, and timeRange are required.' });
@@ -122,6 +122,7 @@ export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
           data: {
             extraHoursBefore: String(extraHoursBefore),
             extraHoursAfter: String(extraHoursAfter),
+            createdBy: createdBy, // Assuming createdBy is a string representing the user ID
           },
         });
       } else {
@@ -133,6 +134,7 @@ export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
             timeRange,
             extraHoursBefore: String(extraHoursBefore),
             extraHoursAfter: String(extraHoursAfter),
+            createdBy: createdBy, // Assuming createdBy is a string representing the user ID
           },
         });
       }

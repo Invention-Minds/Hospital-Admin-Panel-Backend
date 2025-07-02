@@ -22,7 +22,8 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       unavailableDates, // Dates when doctor is unavailable
       unavailableSlots,
       availability,
-      doctorType
+      doctorType,
+      createdBy, // User ID of the person creating the doctor
     } = req.body;
     console.log(req.body)
 
@@ -76,6 +77,7 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
         departmentId: foundDepartment.id,
         departmentName: foundDepartment.name,
         doctorType,
+        createdBy: createdBy, // User ID of the person creating the doctor
         availability: {
           create: availability
         },
@@ -566,6 +568,8 @@ export const updateDoctor = async (req: Request, res: Response) => {
       availability,
       doctorType,
       userId,
+      createdBy,
+      updatedBy,
       roomNo
     } = req.body;
     const slotDuration = parseInt(req.body.slotDuration);
@@ -605,7 +609,9 @@ export const updateDoctor = async (req: Request, res: Response) => {
         slotDuration,
         doctorType,
         userId,
-        roomNo
+        roomNo,
+        createdBy: createdBy, // User ID of the person creating the doctor
+        updatedBy: updatedBy, // User ID of the person updating the doctor
 
       },
     });
@@ -626,11 +632,12 @@ export const updateDoctor = async (req: Request, res: Response) => {
     //     doctorId: Number(id),
     //   }));
     console.log("availability", availability)
-    const availabilityEntries = availability.map((avail: { day: string; availableFrom: string; slotDuration: number }) => ({
+    const availabilityEntries = availability.map((avail: { day: string; availableFrom: string; slotDuration: number,createdBy:string }) => ({
       day: avail.day,
       availableFrom: avail.availableFrom,
       slotDuration: avail.slotDuration,
       doctorId: Number(id), // Use the doctor ID here to link the availability
+      createdBy: avail.createdBy, // User ID of the person creating the availability
     }));
 
     if (availabilityEntries.length > 0) {
@@ -675,7 +682,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
 };
 export const addUnavailableSlots = async (req: Request, res: Response) => {
   try {
-    const { doctorId, date, times } = req.body;
+    const { doctorId, date, times, userId } = req.body;
 
     // Ensure all required fields are provided
     if (!doctorId || !date || !times || !Array.isArray(times)) {
@@ -703,6 +710,7 @@ export const addUnavailableSlots = async (req: Request, res: Response) => {
       doctorId: Number(doctorId),
       date: date,
       time,
+      createdBy: userId
     }));
 
     if (unavailableSlotEntries.length > 0) {
@@ -859,7 +867,7 @@ export const getDoctorAvailability = async (req: Request, res: Response): Promis
 };
 export const addBookedSlot = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { doctorId, date, time } = req.body;
+    const { doctorId, date, time, userId } = req.body;
     const existingBooking = await prisma.bookedSlot.findFirst({
       where: {
         doctorId,
@@ -884,6 +892,7 @@ export const addBookedSlot = async (req: Request, res: Response): Promise<void> 
         date,
         time,
         complete: false,
+        createdBy: userId
       },
     });
     console.log("Booked Slot is working:", bookedSlot);
@@ -967,7 +976,7 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
 };
 export const updateBookedSlot = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { doctorId, date, time } = req.body;
+    const { doctorId, date, time, userId } = req.body;
 
     // Validate the request parameters
     if (!doctorId || !date || !time) {
@@ -999,6 +1008,7 @@ export const updateBookedSlot = async (req: Request, res: Response): Promise<voi
       },
       data: {
         complete: true, // Mark the slot as complete
+        createdBy: userId, // User ID of the person creating the booking
       },
     });
 
@@ -1011,7 +1021,7 @@ export const updateBookedSlot = async (req: Request, res: Response): Promise<voi
 // Create or Update Unavailable Dates for Doctor
 export const addUnavailableDates = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { doctorId, startDate, endDate } = req.body;
+    const { doctorId, startDate, endDate, userId } = req.body;
 
     if (!doctorId || !startDate || !endDate) {
       res.status(400).json({ error: 'Doctor ID, start date, and end date are required.' });
@@ -1044,6 +1054,7 @@ export const addUnavailableDates = async (req: Request, res: Response): Promise<
     const unavailableDateEntries = unavailableDates.map((date) => ({
       date,
       doctorId: Number(doctorId),
+      createdBy: userId, // User ID of the person creating the unavailable date
     }));
 
     if (unavailableDateEntries.length > 0) {
@@ -1209,12 +1220,13 @@ export const getAvailableDoctorsCount = async (req: Request, res: Response): Pro
 };
 export const addExtraSlot = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { doctorId, date, time } = req.body;
+    const { doctorId, date, time, userId } = req.body;
     const result = await prisma.extraSlot.create({
       data: {
         doctorId,
         date,
         time,
+        createdBy: userId // User ID of the person creating the extra slot
       }
     });
     res.status(200).json({ success: true, result });

@@ -40,27 +40,27 @@ export const loginDoctor = async (password: string, userId: number) => {
   return null;
 };
 
-export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, subAdminType: string, adminType:string) => {
+export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean, employeeId: string, subAdminType: string, adminType:string, createdBy: string) => {
   const hashedPassword = bcrypt.hashSync(password, 10);
-  return loginRepository.createUser(username, hashedPassword, role, isReceptionist, employeeId, subAdminType, adminType);  // Pass role here
+  return loginRepository.createUser(username, hashedPassword, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);  // Pass role here
 };
 // export const createUser = async (username: string, password: string, role: UserRole, isReceptionist: boolean) => {
 //   const hashedPassword = bcrypt.hashSync(password, 10);
 //   return loginRepository.createUser(username, hashedPassword, role, isReceptionist);  // Pass role here
 // };
 
-export const resetPassword = async (employeeId: string, newPassword: string) => {
+export const resetPassword = async (employeeId: string, newPassword: string,updatedBy:string) => {
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
   const user = await loginRepository.findUserByEmployeeId(employeeId);
   const userId = user!.id;
-  return await loginRepository.updatePasswordByUserId(userId, hashedPassword);
+  return await loginRepository.updatePasswordByUserId(userId, hashedPassword,updatedBy);
 };
 
-export const changePassword = async (userId: number, oldPassword: string, newPassword: string) => {
+export const changePassword = async (userId: number, oldPassword: string, newPassword: string, updatedBy:string) => {
   const user = await loginRepository.findUserById(userId);
   if (user && bcrypt.compareSync(oldPassword, user.password)) {
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
-    return loginRepository.updatePasswordByUserId(userId, hashedPassword);
+    return loginRepository.updatePasswordByUserId(userId, hashedPassword, updatedBy);
   }
   return null;
 };
