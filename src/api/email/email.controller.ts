@@ -364,3 +364,43 @@ export const sendEmailForApprover = async (req: Request, res: Response) => {
     res.status(500).json({ message: 'Failed to send health checkup confirmation email' });
   }
 }
+
+
+export const sendServiceEmail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { to, appointmentDetails } = req.body;
+    if (!to || !appointmentDetails) {
+      res.status(400).json({ message: 'Missing required fields' });
+      return;
+    }
+
+      const emailContenttoFrontOffice = {
+        subject: 'New Appointment Request from Website - Service Page',
+        text: `
+      
+          Patient Name: ${appointmentDetails.firstName} ${appointmentDetails.lastName}
+      
+          Patient Email: ${appointmentDetails.email}
+      
+          Patient Contact: ${appointmentDetails.mobile}
+
+          Doctor Name: ${appointmentDetails.doctor}
+      
+          Message: ${appointmentDetails.message}
+        `
+      };
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: emailContenttoFrontOffice.subject,
+        text: emailContenttoFrontOffice.text,
+      };
+      const info = await transporter.sendMail(mailOptions);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    
+
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ message: 'Failed to send email' });
+  }
+};
