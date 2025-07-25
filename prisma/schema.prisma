@@ -58,6 +58,7 @@ model Doctor {
   kmcNumber        String?
   createdBy        String?
   updatedBy        String?
+  isActive         Boolean?             @default(true)
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -660,11 +661,20 @@ model LeaveDates {
 }
 
 model Advertisement {
-  id         Int      @id @default(autoincrement())
-  type       String   @db.VarChar(10) // "text", "image", "video"
-  content    String   @db.Text // Stores text for text ads, file path for media ads
-  uploadedAt DateTime @default(now())
-  isActive   Boolean?
+  id                 Int                  @id @default(autoincrement())
+  type               String               @db.VarChar(10) // "text", "image", "video"
+  content            String               @db.Text // Stores text for text ads, file path for media ads
+  uploadedAt         DateTime             @default(now())
+  isActive           Boolean?
+  AdvertisementMedia AdvertisementMedia[]
+}
+
+model AdvertisementMedia {
+  id              Int           @id @default(autoincrement())
+  advertisementId Int
+  url             String        @db.Text
+  isActive        Boolean       @default(true)
+  Advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
 }
 
 model BloodGroup {

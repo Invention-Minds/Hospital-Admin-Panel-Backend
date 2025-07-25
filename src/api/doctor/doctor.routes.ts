@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -9,7 +9,9 @@ const router = Router();
 
 // Define routes for doctors
 router.post('/',authenticateToken, createDoctor);  // Changed from '/doctors' to '/'
-router.get('/', getDoctors);      // Changed from '/doctors' to '/'
+router.get('/active-doctors', getDoctors); // New endpoint for active doctors
+router.get('/', getDoctorsWithDeActive);  
+router.get('/inactive-doctors', getAllDeActiveDoctors)
 router.get('/top-doctors', getFourDoctors);
 router.get('/get-doctor-details',authenticateToken,getDoctorDetails)
 router.get('/availability',getDoctorAvailability);

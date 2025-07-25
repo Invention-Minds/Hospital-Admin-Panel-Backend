@@ -170,26 +170,10 @@ export const getDoctors = async (req: Request, res: Response) => {
     const endOfToday = new Date(today.setHours(23, 59, 59, 999));
 
     const doctors = await prisma.doctor.findMany({
+      where:{
+        isActive: true, // Ensure only active doctors are fetched
+      },
       include: {
-        // availability: {
-        //   where: {
-        //     OR: [
-        //       {
-        //         updatedAt: null, // Include availability where updatedAt is null (for older records)
-        //       },
-        //       {
-        //         updatedAt: {
-        //           lte: requestedDate, // Get availability updated on or before the requested date
-        //         },
-        //       },
-        //     ],
-        //   },
-        //   orderBy: {
-        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-        //     // updatedAt: isToday ? 'desc' : 'asc',
-        //   },
-
-        // },
         availability: {
           where: isToday
             ? {
@@ -262,7 +246,94 @@ export const getDoctors = async (req: Request, res: Response) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
+export const getDoctorsWithDeActive = async (req: Request, res: Response) => {
+  try {
+    // Capture the date from the query parameter, defaulting to the current date if not provided
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
 
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
+    const isToday = requestedDate.toDateString() === indianDate.toDateString();
+    const isFuture = requestedDate > indianDate;
+    const today = new Date();
+    const startOfToday = new Date(today.setHours(0, 0, 0, 0));
+    const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+
+    const doctors = await prisma.doctor.findMany({
+      include: {
+        availability: {
+          where: isToday
+            ? {
+                OR: [
+                  {
+                    updatedAt: {
+                      gte: startOfToday,
+                      lte: endOfToday,
+                    },
+                  },
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : isFuture
+            ? {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        },
+        department: true, // Include department to get its details
+        unavailableDates: true,
+        bookedSlots: true,
+      },
+    });
+
+    const filteredDoctors = doctors.map((doctor) => {
+      const relevantAvailability = doctor.availability.filter((avail) => {
+        if (isToday) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else if (isFuture) {
+          return avail.updatedAt && avail.updatedAt <= requestedDate;
+        } else {
+          return avail.updatedAt === null || avail.updatedAt <= requestedDate;
+        }
+      }).slice(0, 1); // Take only the most relevant availability
+      // console.log("Relevant Availability:", relevantAvailability);
+      return {
+        ...doctor,
+        availability: relevantAvailability,
+      };
+    });
+    // console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
+
+    res.json(doctors);
+  } catch (error: any) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
 export const getDoctorDetails = async (req: Request, res: Response) => {
   try {
     // Capture the date from the query parameter, defaulting to the current date if not provided
@@ -283,52 +354,6 @@ export const getDoctorDetails = async (req: Request, res: Response) => {
 
     const doctors = await prisma.doctor.findMany({
       include: {
-        // availability: {
-        //   where: {
-        //     AND: [
-        //       {
-        //         updatedAt: {
-        //           lte: requestedDate, // Get availability updated on or before the requested date
-        //         },
-        //       },
-        //       {
-        //         OR: [
-        //           {
-        //             updatedAt: null, // Include availability where updatedAt is null (for older records)
-        //           },
-        //           {
-        //             updatedAt: {
-        //               not: null, // Ensure the availability has been updated at least once
-        //             },
-        //           },
-        //         ],
-        //       },
-        //     ],
-        //   },
-        //   orderBy: {
-        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-        //   },
-        // },
-        // availability: {
-        //   where: {
-        //     OR: [
-        //       {
-        //         updatedAt: null, // Include availability where updatedAt is null (for older records)
-        //       },
-        //       {
-        //         updatedAt: {
-        //           lte: requestedDate, // Get availability updated on or before the requested date
-        //         },
-        //       },
-        //     ],
-        //   },
-        //   orderBy: {
-        //     updatedAt: isToday ? 'desc' : isFuture ? 'desc' : 'asc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
-        //     // updatedAt: isToday ? 'asc' : 'desc',
-        //   },
-
-        // },
-        
         availability: {
           where: isToday
             ? {
@@ -1337,3 +1362,19 @@ const stripPrefix = (name: string) => {
   return name.toLowerCase().replace(/^(dr\.|ms\.|mr\.|brig\.)\s*/i, '');
 };
 
+export const getAllDeActiveDoctors = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const doctors = await prisma.doctor.findMany({
+      where: {
+        isActive: false, // Filter for inactive doctors
+      },
+      include: {
+        department: true, // Include department details
+      },
+    });
+
+    res.status(200).json(doctors);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
