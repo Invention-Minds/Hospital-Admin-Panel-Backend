@@ -92,6 +92,14 @@ export default class AppointmentRepository {
     return await prisma.appointment.findMany({ where: { doctorId: doctor.id, checkedIn: true, date: today , status: 'confirmed'}, include: { doctor: true, user: true } });
   }
 
+  async findFullAppointmentByDoctorUserId(userId: number) {
+    const today = new Date().toISOString().split('T')[0]
+    const doctor = await prisma.doctor.findFirst({ where: { id: userId } });
+    console.log(doctor);
+    if (!doctor) return [];
+    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, date: today}, include: { doctor: true, user: true } });
+  }
+
 
   async lockAppointment(appointmentId: number, userId: number) {
     return await prisma.appointment.update({

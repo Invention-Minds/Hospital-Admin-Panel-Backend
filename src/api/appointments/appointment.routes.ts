@@ -30,7 +30,8 @@ import {
     opdStatusWise,
     prnWiseAppointment,
     opdGenderWise,
-    checkedOutAppointments
+    checkedOutAppointments,
+    getDoctorTodayReport
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -68,6 +69,7 @@ router.get('/pending', authenticateToken, getPendingAppointments);
 router.get('/mhc-appts',authenticateToken, confirmedMhc);
 router.get('/by-user', authenticateToken, getAppointmentsByUser);
 router.get('/by-doctor', getDoctorReport);
+router.get('/by-doctor-today', authenticateToken, getDoctorTodayReport);
 router.get('/slotsbyappointments',authenticateToken,getAppointmentsBySlot)
 router.get('/appts-by-serviceId', getAppointmentByServiceId)
 router.put('/:id/lock', authenticateToken, lockAppointment);

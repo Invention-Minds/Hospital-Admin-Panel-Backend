@@ -37,6 +37,9 @@ export default class AppointmentResolver {
   async getDoctorReport(userId: number) {
     return await this.repository.findAppointmentsByDoctorUserId(userId);
   }
+  async getDoctorTodayReport(userId: number) {
+    return await this.repository.findFullAppointmentByDoctorUserId(userId);
+  }
   async lockAppointment(appointmentId: number, userId: number) {
     const appointment = await this.repository.getAppointmentById(appointmentId);
 

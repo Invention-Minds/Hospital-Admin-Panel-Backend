@@ -490,6 +490,23 @@ export const getDoctorReport = async (req: Request, res: Response): Promise<void
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
+
+export const getDoctorTodayReport = async (req: Request, res: Response): Promise<void> => {
+  console.log("userId", req.query);
+  try {
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    if (!userId) {
+      res.status(400).json({ error: 'User ID is required' });
+      return;
+    }
+
+    const report = await resolver.getDoctorTodayReport(userId);
+    res.status(200).json(report);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+
 export const lockAppointment = async (req: Request, res: Response): Promise<void> => {
   console.log(req.body)
   try {
@@ -649,8 +666,8 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
 
     const whatsappPayload = {
       from: fromPhoneNumber,
-      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      // to: ['919342287945'],
+      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      to: ['919342287945'],
       // to:['919342003000'],
       type: "template",
       message: {
