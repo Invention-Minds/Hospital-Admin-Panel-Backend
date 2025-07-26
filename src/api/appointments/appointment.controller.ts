@@ -666,8 +666,8 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
 
     const whatsappPayload = {
       from: fromPhoneNumber,
-      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      to: ['919342287945'],
+      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      // to: ['919342287945'],
       // to:['919342003000'],
       type: "template",
       message: {
