@@ -76,6 +76,14 @@ export const adminAlertSent = (doctorId: any): void => {
   });
 }
 
+export const loadOtTV = (doctorId: any): void => {
+  console.log('Notifying clients of load ot tv:', doctorId);
+  clients.forEach(client => {
+    client.write(`event: loadOtTv\n`);
+    client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
+  });
+}
+
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
     req.body.status = req.body.status === 'Confirm' ? 'confirmed' :

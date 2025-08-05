@@ -7,6 +7,7 @@ import path from "path";
 import { Client } from "basic-ftp";
 import { ServiceRepository } from '../services/services.repository';
 import { notifyPendingAppointments } from '../appointments/appointment.controller';
+import { loadOtTV } from '../appointments/appointment.controller';
 
 const prisma = new PrismaClient();
 const repository = new ServiceRepository();
@@ -151,7 +152,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         console.log(estimationId)
         const payload = {
             from: fromPhoneNumber,
-            to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
+            to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
             // to: ["919342287945"],
             // to:['919342003000'],
             type: "template",
@@ -186,7 +187,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 console.log(estimationId)
                 const payload = {
                     from: fromPhoneNumber,
-                    to: ["919844171700", "916364833989", "918904943659","917760158457", "918147818482"], // Recipient's WhatsApp number
+                    to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
                     // to: ["919342287945"],
                     // to:['919342003000'],
                     type: "template",
@@ -280,7 +281,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             patientRemarks,
             staffRemarks,
             patientEmail,
-            submittedDateAndTime
+            submittedDateAndTime,
+            multipleSurgeryDoctor
         } = updateFields;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -350,7 +352,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 patientRemarks,
                 staffRemarks,
                 patientEmail,
-                submittedDateAndTime: new Date()
+                submittedDateAndTime: new Date(),
+                multipleSurgeryDoctor
             },
         });
 
@@ -387,6 +390,11 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
 export const getAllEstimationDetails = async (req: Request, res: Response) => {
     try {
         const estimationDetails = await prisma.estimationDetails.findMany({
+            where: {
+                NOT: {
+                    estimationId: 'emergency'
+                }
+            },
             include: {
                 inclusions: true,
                 exclusions: true,
@@ -508,7 +516,7 @@ export const updateFollowUps = async (req: Request, res: Response) => {
     try {
         const { estimationId } = req.params; // Extract the estimationId from the route params
         const { followUpData, date, remarks, createdBy } = req.body; // Extract follow-up data from the request body
-        console.log(followUpData, date, remarks,createdBy)
+        console.log(followUpData, date, remarks, createdBy)
         // const date = followUpData.date;
         // const remarks = followUpData.remarks;
         // Validate if the estimation exists
@@ -728,6 +736,10 @@ export const updatePACDone = async (req: Request, res: Response) => {
 
         });
         res.status(200).json(updatedEstimation);
+
+        if (existingEstimation.estimatedDate === new Date().toISOString().split('T')[0]) {
+            loadOtTV('OTTV')
+        }
 
 
     } catch (error) {
@@ -1644,15 +1656,15 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         doc.fillColor("black").font("PoppinsRegular").fontSize(10)
             .text(" THE COST OF THE ROOM INCLUDES DAILY NURSING", { continued: false });
-            checkPageSpace(doc, 80); // Increase space threshold (e.g., header + first few rows)
-            doc.moveDown(1); // only after possible page break
-            
-            doc.fillColor("#0098A3")
-                .font('PoppinsSemiBold')
-                .fontSize(14)
-                .text(`EXCLUSIONS: `, 30); // Use current doc.y, no Y override
+        checkPageSpace(doc, 80); // Increase space threshold (e.g., header + first few rows)
+        doc.moveDown(1); // only after possible page break
 
-        console.log(doc.y,'doc.y')
+        doc.fillColor("#0098A3")
+            .font('PoppinsSemiBold')
+            .fontSize(14)
+            .text(`EXCLUSIONS: `, 30); // Use current doc.y, no Y override
+
+        console.log(doc.y, 'doc.y')
 
         // Then start exclusions
         // const exclusionHeaderY = doc.y + 20;
@@ -1980,7 +1992,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const contentWidth = rightMargin - leftMargin; // Width of text with padding
 
         // Define note text
-        const noteText = `This estimation is prepared based on the details available at the time of the request. 
+        const noteText = `This estimation is prepared based on the details available at the time of the request. Please note that the tentative cost does not include exclusions. 
 Actual charges may vary depending on unforeseen circumstances or changes in the patientâ€™s condition. 
 The estimate is valid for 20 days from the date of issuance. Kindly contact our estimation team for a revised quote once the validity period has expired. 
 Please note that the cost will increase if the duration of the patientâ€™s stay exceeds the expected number of days.
@@ -2008,11 +2020,17 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
             doc.addPage();
             dynamicY = 50; // Reset Y position for new page
         }
+        const startYAxisDec = dynamicY + 20;
+        const declarationText = `I confirm that the admission details were explained to me clearly in a language I understand. I have understood the information and consent to proceed with admission and treatment as per hospital norms.`
+        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
+            .text(` ${declarationText.toUpperCase()}`, 30, startYAxisDec, { width: 520, align: "left" });
+        doc.moveDown(2);
+
 
         // Proceed with Signature Section
-        const startYAxis = dynamicY + 20;
         const signerLabel = signatureOf === "patient" ? "SIGNATURE OF PATIENT" : "SIGNATURE OF ATTENDER";
 
+        const startYAxis = startYAxisDec + 50
         // Signature Titles with proper margins
         doc.fillColor("#213043").font("PoppinsSemiBold").fontSize(10);
         doc.text(signerLabel, leftMargin, startYAxis);
@@ -2047,10 +2065,7 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
         // doc.moveTo(leftMargin + 440, startYAxis + 95).lineTo(leftMargin + 540, startYAxis + 95).stroke(); // Line under Approver
 
         // Move Down for Additional Content
-        doc.moveDown(2);
-        const declarationText = `I confirm that the admission details were explained to me clearly in a language I understand. I have understood the information and consent to proceed with admission and treatment as per hospital norms.`
-        doc.fillColor("black").font("PoppinsRegular").fontSize(10)
-            .text(` ${declarationText.toUpperCase()}`, 30, startYAxis + 120, { width: 520, align: "left" });
+
 
         // End PDF
         doc.end();
@@ -2310,9 +2325,11 @@ export const getFollowUpEstimations = async (req: Request, res: Response) => {
 
 export const getTodayConfirmedEstimations = async (req: Request, res: Response) => {
     try {
+        const today = new Date().toISOString().split('T')[0];
         const confirmedEstimations = await prisma.estimationDetails.findMany({
             where: {
                 statusOfEstimation: 'confirmed',
+                estimatedDate: today
             },
             select: {
                 id: true,
@@ -2389,43 +2406,265 @@ export const getStatusEstimation = async (req: Request, res: Response) => {
 }
 export const listLockedEstimations = async (req: Request, res: Response): Promise<void> => {
     try {
-      const lockedEstimations = await prisma.estimationDetails.findMany({
-        where: {
-          lockedBy: {
-            not: null, // only locked items
-          },
-        },
-        select: {
-          id: true,
-          estimationId: true,
-          lockedBy: true, // will contain userId
-        },
-      });
-  
-      res.status(200).json(lockedEstimations);
+        const lockedEstimations = await prisma.estimationDetails.findMany({
+            where: {
+                lockedBy: {
+                    not: null, // only locked items
+                },
+            },
+            select: {
+                id: true,
+                estimationId: true,
+                lockedBy: true, // will contain userId
+            },
+        });
+
+        res.status(200).json(lockedEstimations);
     } catch (error) {
-      console.error('Error fetching locked estimations:', error);
-      res.status(500).json({ message: 'Failed to fetch locked estimations' });
+        console.error('Error fetching locked estimations:', error);
+        res.status(500).json({ message: 'Failed to fetch locked estimations' });
     }
-  };
-  export const bulkUnlockServices = async (req: Request, res: Response): Promise<void> => {
+};
+export const bulkUnlockServices = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { ids } = req.body;
-  
-      if (!Array.isArray(ids) || ids.length === 0) {
-        res.status(400).json({ message: 'No estimation IDs provided' });
-        return;
-      }
-  
-      await prisma.estimationDetails.updateMany({
-        where: { id: { in: ids } },
-        data: { lockedBy: null },
-      });
-  
-      res.status(200).json({ message: 'Estimations unlocked successfully' });
+        const { ids } = req.body;
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            res.status(400).json({ message: 'No estimation IDs provided' });
+            return;
+        }
+
+        await prisma.estimationDetails.updateMany({
+            where: { id: { in: ids } },
+            data: { lockedBy: null },
+        });
+
+        res.status(200).json({ message: 'Estimations unlocked successfully' });
     } catch (error) {
-      console.error('Error unlocking estimations:', error);
-      res.status(500).json({ message: 'Failed to unlock estimations' });
+        console.error('Error unlocking estimations:', error);
+        res.status(500).json({ message: 'Failed to unlock estimations' });
     }
-  };
-  
+};
+
+export const confirmedEstimations = async (req: Request, res: Response) => {
+    try {
+        const confirmedEstimations = await prisma.estimationDetails.findMany({
+            where: {
+                statusOfEstimation: 'confirmed',
+            },
+            select: {
+                id: true,
+                patientName: true,
+                estimationId: true,
+                estimatedDate: true,
+                consultantName: true,
+                estimationName: true,
+                OTDetails: true,
+                multipleSurgeryDoctor: true,
+            },
+        })
+        const emergencyOTs = await prisma.oTDetails.findMany({
+            where: {
+                estimationId: 'emergency', // emergency OTs
+                isEnded: false, // only those which are not ended
+                surgeryDate: new Date().toISOString().split('T')[0], // today's date
+            },
+            select: {
+                id: true,
+                roomNo: true,
+                handledBy: true,
+                startedTime: true,
+                endedTime: true,
+                isStarted: true,
+                isEnded: true,
+                remarks: true,
+                coordinatorId: true,
+                paid: true,
+                createdAt: true,
+                updatedAt: true,
+                surgeryDate: true,
+                multipleSurgeryDoctor: true,
+                surgeryLevel: true,
+                surgeryName: true,
+                surgeryType: true,
+                patientName: true,
+                prn: true,
+
+            },
+        });
+        const combinedData = [
+            ...confirmedEstimations,
+            ...emergencyOTs
+        ];
+        res.status(200).json(combinedData)
+    }
+    catch (error) {
+        console.error('Error fetching estimation details:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// Update OT Details
+export const updateOTDetails = async (req: Request, res: Response) => {
+    try {
+        const {
+            estimationId,
+            roomNo,
+            primarySurgeonName,
+            coordinatorId,
+            paid
+        } = req.body;
+
+        // Validate required fields
+        if (!estimationId) {
+            res.status(400).json({ message: "Estimation ID is required" });
+            return
+        }
+
+        const existingOT = await prisma.oTDetails.findFirst({
+            where: { estimationId }
+        });
+
+        let result;
+
+        if (existingOT) {
+            result = await prisma.oTDetails.update({
+                where: { id: existingOT.id },
+                data: {
+                    roomNo,
+                    handledBy: primarySurgeonName,
+                    coordinatorId,
+                    paid: paid === "true" || paid === true
+                }
+            });
+        } else {
+            result = await prisma.oTDetails.create({
+                data: {
+                    estimationId,
+                    roomNo,
+                    handledBy: primarySurgeonName,
+                    coordinatorId,
+                    paid: paid === "true" || paid === true
+                }
+            });
+        }
+
+        loadOtTV('loadOtTV');
+
+        res.json({ message: "OT details saved successfully", data: result });
+        return;
+
+    } catch (error: any) {
+        console.error("Error updating OT details:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
+        return
+    }
+};
+export const updateOTStartFinish = async (req: Request, res: Response) => {
+    try {
+        const { estimationId, otId, action } = req.body; // action = 'start' or 'end'
+        let whereClause: any = {};
+
+
+        if (otId) {
+            whereClause.id = otId; // Emergency OT by ID
+        } else if (estimationId) {
+            whereClause.estimationId = estimationId; // Normal OT
+        } else {
+            res.status(400).json({ error: 'No valid identifier provided' });
+            return
+        }
+        const existingOT = await prisma.oTDetails.findFirst({
+            where: { id: otId }
+        });
+
+        if (!existingOT) {
+            res.status(404).json({ message: "OT detail not found" });
+            return;
+        }
+
+        let data: any = {};
+
+        if (action === 'start') {
+            data = {
+                startedTime: new Date(),
+                isStarted: true
+            };
+        } else if (action === 'end') {
+            data = {
+                endedTime: new Date(),
+                isEnded: true
+            };
+        } else {
+            res.status(400).json({ message: "Invalid action" });
+            return
+        }
+
+        const updatedOT = await prisma.oTDetails.update({
+            where: { id: existingOT.id },
+            data
+        });
+
+        loadOtTV('loadOtTV'); // Notify the frontend to reload OT TV
+
+        if (existingOT.estimationId && action === 'end') {
+            const updateEstimation = await prisma.estimationDetails.update({
+                where: { estimationId: existingOT.estimationId },
+                data: {
+                    statusOfEstimation: 'completed',
+                    completedDateAndTime: new Date(),
+                }
+            });
+        }
+
+        res.json({ message: "OT updated successfully", data: updatedOT });
+        return
+    } catch (error: any) {
+        console.error("Error updating OT details:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
+        return;
+    }
+};
+export const createOTDetails = async (req: Request, res: Response) => {
+    try {
+        const {
+            roomNo,
+            handledBy,
+            multipleSurgeryDoctor,
+            patientName,
+            prn,
+            surgeryDate,
+            surgeryLevel,
+            surgeryName,
+            surgeryType,
+            paid
+        } = req.body;
+
+        if (!roomNo) {
+            res.status(400).json({ message: 'Estimation ID and Room No are required' });
+            return
+        }
+
+        const otDetails = await prisma.oTDetails.create({
+            data: {
+                estimationId: "emergency",
+                roomNo,
+                handledBy: handledBy || '',
+                multipleSurgeryDoctor,
+                patientName,
+                prn: prn ? Number(prn) : null,
+                surgeryDate,
+                surgeryLevel,
+                surgeryName,
+                surgeryType,
+                paid: paid ?? false
+            }
+        });
+        loadOtTV('loadOtTV');
+
+        res.status(201).json(otDetails);
+    } catch (error: any) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to create OTDetails', error: error.message });
+    }
+};

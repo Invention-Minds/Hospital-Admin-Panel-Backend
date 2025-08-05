@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate, getFollowUpEstimations, getTodayConfirmedEstimations, getopdEstimation, getStatusEstimation, listLockedEstimations, bulkUnlockServices} from './estimation.controller';
+import { createEstimation, getEstimationsByDepartment, createEstimationDetails, getAllEstimationDetails, updateEstimationDetails, updateFollowUps, updateAdvanceDetails, markComplete, updateFeedback, updatePACDone, generateEstimationPDF, lockService, unlockService, createNewEstimationDetails, getEstimationsByType, estConfirm, updateSurgeryDate, getFollowUpEstimations, getTodayConfirmedEstimations, getopdEstimation, getStatusEstimation, listLockedEstimations, bulkUnlockServices, confirmedEstimations, updateOTDetails, updateOTStartFinish, createOTDetails} from './estimation.controller';
 import {authenticateToken} from '../../middleware/middleware'
 
 const router = Router();
@@ -8,6 +8,10 @@ router.post('/',authenticateToken, createEstimation);  // Changed from '/departm
 router.get('/department/:departmentId/:estimationType', authenticateToken, getEstimationsByDepartment);
 router.post('/estimation-details', authenticateToken, createEstimationDetails);
 router.get('/get-confirmed',authenticateToken,getTodayConfirmedEstimations);
+router.get('/confirmed-estimations',authenticateToken, confirmedEstimations);
+router.post('/ot-details', createOTDetails);
+router.put("/ot-details/update", updateOTDetails);
+router.put("/ot-details/start-finish", updateOTStartFinish);
 router.get('/opd-estimation',authenticateToken, getopdEstimation);
 router.get('/status-estimation',authenticateToken, getStatusEstimation)
 router.get('/',authenticateToken, getAllEstimationDetails);

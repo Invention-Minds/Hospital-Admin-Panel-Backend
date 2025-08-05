@@ -27,6 +27,8 @@ import doctorNotesRoutes from './api/doctor-notes/doctor-notes.routes';
 import prescriptionRoutes from './api/prescription/prescription.routes';
 import historyRoutes from './api/history-notes/history-notes.routes';
 import investigationRoutes from './api/investigation/investigation.routes';
+import queueRoutes from './api/mhc-checkin/mhc-checkin.routes';
+import radiologyQueueRoutes from './api/radiology-queue/radiologu-queue.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -69,6 +71,9 @@ app.use('/api/doctor-notes',doctorNotesRoutes);
 app.use('/api/prescription', prescriptionRoutes);
 app.use('/api/history-notes', historyRoutes);
 app.use('/api/investigation', investigationRoutes);
+app.use('/api/queue', queueRoutes);
+app.use('/api/radiology-queue', radiologyQueueRoutes);
+
 
 app.use(compression())
 

@@ -19,11 +19,11 @@ model Hospital {
 model Department {
   id         Int          @id @default(autoincrement())
   name       String       @unique
-  doctors    Doctor[]
-  Estimation Estimation[]
   createdAt  DateTime?    @default(now())
   updatedAt  DateTime?    @updatedAt
   userId     Int?
+  doctors    Doctor[]
+  Estimation Estimation[]
 }
 
 model Doctor {
@@ -40,25 +40,25 @@ model Doctor {
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   doctorType       String?              @default("Regular")
-  bookedSlots      BookedSlot[]         @relation("DoctorToBookedSlot")
-  department       Department           @relation(fields: [departmentId], references: [id])
-  user             User?                @relation("DoctorUser", fields: [userId], references: [id])
-  availability     DoctorAvailability[] @relation("DoctorToAvailability")
-  extraSlots       ExtraSlot[]          @relation("DoctorToExtraSlot")
-  unavailableDates UnavailableDates[]   @relation("DoctorToUnavailableDate")
-  unavailableSlots UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
-  appointments     Appointment[]        @relation("DoctorAppointments")
-  Estimation       Estimation[]
-  Channel          Channel[]
-  DoctorAssignment DoctorAssignment[]
   roomNo           String?
-  ExtraSlotCount   ExtraSlotCount[]
-  SentMessage      SentMessage[]
-  LeaveDates       LeaveDates[]
   kmcNumber        String?
   createdBy        String?
   updatedBy        String?
   isActive         Boolean?             @default(true)
+  bookedSlots      BookedSlot[]         @relation("DoctorToBookedSlot")
+  Channel          Channel[]
+  department       Department           @relation(fields: [departmentId], references: [id])
+  user             User?                @relation("DoctorUser", fields: [userId], references: [id])
+  DoctorAssignment DoctorAssignment[]
+  availability     DoctorAvailability[] @relation("DoctorToAvailability")
+  Estimation       Estimation[]
+  extraSlots       ExtraSlot[]          @relation("DoctorToExtraSlot")
+  ExtraSlotCount   ExtraSlotCount[]
+  LeaveDates       LeaveDates[]
+  unavailableDates UnavailableDates[]   @relation("DoctorToUnavailableDate")
+  unavailableSlots UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
+  appointments     Appointment[]        @relation("DoctorAppointments")
+  SentMessage      SentMessage[]
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -76,12 +76,12 @@ model User {
   isReceptionist Boolean?       @default(false)
   subAdminType   String?
   adminType      String?
+  createdBy      String?
+  updatedBy      String?
   doctors        Doctor[]       @relation("DoctorUser")
   Notification   Notification[]
   activeTokens   ActiveToken[]
   appointments   Appointment[]  @relation("UserAppointments")
-  createdBy      String?
-  updatedBy      String?
 
   @@map("users")
 }
@@ -108,8 +108,8 @@ model UnavailableDates {
   id        Int       @id @default(autoincrement())
   doctorId  Int?
   date      DateTime
-  createdBy String?
   createdAt DateTime? @default(now())
+  createdBy String?
   updatedAt DateTime? @updatedAt
   doctor    Doctor?   @relation("DoctorToUnavailableDate", fields: [doctorId], references: [id])
 
@@ -141,9 +141,6 @@ model Appointment {
   remainder1Sent      Boolean?          @default(false)
   remainder2Sent      Boolean?          @default(false)
   messageSent         Boolean?          @default(false)
-  doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
-  patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
-  user                User?             @relation("UserAppointments", fields: [userId], references: [id])
   checkedOut          Boolean?          @default(false)
   checkedInTime       DateTime?
   checkedOutTime      DateTime?
@@ -151,29 +148,29 @@ model Appointment {
   endConsultation     Boolean?
   postPond            Boolean?
   endConsultationTime DateTime?
-  extraWaitingTime    Int?
   checkedInBy         String?
+  extraWaitingTime    Int?
   isTransfer          Boolean?
+  isAcceptedCloseTime DateTime?
   isCloseOPD          Boolean?
   isCloseOPDTime      DateTime?
-  isAccepted          Boolean?
-  isAcceptedCloseTime DateTime?
   timeGap             String?
+  isAccepted          Boolean?
   type                String?
   age                 String?
   gender              String?
   serviceId           Int?
   nameChangedBy       String?
-  referredDeptId      Int?
   referredDept        String?
-  referredDocId       Int?
+  referredDeptId      Int?
   referredDoc         String?
+  referredDocId       Int?
   isReferred          Boolean?
   isNew               Boolean?
   prefix              String?
   patientType         String?
-  isfollowup          Boolean?
   isFollowupTime      DateTime?
+  isfollowup          Boolean?
   BPd                 String?
   BPs                 String?
   RR                  String?
@@ -183,10 +180,13 @@ model Appointment {
   spo2                String?
   temp                String?
   weight              String?
-  arrivedTime         DateTime?
-  arrivedBy           String?
-  blockId             String?
   arrived             Boolean?
+  arrivedBy           String?
+  arrivedTime         DateTime?
+  blockId             String?
+  doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
+  user                User?             @relation("UserAppointments", fields: [userId], references: [id])
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -201,8 +201,8 @@ model BookedSlot {
   time      String
   createdAt DateTime  @default(now())
   complete  Boolean?  @default(false)
-  updatedAt DateTime? @updatedAt
   createdBy String?
+  updatedAt DateTime? @updatedAt
   doctor    Doctor?   @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "BookedSlot_doctorId_fkey")
@@ -214,8 +214,8 @@ model UnavailableSlot {
   time      String
   date      String
   createdAt DateTime? @default(now())
-  updatedAt DateTime? @updatedAt
   createdBy String?
+  updatedAt DateTime? @updatedAt
   doctor    Doctor?   @relation("DoctorToUnavailableSlot", fields: [doctorId], references: [id])
 
   @@unique([doctorId, date, time])
@@ -227,10 +227,10 @@ model Patient {
   name         String
   phoneNumber  String
   email        String
-  age          Int?
-  gender       Int?
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
+  age          Int?
+  gender       Int?
   appointments Appointment[] @relation("AppointmentToPatient")
 }
 
@@ -251,23 +251,23 @@ model PatientDetails {
   city            String?
   area            String?
   pin             String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime?
   BPd             String?
   BPs             String?
   RR              String?
   bloodGroup      String?
+  diagnosis       String?
+  dob             String?
+  hb              String?
   height          String?
   patientType     String?
   pulse           String?
+  rh              String?
+  sFerritin       String?
   spo2            String?
   temp            String?
   weight          String?
-  dob             String?
-  rh              String?
-  hb              String?
-  sFerritin       String?
-  diagnosis       String?
-  created_at      DateTime  @default(now())
-  updated_at      DateTime?
 }
 
 model ActiveToken {
@@ -289,8 +289,8 @@ model ExtraSlot {
   date      String
   time      String
   createdAt DateTime? @default(now())
-  updatedAt DateTime? @updatedAt
   createdBy String?
+  updatedAt DateTime? @updatedAt
   doctor    Doctor?   @relation("DoctorToExtraSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId, date, time], map: "unique_slot")
@@ -338,44 +338,47 @@ model Service {
   smsSent                   Boolean?       @default(false)
   packageId                 Int            @default(0)
   packageName               String
-  package                   Package?       @relation(fields: [packageId], references: [id])
-  repeatedDates             RepeatedDate[]
   lockedBy                  Int?
   userId                    Int?
-  username                  String?
   role                      UserRole?
+  username                  String?
   checkedInTime             DateTime?
+  boneDensitometry          Boolean?
+  boneDensitometryTime      DateTime?
+  chestXRay                 Boolean?
+  chestXRayTime             DateTime?
+  ecg                       Boolean?
+  ecgTime                   DateTime?
+  echoTMT                   Boolean?
+  echoTMTTime               DateTime?
   isLab                     Boolean?
   isLabTime                 DateTime?
-  chestXRay                 Boolean?
-  ultrasound                Boolean?
-  boneDensitometry          Boolean?
   mammography               Boolean?
-  ecg                       Boolean?
-  echoTMT                   Boolean?
-  usgEcho                   Boolean?
-  chestXRayTime             DateTime?
-  ultrasoundTime            DateTime?
-  boneDensitometryTime      DateTime?
   mammographyTime           DateTime?
-  ecgTime                   DateTime?
-  echoTMTTime               DateTime?
+  ultrasound                Boolean?
+  ultrasoundTime            DateTime?
+  usgEcho                   Boolean?
   usgEchoTime               DateTime?
-  chestXRayEntryTime        DateTime?
-  ultrasoundEntryTime       DateTime?
   boneDensitometryEntryTime DateTime?
-  mammographyEntryTime      DateTime?
+  chestXRayEntryTime        DateTime?
   ecgEntryTime              DateTime?
   echoTMTEntryTime          DateTime?
-  usgEchoEntryTime          DateTime?
   isLabEntryTime            DateTime?
-  RadioService              RadioService?  @relation(fields: [radioServiceId], references: [id])
+  mammographyEntryTime      DateTime?
   radioServiceId            Int?
+  ultrasoundEntryTime       DateTime?
+  usgEchoEntryTime          DateTime?
   age                       Int?
   gender                    String?
   prefix                    String?
   patientType               String?
   isLabEntry1Time           DateTime?
+  repeatedDates             RepeatedDate[]
+  package                   Package        @relation(fields: [packageId], references: [id])
+  RadioService              RadioService?  @relation(fields: [radioServiceId], references: [id])
+
+  @@index([packageId], map: "Service_packageId_fkey")
+  @@index([radioServiceId], map: "Service_radioServiceId_fkey")
 }
 
 model RepeatedDate {
@@ -388,29 +391,26 @@ model RepeatedDate {
 }
 
 model Package {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique
+  id          Int                  @id @default(autoincrement())
+  name        String               @unique
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
   deptIds     String?
   radioIds    String?
   createdBy   String?
-
-  services Service[] // Back relation to Service
-
-  orders InvestigationOrder[]
+  services    Service[]
+  orders      InvestigationOrder[] @relation("InvestigationOrderToPackage")
 }
 
 model RadioService {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdBy   String?
-
-  services            Service[] // Back relation to Service
+  id                  Int                   @id @default(autoincrement())
+  name                String
+  description         String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  createdBy           String?
+  services            Service[]
   ServiceAppointments ServiceAppointments[]
 }
 
@@ -437,7 +437,6 @@ model ServiceAppointments {
   checkedOutTime    DateTime?
   age               Int?
   gender            String?
-  RadioService      RadioService? @relation(fields: [radioServiceId], references: [id])
   radioServiceId    Int?
   radioServiceName  String?
   emailSent         Boolean?      @default(false)
@@ -446,64 +445,57 @@ model ServiceAppointments {
   serviceId         Int?
   entry             Boolean?
   entryTime         DateTime?
+  entryDoneBy       String?
   postPond          Boolean?
   postPondTime      DateTime?
-  entryDoneBy       String?
   reportDoneBy      String?
   prefix            String?
   patientType       String?
-}
+  RadioService      RadioService? @relation(fields: [radioServiceId], references: [id])
 
-enum AppointmentStatus {
-  pending
-  confirmed
-  cancelled
-  completed
-  rescheduled
-}
-
-enum UserRole {
-  super_admin
-  sub_admin
-  admin
-  doctor
-  unknown
+  @@index([radioServiceId], map: "ServiceAppointments_radioServiceId_fkey")
 }
 
 model Estimation {
-  id             Int      @id @default(autoincrement())
+  id             Int        @id @default(autoincrement())
   doctorId       Int
   departmentId   Int
   estimation     String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
   estimationType String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  department     Department @relation(fields: [departmentId], references: [id])
+  doctor         Doctor     @relation(fields: [doctorId], references: [id])
 
-  doctor     Doctor     @relation(fields: [doctorId], references: [id])
-  department Department @relation(fields: [departmentId], references: [id])
+  @@index([departmentId], map: "Estimation_departmentId_fkey")
+  @@index([doctorId], map: "Estimation_doctorId_fkey")
 }
 
 model Channel {
   id                Int                @id @default(autoincrement())
-  name              String // Channel name or identifier
+  name              String
   channelId         Int                @unique
-  doctorId          Int? // Doctor ID
-  doctors           Doctor?            @relation(fields: [doctorId], references: [id]) // Relation with Doctor model
-  doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment") // Opposite relation to DoctorAssignment
+  doctorId          Int?
   roomNumber        String?
+  doctors           Doctor?            @relation(fields: [doctorId], references: [id])
+  doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment")
+
+  @@index([doctorId], map: "Channel_doctorId_fkey")
 }
 
 model ExtraSlotCount {
   id               Int      @id @default(autoincrement())
   doctorId         Int
-  doctor           Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   date             String
-  extraHoursBefore String
-  extraHoursAfter  String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  createdBy        String?
+  extraHoursAfter  String
+  extraHoursBefore String
   timeRange        String?
+  createdBy        String?
+  doctor           Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId], map: "ExtraSlotCount_doctorId_fkey")
 }
 
 model DoctorAssignment {
@@ -511,127 +503,132 @@ model DoctorAssignment {
   channelId      Int
   doctorId       Int
   departmentName String
-  channel        Channel @relation("ChannelToDoctorAssignment", fields: [channelId], references: [channelId]) // Relation to Channel
-  doctor         Doctor  @relation(fields: [doctorId], references: [id]) // Relation to Doctor
+  channel        Channel @relation("ChannelToDoctorAssignment", fields: [channelId], references: [channelId])
+  doctor         Doctor  @relation(fields: [doctorId], references: [id])
 
   @@index([channelId])
   @@index([doctorId])
 }
 
 model EstimationDetails {
-  id                      Int            @id @default(autoincrement()) // Unique Number
-  estimationId            String         @unique // Unique Number
-  patientName             String // String
-  patientPhoneNumber      String // String
-  patientUHID             Int? // String
-  ageOfPatient            Int? // Number
-  genderOfPatient         String? // String
-  consultantId            Int // Number
-  consultantName          String // String
-  estimationName          String // String
-  estimationPreferredDate String // String
-  remarks                 String? // String (Optional)
-  totalDaysStay           Int? // Number
-  icuStay                 Int? // Number (Optional)
-  wardStay                Int? // Number (Optional)
-  roomType                String? // String (Optional)
-  inclusions              Inclusion[] // Related Table
-  exclusions              Exclusion[] // Related Table
-  estimatedDate           String? // String
-  estimationCost          Int? // Number
-  discountPercentage      Int? // Number
-  totalEstimationAmount   Int? // Number
-  advanceAmountPaid       Int? // Number
-  receiptNumber           String? // String
-  followUpDates           FollowUpDate[] // Separate Table
-  employeeId              String? // String
-  approverId              String? // String
-  patientSign             String?        @db.Text // Sign
-  employeeSign            String?        @db.Text // Sign
-  approverSign            String?        @db.Text // Sign
-  approvedDateAndTime     DateTime? // Date
-  estimationCreatedTime   DateTime? // String
-  messageSentDateAndTime  DateTime? // Date
-  pdfLink                 String? // String
-  pacDone                 Boolean? // Boolean
-  statusOfEstimation      String? // String
-  ageBucketOfSurgery      Int? // Number
-  estimationType          String // String
+  id                      Int            @id @default(autoincrement())
+  estimationId            String         @unique
+  patientName             String
+  patientPhoneNumber      String
+  patientUHID             Int?
+  ageOfPatient            Int?
+  genderOfPatient         String?
+  consultantId            Int
+  consultantName          String
+  estimationName          String
+  estimationPreferredDate String
+  remarks                 String?
+  totalDaysStay           Int?
+  icuStay                 Int?
+  wardStay                Int?
+  roomType                String?
+  estimatedDate           String?
+  estimationCost          Int?
+  discountPercentage      Int?
+  totalEstimationAmount   Int?
+  advanceAmountPaid       Int?
+  receiptNumber           String?
+  employeeId              String?
+  approverId              String?
+  patientSign             String?        @db.Text
+  employeeSign            String?        @db.Text
+  approverSign            String?        @db.Text
+  approvedDateAndTime     DateTime?
+  estimationCreatedTime   DateTime?
+  messageSentDateAndTime  DateTime?
+  pdfLink                 String?
+  pacDone                 Boolean?
+  statusOfEstimation      String?
+  ageBucketOfSurgery      Int?
+  estimationType          String
   messageSent             Boolean?
   signatureOf             String?
-  employeeName            String?
   approverName            String?
-  cancellerName           String?
   cancellerId             String?
+  cancellerName           String?
+  employeeName            String?
   feedback                String?
   attenderName            String?
   lockedBy                Int?
   userId                  Int?
   surgeryTime             String?
   cancellationDateAndTime DateTime?
-  confirmedDateAndTime    DateTime?
   completedDateAndTime    DateTime?
+  confirmedDateAndTime    DateTime?
   overDueDateAndTIme      DateTime?
   estimationStatus        String?
   pacAmountPaid           String?
   pacReceiptNumber        String?
   submittedDateAndTime    DateTime?
-  staffRemarks            String?
   patientRemarks          String?
+  staffRemarks            String?
   surgeryPackage          String?
   implants                String?
   instrumentals           String?
-  procedures              String?
   multipleSurgeries       String?
+  procedures              String?
   multipleEstimationCost  String?
+  costForDeluxe           String?
   costForGeneral          String?
+  costForPresidential     String?
   costForPrivate          String?
   costForSemiPrivate      String?
   costForVip              String?
-  costForDeluxe           String?
-  costForPresidential     String?
   selectedRoomCost        String?
   patientEmail            String?
   rejectReason            String?
   pacNotDoneReason        String?
+  multipleSurgeryDoctor   String?
+  exclusions              Exclusion[]
+  followUpDates           FollowUpDate[]
+  inclusions              Inclusion[]
+  OTDetails               OTDetails[]
 
   @@map("estimation_details")
 }
 
 model FollowUpDate {
-  id                Int                @id @default(autoincrement())
-  remarks           String // Remarks or comments
-  date              String // Follow-up date
-  estimationId      String // Relation to the Estimation table
+  id                Int               @id @default(autoincrement())
+  remarks           String
+  date              String
+  estimationId      String
   createdBy         String?
-  createdAt         DateTime?          @default(now())
-  updatedAt         DateTime?          @updatedAt
-  EstimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+  createdAt         DateTime?         @default(now())
+  updatedAt         DateTime?         @updatedAt
+  EstimationDetails EstimationDetails @relation(fields: [estimationId], references: [estimationId])
 
+  @@index([estimationId], map: "follow_up_date_estimationId_fkey")
   @@map("follow_up_date")
 }
 
 model Inclusion {
-  id                Int                @id @default(autoincrement()) // Primary key
-  description       String // Inclusion description
-  estimationId      String // Foreign key to EstimationDetails
-  estimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+  id                Int               @id @default(autoincrement())
+  description       String
+  estimationId      String
+  estimationDetails EstimationDetails @relation(fields: [estimationId], references: [estimationId])
 
+  @@index([estimationId], map: "inclusions_estimationId_fkey")
   @@map("inclusions")
 }
 
 model Exclusion {
-  id                Int                @id @default(autoincrement()) // Primary key
-  description       String // Exclusion description
-  estimationId      String // Foreign key to EstimationDetails
-  estimationDetails EstimationDetails? @relation(fields: [estimationId], references: [estimationId])
+  id                Int               @id @default(autoincrement())
+  description       String
+  estimationId      String
+  estimationDetails EstimationDetails @relation(fields: [estimationId], references: [estimationId])
 
+  @@index([estimationId], map: "exclusions_estimationId_fkey")
   @@map("exclusions")
 }
 
 model Maintenance {
   id        Int      @id @default(autoincrement())
-  isActive  Boolean  @default(false) // TRUE means maintenance is ON
+  isActive  Boolean  @default(false)
   message   String   @default("The system is under maintenance. Please try again later.")
   updatedAt DateTime @updatedAt
 
@@ -641,14 +638,13 @@ model Maintenance {
 model SentMessage {
   id        Int      @id @default(autoincrement())
   doctorId  Int
-  alertType String   @db.VarChar(50) // Type of alert (e.g., "lateLogin", "adminAlert")
-  sentAt    DateTime @default(now()) // Timestamp when the message was sent
+  alertType String   @db.VarChar(50)
+  sentAt    DateTime @default(now())
+  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-
-  @@unique([doctorId, alertType, sentAt], map: "unique_daily_alert") // Ensures only one alert per doctor per day
+  @@unique([doctorId, alertType, sentAt], map: "unique_daily_alert")
   @@index([doctorId], map: "sentMessages_doctorId_fkey")
-  @@map("sent_messages") // Actual DB table name
+  @@map("sent_messages")
 }
 
 model LeaveDates {
@@ -662,8 +658,8 @@ model LeaveDates {
 
 model Advertisement {
   id                 Int                  @id @default(autoincrement())
-  type               String               @db.VarChar(10) // "text", "image", "video"
-  content            String               @db.Text // Stores text for text ads, file path for media ads
+  type               String               @db.VarChar(10)
+  content            String               @db.Text
   uploadedAt         DateTime             @default(now())
   isActive           Boolean?
   AdvertisementMedia AdvertisementMedia[]
@@ -675,6 +671,8 @@ model AdvertisementMedia {
   url             String        @db.Text
   isActive        Boolean       @default(true)
   Advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+
+  @@index([advertisementId], map: "AdvertisementMedia_advertisementId_fkey")
 }
 
 model BloodGroup {
@@ -706,8 +704,6 @@ model BloodGroupAppointment {
   messageSent       Boolean?                 @default(false)
   smsSent           Boolean?                 @default(false)
   bloodGroupId      Int
-  bloodGroup        BloodGroup               @relation(fields: [bloodGroupId], references: [id])
-  repeatedDates     BloodGroupRepeatedDate[]
   lockedBy          Int?
   userId            Int?
   username          String?
@@ -716,6 +712,10 @@ model BloodGroupAppointment {
   age               String?
   gender            String?
   prefix            String?
+  bloodGroup        BloodGroup               @relation(fields: [bloodGroupId], references: [id])
+  repeatedDates     BloodGroupRepeatedDate[]
+
+  @@index([bloodGroupId], map: "BloodGroupAppointment_bloodGroupId_fkey")
 }
 
 model BloodGroupRepeatedDate {
@@ -731,13 +731,13 @@ model Prescription {
   id              Int      @id @default(autoincrement())
   prescriptionId  String   @unique
   prescribedBy    String
-  prescribedById  String?
-  prescribedByKMC String?
   prescribedDate  String
   prn             String
   patientName     String
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  prescribedById  String?
+  prescribedByKMC String?
   tablets         Tablet[] @relation("PrescriptionTablets")
 }
 
@@ -827,37 +827,95 @@ model HistoryNotes {
 }
 
 model Lab {
-  id          Int      @id @default(autoincrement())
+  id          Int                  @id @default(autoincrement())
   description String
   department  String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  orders InvestigationOrder[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  orders      InvestigationOrder[] @relation("InvestigationOrderToLab")
 }
 
 model Radiology {
-  id          Int      @id @default(autoincrement())
+  id          Int                  @id @default(autoincrement())
   description String
   department  String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  orders InvestigationOrder[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  orders      InvestigationOrder[] @relation("InvestigationOrderToRadiology")
 }
 
 model InvestigationOrder {
-  id         Int     @id @default(autoincrement())
-  prn        String
-  date       String
-  doctorId   Int
-  doctorName String
-  remarks    String?
+  id             Int         @id @default(autoincrement())
+  prn            String
+  date           String
+  doctorId       Int
+  doctorName     String
+  remarks        String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  labTests       Lab[]       @relation("InvestigationOrderToLab")
+  packages       Package[]   @relation("InvestigationOrderToPackage")
+  radiologyTests Radiology[] @relation("InvestigationOrderToRadiology")
+}
 
-  labTests       Lab[]
-  radiologyTests Radiology[]
-  packages       Package[]
+model SystemLock {
+  id          Int       @id @default(autoincrement())
+  lockType    String    @unique
+  isActive    Boolean   @default(false)
+  activatedAt DateTime?
+  releasedAt  DateTime?
+  unlockedBy  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @updatedAt
+}
 
+model WhatsAppThresholdLog {
+  id        Int      @id @default(autoincrement())
+  threshold Int
+  sentAt    DateTime @default(now())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model OTDetails {
+  id                    Int               @id @default(autoincrement())
+  estimationId          String
+  roomNo                String
+  handledBy             String
+  startedTime           DateTime?
+  endedTime             DateTime?
+  isStarted             Boolean           @default(false)
+  isEnded               Boolean           @default(false)
+  remarks               String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  coordinatorId         String?
+  paid                  Boolean?          @default(false)
+  multipleSurgeryDoctor String?
+  patientName           String?
+  prn                   Int?
+  surgeryDate           String?
+  surgeryLevel          String?
+  surgeryName           String?
+  surgeryType           String?
+  estimation            EstimationDetails @relation(fields: [estimationId], references: [estimationId], onDelete: Cascade)
+
+  @@index([estimationId], map: "ot_details_estimationId_fkey")
+  @@map("ot_details")
+}
+
+enum AppointmentStatus {
+  pending
+  confirmed
+  cancelled
+  completed
+  rescheduled
+}
+
+enum UserRole {
+  super_admin
+  sub_admin
+  admin
+  doctor
+  unknown
 }
