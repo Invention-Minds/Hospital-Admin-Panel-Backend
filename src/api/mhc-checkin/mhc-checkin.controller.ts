@@ -78,7 +78,7 @@ async function updateLockStatus(count: number) {
     const { start, end } = getCurrentHourSlot();
 
     // If >35 in this hour, lock until next hour starts
-    if (count > 3) {
+    if (count > 35) {
         if (!lock) {
             return prisma.systemLock.create({
                 data: { lockType: "check-in", isActive: true, activatedAt: start },
@@ -190,7 +190,7 @@ export async function completeCheckIn(req: Request, res: Response) {
         console.log(`Check-ins in last hour: ${count}`);
 
         // Notify thresholds if applicable
-        const thresholds = [1, 2, 3, 4];
+        const thresholds = [20, 25, 30, 35];
         if (thresholds.includes(count)) {
             // const alreadySent = await wasThresholdSentRecently(count);
             // const phoneNumbers = ['919342287945', '917708059010', '916382348092'];

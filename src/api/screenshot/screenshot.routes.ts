@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import ScreenshotController from '../screenshot/screenshot.controller';
+import ScreenshotController from './screenshot.controller';
 
 const router = Router();
 
