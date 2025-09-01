@@ -479,6 +479,7 @@ model Channel {
   roomNumber        String?
   doctors           Doctor?            @relation(fields: [doctorId], references: [id])
   doctorAssignments DoctorAssignment[] @relation("ChannelToDoctorAssignment")
+  advertisements    Advertisement[]    @relation("AdChannels")
 
   @@index([doctorId], map: "Channel_doctorId_fkey")
 }
@@ -663,6 +664,7 @@ model Advertisement {
   uploadedAt         DateTime             @default(now())
   isActive           Boolean?
   AdvertisementMedia AdvertisementMedia[]
+  channels           Channel[]            @relation("AdChannels")
 }
 
 model AdvertisementMedia {

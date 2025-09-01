@@ -37,19 +37,23 @@ export const getAllAds = async (req: Request, res: Response) => {
     try {
         // ✅ Fetch all ads from DB
         const ads = await prisma.advertisement.findMany({
-            orderBy: { uploadedAt: "desc" }, // Latest first
+            orderBy: { uploadedAt: "desc" },
             include: {
-                AdvertisementMedia: true // ✅ Include related media
+              AdvertisementMedia: true,
+              channels: {
+                select: { id: true, name: true, channelId: true } // pick what you need
+              }
             }
-        });
+          });
+          
 
         // ✅ Categorize ads
-        const textAd = ads.find((ad:any) => ad.type === "text");
-        const imageAd = ads.find((ad:any) => ad.type === "image");
-        const videoAd = ads.find((ad:any) => ad.type === "video");
+        const textAd = ads.find((ad: any) => ad.type === "text");
+        const imageAd = ads.find((ad: any) => ad.type === "image");
+        const videoAd = ads.find((ad: any) => ad.type === "video");
 
         // ✅ Check which ads are active
-        const activeAd = ads.find((ad:any) => ad.isActive === true);
+        const activeAd = ads.find((ad: any) => ad.isActive === true);
 
         res.json({
             ads// ✅ Currently enabled ad
@@ -59,11 +63,38 @@ export const getAllAds = async (req: Request, res: Response) => {
     }
 };
 
+export const getAllAdsByChannel = async (req: Request, res: Response) => {
+    try {
+      const channelId = req.query.channelId ? Number(req.query.channelId) : null;
+  
+      const ads = await prisma.advertisement.findMany({
+        where: channelId
+          ? {
+              OR: [
+                { channels: { some: { id: channelId } } }, // ads linked to this channel
+                { channels: { none: {} } } // global ads (no channel assigned)
+              ]
+            }
+          : {}, // if no channelId → return all ads
+        orderBy: { uploadedAt: "desc" },
+        include: {
+          AdvertisementMedia: true,
+          channels: true, // include assigned channels
+        },
+      });
+  
+      res.json({ ads });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  };
+  
+
 
 // ✅ Insert or Update Text Advertisement
 export const uploadTextAd = async (req: Request, res: Response) => {
     try {
-        const { content } = req.body;
+        const { content, channelId } = req.body;
         if (!content) return res.status(400).json({ error: "Text content is required" });
 
         // Check if a text ad already exists
@@ -72,24 +103,31 @@ export const uploadTextAd = async (req: Request, res: Response) => {
         });
         let message;
         let updatedAd;
-        if (existingAd) {
-            // Update existing text ad
-            const updatedAd = await prisma.advertisement.update({
-                where: { id: existingAd.id },
-                data: { content },
-            });
+        // if (existingAd) {
+        //     // Update existing text ad
+        //     const updatedAd = await prisma.advertisement.update({
+        //         where: { id: existingAd.id },
+        //         data: { content },
+        //     });
 
-            message = "Text ad updated successfully";
-        } else {
-            // Create new text ad
-            const newAd = await prisma.advertisement.create({
-                data: { type: "text", content },
-            });
+        //     message = "Text ad updated successfully";
+        // } else {
+        //     // Create new text ad
+        //     const newAd = await prisma.advertisement.create({
+        //         data: { type: "text", content },
+        //     });
 
-            message = "Text ad added successfully";
-        }
+        //     message = "Text ad added successfully";
+        // }
+        const newAd = await prisma.advertisement.create({
+            data: {
+                type: "text",
+                content,
+                isActive: true,
+            },
+        });
         loadTv('text');
-        res.json({ message, updatedAd });
+        res.json({ message, newAd });
     } catch (error) {
         res.status(500).json({ error: (error as Error).message });
     }
@@ -114,6 +152,7 @@ export const uploadMediaAd = async (req: any, res: any) => {
             }
 
             const type = fields.type?.[0]; // Get first value as string
+            const channelIds = fields.channelIds ? fields.channelIds.map((id: string) => Number(id)) : [];
             if (!type || (type !== "image" && type !== "video")) {
                 return res.status(400).json({ error: "Invalid type (must be 'image' or 'video')" });
             }
@@ -126,23 +165,6 @@ export const uploadMediaAd = async (req: any, res: any) => {
 
             const file = files.file[0];
             console.log(file)
-            // const tempFilePath = file.filepath;
-            // const fileName = file.originalFilename;
-
-            // // ✅ Ensure file exists before uploading
-            // if (!fs.existsSync(tempFilePath)) {
-            //     return res.status(500).json({ error: "Temporary file not found after upload." });
-            // }
-            // const remoteFilePath = `/public_html/docminds/ads_image/${fileName}`;
-            // // ✅ Upload to FTP
-            // await uploadToFTP(tempFilePath, remoteFilePath); // ✅ Ensures fileUrl is a string
-            // const fileUrl = `https://docminds.inventionminds.com/ads_image/${fileName}`;
-
-            // if (!fileUrl || typeof fileUrl !== "string") {
-            //     return res.status(500).json({ error: "File upload failed. No file URL generated." });
-            // }
-
-            // console.log(fileUrl)
             const uploadedUrls: string[] = [];
             for (const file of uploadedFiles) {
                 const tempFilePath = file.filepath;
@@ -161,30 +183,36 @@ export const uploadMediaAd = async (req: any, res: any) => {
             });
             console.log(existingAd)
 
-            let ad:any;
+            let ad: any;
             let message;
 
-            if (existingAd) {
-                // ✅ Update existing ad
-                ad = await prisma.advertisement.update({
-                    where: { id: existingAd.id },
-                    data: { content: uploadedUrls[0], type, isActive: true }, // Use first URL as content
-                });
+            // if (existingAd) {
+            //     // ✅ Update existing ad
+            //     ad = await prisma.advertisement.update({
+            //         where: { id: existingAd.id },
+            //         data: { content: uploadedUrls[0], type, isActive: true }, // Use first URL as content
+            //     });
 
-                const mediaData = uploadedUrls.map(url => ({
-                    advertisementId: existingAd.id,
-                    url,
-                    isActive: true
-                }));
-                await prisma.advertisementMedia.createMany({
-                    data: mediaData
-                });
-                message = "Image ad updated successfully";
-            } else {
-                // ✅ Create new ad
+            //     const mediaData = uploadedUrls.map(url => ({
+            //         advertisementId: existingAd.id,
+            //         url,
+            //         isActive: true
+            //     }));
+            //     await prisma.advertisementMedia.createMany({
+            //         data: mediaData
+            //     });
+            //     message = "Image ad updated successfully";
+            // } else {
+            // ✅ Create new ad
+            if (channelIds.length === 0) {
                 ad = await prisma.advertisement.create({
-                    data: { type, content: uploadedUrls[0], isActive: true },
-                });
+                    data: { 
+                      type, 
+                      content: uploadedUrls[0], 
+                      isActive: true,
+                      channels: { connect: [] } // ✅ no channels → global ad
+                    },
+                  });
                 const mediaData = uploadedUrls.map(url => ({
                     advertisementId: ad.id,
                     url,
@@ -195,6 +223,32 @@ export const uploadMediaAd = async (req: any, res: any) => {
                 });
                 message = "Image ad updated successfully";
             }
+            else {
+
+                ad = await prisma.advertisement.create({
+                    data: {
+                        type,
+                        content: uploadedUrls[0],
+                        isActive: true,
+                        channels: {
+                            connect: channelIds.length
+                                ? channelIds.map((id: number) => ({ id }))
+                                : [] // global ad if no channelIds
+                        }
+                    }
+                });
+
+                const mediaData = uploadedUrls.map(url => ({
+                    advertisementId: ad.id,
+                    url,
+                    isActive: true
+                }));
+                await prisma.advertisementMedia.createMany({
+                    data: mediaData
+                });
+                message = "Image ad updated successfully";
+            }
+
             loadTv('image')
             // ✅ Delete temp file after upload
             // fs.unlinkSync(tempFilePath);
@@ -227,7 +281,7 @@ async function uploadToFTP(localFilePath: string, remoteFileName: string): Promi
         await client.close();
 
         // ✅ Return the correct public file URL
-        
+
     } catch (error) {
         console.error("FTP Upload Error:", error);
         throw new Error("FTP upload failed");
@@ -272,35 +326,62 @@ export const toggleMediaStatus = async (req: Request, res: Response) => {
 };
 export const deleteMedia = async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      await prisma.advertisementMedia.delete({ where: { id } });
-      loadTv('image');
-      res.json({ message: "Media deleted" });
+        const id = Number(req.params.id);
+        await prisma.advertisementMedia.delete({ where: { id } });
+        loadTv('image');
+        res.json({ message: "Media deleted" });
     } catch (error) {
-      res.status(500).json({ error: (error as Error).message });
+        res.status(500).json({ error: (error as Error).message });
     }
-  };
-  
-  export const toggleImageMediaStatus = async (req: Request, res: Response) => {
+};
+
+export const toggleImageMediaStatus = async (req: Request, res: Response) => {
     try {
-      const mediaId = Number(req.params.id);
-      const { isActive } = req.body;
+        const mediaId = Number(req.params.id);
+        const { isActive } = req.body;
+
+        if (typeof isActive !== 'boolean') {
+            res.status(400).json({ error: "isActive must be boolean" });
+            return;
+        }
+
+        const updatedMedia = await prisma.advertisementMedia.update({
+            where: { id: mediaId },
+            data: { isActive }
+        });
+
+        res.json({
+            message: `Media ${isActive ? "activated" : "deactivated"} successfully`,
+            updatedMedia
+        });
+    } catch (error) {
+        res.status(500).json({ error: (error as Error).message });
+    }
+};
+export const updateAdChannels = async (req: Request, res: Response) => {
+    try {
+      const { advertisementId, channelIds } = req.body;
   
-      if (typeof isActive !== 'boolean') {
-         res.status(400).json({ error: "isActive must be boolean" });
+      if (!advertisementId) {
+         res.status(400).json({ error: "Advertisement ID is required" });
          return;
       }
   
-      const updatedMedia = await prisma.advertisementMedia.update({
-        where: { id: mediaId },
-        data: { isActive }
+      // Clear old relations and connect new ones
+      const updatedAd = await prisma.advertisement.update({
+        where: { id: Number(advertisementId) },
+        data: {
+          channels: {
+            set: [], // remove old channels
+            connect: channelIds?.map((id: number) => ({ id })) || [] // add new channels
+          }
+        },
+        include: { channels: true }
       });
   
-      res.json({
-        message: `Media ${isActive ? "activated" : "deactivated"} successfully`,
-        updatedMedia
-      });
+      res.json({ message: "Channels updated successfully", updatedAd });
     } catch (error) {
+      console.error("Error updating ad channels:", error);
       res.status(500).json({ error: (error as Error).message });
     }
   };
