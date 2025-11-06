@@ -31,7 +31,8 @@ import {
     prnWiseAppointment,
     opdGenderWise,
     checkedOutAppointments,
-    getDoctorTodayReport
+    getDoctorTodayReport,
+    getAppointmentById
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -79,6 +80,7 @@ router.put('/:id/checkin', authenticateToken, checkInAppointment);
 router.put('/:id/waitingTime', updateExtraWaitingTime);
 router.get('/notifications', getAllNotifications);
 router.delete('/notifications/:id', deleteNotification);
+router.get('/:appointmentId', authenticateToken, getAppointmentById);
 
 
 

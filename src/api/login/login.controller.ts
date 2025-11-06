@@ -44,10 +44,16 @@ export const userLogin = async (req: Request, res: Response) => {
     const { password, employeeId, phoneNumber } = req.body;
     let doctors;
     let user;
+
+    console.log(password, employeeId, phoneNumber);
     if (phoneNumber) {
       const doctor = await prisma.doctor.findFirst({
         where: { phone_number: phoneNumber },  // Check if phone number exists
         select: { userId: true },           // Get only userId
+      });
+      const therapist = await prisma.therapist.findFirst({
+        where: { phoneNumber: phoneNumber.slice(2) },
+        select: { userId: true },
       });
 
       if (doctor && doctor.userId) {
@@ -55,11 +61,15 @@ export const userLogin = async (req: Request, res: Response) => {
         //   where: { id: doctor.userId }, // Fetch the corresponding user
         // });
         user = await loginDoctor(password, doctor.userId)
+      }else if (therapist && therapist.userId) {
+        console.log("therapist found", therapist);
+        user = await loginDoctor(password, therapist.userId); // reuse loginDoctor
       }
 
     }
 
     if (employeeId) {
+      console.log("Logging in with employeeId");
       user = await loginUser(password, employeeId);
     }
 

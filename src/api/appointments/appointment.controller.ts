@@ -674,8 +674,8 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
 
     const whatsappPayload = {
       from: fromPhoneNumber,
-      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      // to: ['919342287945'],
+      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      to: ['919342287945'],
       // to:['919342003000'],
       type: "template",
       message: {
@@ -946,6 +946,28 @@ export const getAppointmentByServiceId = async (req: Request, res: Response): Pr
         serviceId: Number(serviceId), // Match service ID
         date: queryDate, // Match today's date in YYYY-MM-DD format
       },
+    });
+
+    console.log("✅ Appointments Retrieved:", appointments);
+
+    res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+export const getAppointmentById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { appointmentId } = req.params
+
+
+    // Fetch today's appointments based on serviceId
+    const appointments = await prisma.appointment.findUnique({
+      where: {
+        id: Number(appointmentId), // Match service ID
+      },
+      include:{
+        user: true
+      }
     });
 
     console.log("✅ Appointments Retrieved:", appointments);

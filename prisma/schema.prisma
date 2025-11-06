@@ -27,38 +27,40 @@ model Department {
 }
 
 model Doctor {
-  id               Int                  @id @default(autoincrement())
-  name             String
-  email            String
-  phone_number     String
-  qualification    String
-  departmentId     Int
-  departmentName   String               @default("Unknown")
-  userId           Int?
-  availableFrom    String?
-  slotDuration     Int?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  doctorType       String?              @default("Regular")
-  roomNo           String?
-  kmcNumber        String?
-  createdBy        String?
-  updatedBy        String?
-  isActive         Boolean?             @default(true)
-  bookedSlots      BookedSlot[]         @relation("DoctorToBookedSlot")
-  Channel          Channel[]
-  department       Department           @relation(fields: [departmentId], references: [id])
-  user             User?                @relation("DoctorUser", fields: [userId], references: [id])
-  DoctorAssignment DoctorAssignment[]
-  availability     DoctorAvailability[] @relation("DoctorToAvailability")
-  Estimation       Estimation[]
-  extraSlots       ExtraSlot[]          @relation("DoctorToExtraSlot")
-  ExtraSlotCount   ExtraSlotCount[]
-  LeaveDates       LeaveDates[]
-  unavailableDates UnavailableDates[]   @relation("DoctorToUnavailableDate")
-  unavailableSlots UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
-  appointments     Appointment[]        @relation("DoctorAppointments")
-  SentMessage      SentMessage[]
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  email              String
+  phone_number       String
+  qualification      String
+  departmentId       Int
+  departmentName     String               @default("Unknown")
+  userId             Int?
+  availableFrom      String?
+  slotDuration       Int?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  doctorType         String?              @default("Regular")
+  roomNo             String?
+  kmcNumber          String?
+  createdBy          String?
+  updatedBy          String?
+  isActive           Boolean?             @default(true)
+  signUrl            String?
+  bookedSlots        BookedSlot[]         @relation("DoctorToBookedSlot")
+  Channel            Channel[]
+  department         Department           @relation(fields: [departmentId], references: [id])
+  user               User?                @relation("DoctorUser", fields: [userId], references: [id])
+  DoctorAssignment   DoctorAssignment[]
+  availability       DoctorAvailability[] @relation("DoctorToAvailability")
+  Estimation         Estimation[]
+  extraSlots         ExtraSlot[]          @relation("DoctorToExtraSlot")
+  ExtraSlotCount     ExtraSlotCount[]
+  LeaveDates         LeaveDates[]
+  unavailableDates   UnavailableDates[]   @relation("DoctorToUnavailableDate")
+  unavailableSlots   UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
+  appointments       Appointment[]        @relation("DoctorAppointments")
+  SentMessage        SentMessage[]
+  TherapyAppointment TherapyAppointment[]
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -82,6 +84,7 @@ model User {
   Notification   Notification[]
   activeTokens   ActiveToken[]
   appointments   Appointment[]  @relation("UserAppointments")
+  Therapist      Therapist[]
 
   @@map("users")
 }
@@ -920,4 +923,209 @@ enum UserRole {
   admin
   doctor
   unknown
+}
+
+model OPDAssessment {
+  id            Int  @id @default(autoincrement())
+  doctorId      Int?
+  appointmentId Int?
+
+  // Patient Info
+  name           String?
+  age            String?
+  gender         String?
+  uhId           String?
+  height         String?
+  weight         String?
+  date           String?
+  consultant     String?
+  department     String?
+  assessmentTime String?
+
+  // Vitals
+  hr    String?
+  rr    String?
+  pulse String?
+  bp    String?
+  temp  String?
+  spo2  String?
+
+  // Nutritional
+  oralDiet       String?
+  enteralFeed    String?
+  npo            Boolean?
+  specify        String?  @db.LongText
+  allergies      String?  @db.LongText
+  painScore      String?
+  screeningReq   Boolean?
+  implantCounsel Boolean?
+
+  // Free-text / Canvas fields
+  history       String? @db.LongText
+  examination   String? @db.LongText
+  investigation String? @db.LongText
+  treatmentPlan String? @db.LongText
+
+  // Signature + Staff
+  doctorSealSign String?   @db.LongText
+  staffName      String?
+  staffEmpId     String?
+  staffDateTime  DateTime?
+  doctorName     String? // ✅ Added
+  kmcNo          String?
+  createdBy      Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ERAssessment {
+  id            Int  @id @default(autoincrement())
+  doctorId      Int?
+  appointmentId Int?
+
+  // Patient Info
+  name String? @db.LongText
+  age  String? @db.LongText
+  sex  String? @db.LongText
+  uhId String? @db.LongText
+  date String? @db.LongText
+  time String? @db.LongText
+
+  // Vitals
+  pr    String? @db.LongText
+  bp    String? @db.LongText
+  rr    String? @db.LongText
+  spo2  String? @db.LongText
+  temp  String? @db.LongText
+  grbs  String? @db.LongText
+  mlcNo String? @db.LongText
+
+  // Free-text / Canvas fields
+  presentingComplaints  String? @db.LongText
+  pastHistory           String? @db.LongText
+  regularMedications    String? @db.LongText
+  abcdeAssessment       String? @db.LongText
+  examination           String? @db.LongText
+  investigation         String? @db.LongText
+  procedureDone         String? @db.LongText
+  provisionalDiagnosis  String? @db.LongText
+  treatmentAdministered String? @db.LongText
+
+  referralDepartment String? @db.LongText
+  disposition        String? @db.LongText
+
+  // Vitals on Discharge
+  dischargePR   String? @db.LongText
+  dischargeBP   String? @db.LongText
+  dischargeRR   String? @db.LongText
+  dischargeSpo2 String? @db.LongText
+  dischargeTemp String? @db.LongText
+
+  // Prescriptions & Instructions
+  prescribedDrugs   Json?
+  otherInstructions String? @db.LongText
+  followUp          String?
+
+  // Doctor
+  doctorSpecialty String?   @db.LongText
+  doctorSign      String?   @db.LongText
+  doctorName      String?
+  kmcNo           String?
+  signDateTime    DateTime?
+  createdBy       Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Therapy {
+  id           Int                  @id @default(autoincrement())
+  name         String               @unique
+  description  String?
+  duration     Int                  @default(75) // in minutes
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  appointments TherapyAppointment[]
+}
+
+model Therapist {
+  id            Int                  @id @default(autoincrement())
+  name          String
+  phoneNumber   String
+  email         String?              @unique
+  qualification String?
+  isActive      Boolean              @default(true)
+  userId        Int? // ✅ link to User
+  user          User?                @relation(fields: [userId], references: [id])
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  appointments  TherapyAppointment[]
+}
+
+model TherapyAppointment {
+  id             Int       @id @default(autoincrement())
+  prn            Int
+  prefix         String?
+  name           String
+  phone          String
+  email          String?
+  gender         String?
+  age            Int?
+  doctorId       Int?
+  therapistId    Int?
+  therapyId      Int
+  roomNumber     String
+  date           String // YYYY-MM-DD
+  time           String // HH:mm
+  status         String?
+  checkedIn      Boolean?  @default(false)
+  checkedInTime  DateTime?
+  checkedInBy    String? // doctor / therapist / admin name or id
+  reminderSent   Boolean?  @default(false)
+  reminderSentAt DateTime?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  startedBy  String? // doctor / therapist / admin name or id
+  finishedBy String? // doctor / therapist / admin name or id
+
+  cancelledBy String? // doctor / therapist / admin name or id
+  cancelledAt DateTime?
+
+  entryDone   Boolean?  @default(false)
+  entryDoneAt DateTime?
+  entryDoneBy String? // doctor / therapist / admin name or id
+
+  therapyStarted  Boolean? @default(false)
+  therapyFinished Boolean? @default(false)
+
+  cleanedAfterUse   Boolean?  @default(false)
+  cleanedAfterUseAt DateTime?
+
+  postponed   Boolean?  @default(false)
+  postponedAt DateTime?
+  postponedBy String?
+
+  smsSent      Boolean? @default(false)
+  emailSent    Boolean? @default(false)
+  whatsappSent Boolean? @default(false)
+
+  lockedBy Int?
+  userId   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor    Doctor?    @relation(fields: [doctorId], references: [id])
+  therapist Therapist? @relation(fields: [therapistId], references: [id])
+  therapy   Therapy    @relation(fields: [therapyId], references: [id])
+
+  // Prevent same room being double-booked
+  @@unique([roomNumber, date, time], map: "unique_therapy_room_slot")
+  // Prevent same therapist being double-booked
+  @@unique([therapistId, date, time], map: "unique_therapist_slot")
+  @@index([doctorId])
+  @@index([therapistId])
+  @@index([therapyId])
 }

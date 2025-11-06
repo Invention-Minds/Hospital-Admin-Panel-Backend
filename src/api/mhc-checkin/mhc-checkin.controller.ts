@@ -193,8 +193,8 @@ export async function completeCheckIn(req: Request, res: Response) {
         const thresholds = [20, 25, 30, 35];
         if (thresholds.includes(count)) {
             // const alreadySent = await wasThresholdSentRecently(count);
-            // const phoneNumbers = ['919342287945', '917708059010', '916382348092'];
-            const phoneNumbers =['919620306613', '916364833988', '919880544866'];
+            const phoneNumbers = ['919342287945', '917708059010', '916382348092'];
+            // const phoneNumbers =['919620306613', '916364833988', '919880544866'];
 
             await Promise.all(
                 phoneNumbers.map(num => sendWhatsAppNotification(num, count))

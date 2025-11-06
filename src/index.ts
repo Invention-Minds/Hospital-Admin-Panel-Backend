@@ -29,6 +29,9 @@ import historyRoutes from './api/history-notes/history-notes.routes';
 import investigationRoutes from './api/investigation/investigation.routes';
 import queueRoutes from './api/mhc-checkin/mhc-checkin.routes';
 import radiologyQueueRoutes from './api/radiology-queue/radiologu-queue.routes';
+import opdRoutes from './api/opd/opd.routes';
+import erRoutes from './api/er/er.routes';
+import therapyRoutes from './api/therapy/therapy.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -37,13 +40,15 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// app.use(express.json());
 app.use(helmet());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ limit: '1gb', extended: true }));
 
 app.use(cors({
-  origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/','https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in', 'http://192.168.9.139:4200/'], 
+  origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/',
+    'https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in',
+     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -73,6 +78,9 @@ app.use('/api/history-notes', historyRoutes);
 app.use('/api/investigation', investigationRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/radiology-queue', radiologyQueueRoutes);
+app.use('/api/opd', opdRoutes);
+app.use('/api/er', erRoutes);
+app.use('/api/therapy-appt', therapyRoutes);
 
 
 app.use(compression())

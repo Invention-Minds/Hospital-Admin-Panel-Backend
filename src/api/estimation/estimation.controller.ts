@@ -152,8 +152,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         console.log(estimationId)
         const payload = {
             from: fromPhoneNumber,
-            to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
-            // to: ["919342287945"],
+            // to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
+            to: ["919342287945"],
             // to:['919342003000'],
             type: "template",
             message: {
@@ -187,8 +187,8 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 console.log(estimationId)
                 const payload = {
                     from: fromPhoneNumber,
-                    to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
-                    // to: ["919342287945"],
+                    // to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
+                    to: ["919342287945"],
                     // to:['919342003000'],
                     type: "template",
                     message: {
@@ -786,8 +786,8 @@ async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
         console.log("Connected to FTP Server!");
 
         // Ensure the "pdfs" directory exists
-        // await client.ensureDir("/docminds/pdfs");
-        await client.ensureDir("/docminds/demo_pdfs");
+        await client.ensureDir("/docminds/pdfs");
+        // await client.ensureDir("/docminds/demo_pdfs");
 
         // Upload the file
         await client.uploadFrom(localFilePath, remoteFilePath);
@@ -2072,12 +2072,12 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
 
 
         writeStream.on("finish", async () => {
-            // const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
-            const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
+            const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
+            // const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
             console.log(remoteFilePath);
             await uploadToFTP(tempFilePath, remoteFilePath);
-            const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
-            // const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            // const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
             console.log(pdfUrl);
 
             // Save PDF details to the database (assuming you have a function for this)

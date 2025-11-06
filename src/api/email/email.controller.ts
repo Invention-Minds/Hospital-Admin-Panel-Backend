@@ -14,11 +14,12 @@ const transporter = nodemailer.createTransport({
   service: 'gmail',
   host: 'smtp.gmail.com',
   port: 587, // Use SSL/TLS for the connection
-  // service: 'Gmail', // or any SMTP service you're using
+  // // service: 'Gmail', // or any SMTP service you're using
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS
   }
+
 });
 
 // Helper function to generate email content based on status
@@ -26,12 +27,12 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
   if (status === 'confirmed') {
     if (recipientType === 'doctor') {
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Confirmed',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Confirmed`,
         text: `Hi  ${appointmentDetails.doctorName},\n\nYou have a confirmed appointment with ${appointmentDetails.patientName} on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact the admin staff at 97420 20123. Thank you!`,
       };
     } else if (recipientType === 'patient') {
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Confirmed',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Confirmed`,
         text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} is confirmed on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact us at 97420 20123. Thank you!`,
       };
     }
@@ -39,22 +40,22 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
   switch (status) {
     case 'received':
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Received',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Received`,
         text: `Hi ${appointmentDetails.patientName},\n\nWe have received your appointment request with  ${appointmentDetails.doctorName}. Our team will process it and get back to you shortly.\n\nIf you have any immediate questions, please reach out to us at 97420 20123. Thank you!`,
       };
     case 'rescheduled':
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Rescheduled',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Rescheduled`,
         text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} has been rescheduled to ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nIf you have any questions, feel free to reach out to us at 97420 20123. Thank you!`,
       };
     case 'cancelled':
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Cancelled',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Cancelled`,
         text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} on ${appointmentDetails.date} has been cancelled.\n\nIf you need to reschedule or have any questions, please contact us at 97420 20123. Thank you for understanding!`,
       };
     default:
       return {
-        subject: 'Rashtrotthana Hospital - Appointment Update',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Update`,
         text: `Hi ${appointmentDetails.patientName},\n\nThere has been an update to your appointment.\n\nFor any questions, please contact us at 97420 20123. Thank you!`,
       };
   }
@@ -65,7 +66,7 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
 // Controller function to send email
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { to, status, appointmentDetails, recipientType } = req.body;
+    const { to, status, appointmentDetails, recipientType, whatsappNumber } = req.body;
     // console.log(to, status, appointmentDetails, recipientType)
 
     // Validation to ensure all required fields are provided
@@ -75,7 +76,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
     }
     if (status === 'frontoffice') {
       const emailContenttoFrontOffice = {
-        subject: 'Rashtrotthana Hospital - Appointment Received From Website',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Received From Website`,
         text: `
           Doctor Name: ${appointmentDetails.doctorName}
       
@@ -101,11 +102,14 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
         text: emailContenttoFrontOffice.text,
       };
       const info = await transporter.sendMail(mailOptions);
+      if(emailContenttoFrontOffice && process.env.HOSPITAL_NAME === 'Vasavi Hospitals' && whatsappNumber){
+        await sendWhatsappTemplate(whatsappNumber, emailContenttoFrontOffice.subject, emailContenttoFrontOffice.text);
+      }
       res.status(200).json({ message: 'Email sent successfully', info });
     }
     else if (status === 'frontofficechatbot') {
       const emailContenttoFrontOffice = {
-        subject: 'Rashtrotthana Hospital - Appointment Received From Chatbot',
+        subject: `${process.env.HOSPITAL_NAME} - Appointment Received From Chatbot`,
         text: `
           Doctor Name: ${appointmentDetails.doctorName}
       
@@ -133,6 +137,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
 
     else {
       const emailContent = generateEmailContent(status, appointmentDetails, recipientType);
+      console.log(emailContent)
 
       const mailOptions = {
         from: process.env.SMTP_USER,
@@ -169,7 +174,7 @@ export const sendMailtoLab = async (req: Request, res: Response): Promise<void> 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: 'laboratory@rashtrotthanahospital.com',
-        subject: "Rashtrotthana Hospital - Door step delivery - Blood Sample Collection Request ",
+        subject: `${process.env.HOSPITAL_NAME} - Door step delivery - Blood Sample Collection Request `,
         text: `
                 Name: ${name}
                 Contact: ${contact}
@@ -188,7 +193,7 @@ export const sendMailtoLab = async (req: Request, res: Response): Promise<void> 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: 'pharmacy@rashtrotthanahospital.com',
-        subject: "Rashtrotthana Hospital - Door step delivery - Pharmacy Request ",
+        subject: `${process.env.HOSPITAL_NAME} - Door step delivery - Pharmacy Request`,
         text: `
                 Name: ${name}
                 Contact: ${contact}
@@ -238,7 +243,7 @@ export const sendHealthCheckupConfirmationEmail = async (req: Request, res: Resp
     // Generate email content for health checkup package confirmation
     if (status === 'confirmed' || status === 'rescheduled' || status === 'Confirm') {
       const emailContent = {
-        subject: `Appointment Status Update – Rashtrotthana Hospital`,
+        subject: `Appointment Status Update – ${process.env.HOSPITAL_NAME}`,
         text: `
         Dear ${appointmentDetails.patientName},
 
@@ -252,7 +257,7 @@ export const sendHealthCheckupConfirmationEmail = async (req: Request, res: Resp
         Thank you for choosing us.
 
         Regards,
-        Team Rashtrotthana
+        Team ${process.env.HOSPITAL_NAME}
       `,
       };
       const mailOptions = {
@@ -280,7 +285,7 @@ export const sendHealthCheckupConfirmationEmail = async (req: Request, res: Resp
         Thank you!
 
         Regards,
-        Team Rashtrotthana
+        Team ${process.env.HOSPITAL_NAME}
       `,
       };
       const mailOptions = {
@@ -307,7 +312,7 @@ For any assistance, please feel free to reach out to us at 97420 20123.
 Thank you!
 
 Regards,
-Team Rashtrotthana
+Team ${process.env.HOSPITAL_NAME}
       `,
       };
       const mailOptions = {
@@ -346,7 +351,7 @@ export const sendEmailForApprover = async (req: Request, res: Response) => {
       Thank you!
 
       Regards,
-      Team Rashtrotthana
+      Team ${process.env.HOSPITAL_NAME}
     `,
     };
     const mailOptions = {
@@ -365,6 +370,43 @@ export const sendEmailForApprover = async (req: Request, res: Response) => {
   }
 }
 
+export const sendPackageMail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { packageName, firstName, lastName, phoneNumber, appointmentDate, email } = req.body;
+
+    // const to = ['patientservices@rashtrotthanahospital.com', 'frontoffice@rashtrotthanahospital.com']
+    const to = ['keerthanasaminathan0805@gmail.com', 'patientservices@rashtrotthanahospital.com', 'frontoffice@rashtrotthanahospital.com']
+    const emailContenttoFrontOffice = {
+      subject: 'New Appointment Request from Website - Health Check-up Page',
+      text: `
+      
+          Patient Name: ${firstName} ${lastName}
+      
+          Patient Contact: ${phoneNumber}
+      
+          Package Name: ${packageName}
+
+          Appointment Date: ${appointmentDate}
+
+          Patient Email: ${email}
+        `
+    };
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: Array.isArray(to) ? to.join(', ') : to,
+      subject: emailContenttoFrontOffice.subject,
+      text: emailContenttoFrontOffice.text,
+    };
+    const info = await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: 'Email sent successfully', info });
+
+
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ message: 'Failed to send email' });
+  }
+};
+
 
 export const sendServiceEmail = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -374,33 +416,246 @@ export const sendServiceEmail = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-      const emailContenttoFrontOffice = {
-        subject: 'New Appointment Request from Website - Service Page',
-        text: `
+    const emailContenttoFrontOffice = {
+      subject: 'New Appointment Request from Website - Service Page',
+      text: `
       
           Patient Name: ${appointmentDetails.firstName} ${appointmentDetails.lastName}
       
           Patient Email: ${appointmentDetails.email}
       
-          Patient Contact: ${appointmentDetails.mobile}
+          Patient Contact: ${appointmentDetails.phone}
 
           Doctor Name: ${appointmentDetails.doctor}
       
           Message: ${appointmentDetails.message}
         `
-      };
-      const mailOptions = {
-        from: process.env.SMTP_USER,
-        to: Array.isArray(to) ? to.join(', ') : to,
-        subject: emailContenttoFrontOffice.subject,
-        text: emailContenttoFrontOffice.text,
-      };
-      const info = await transporter.sendMail(mailOptions);
-      res.status(200).json({ message: 'Email sent successfully', info });
-    
+    };
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: Array.isArray(to) ? to.join(', ') : to,
+      subject: emailContenttoFrontOffice.subject,
+      text: emailContenttoFrontOffice.text,
+    };
+    const info = await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: 'Email sent successfully', info });
+
 
   } catch (error) {
     console.error('Error sending email:', error);
     res.status(500).json({ message: 'Failed to send email' });
   }
 };
+
+
+export const conditionalEmail = async (req: Request, res: Response): Promise<void> => {
+
+  try {
+    const { to, appointmentDetails, status, whatsappNumber } = req.body;
+
+    var emailContent
+
+    if (status === "Contact-Page") {
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`, 
+        text: `
+        
+            Patient Name: ${appointmentDetails.name}
+                
+            Patient Contact: ${appointmentDetails.phone}
+  
+            Services: ${appointmentDetails.service}
+        
+            Message: ${appointmentDetails.message}
+          `
+      };
+    }
+
+    else if (status === "Enquiry-Form") {
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`,
+        text: `
+        
+            Patient Name: ${appointmentDetails.name}
+                
+            Patient Contact: ${appointmentDetails.phone}
+  
+            Date: ${appointmentDetails.date}
+
+            Service: ${appointmentDetails.service}
+        
+            Message: ${appointmentDetails.message}
+          `
+      };
+    }
+
+    else if (status === "Package-Enquiry") {
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`,
+        text: `
+
+            Package Name : ${appointmentDetails.packageName}
+
+            Patient Name: ${appointmentDetails.name}
+
+            Patient Contact: ${appointmentDetails.phone}
+                  
+            Email: ${appointmentDetails.email}
+        
+            Date: ${appointmentDetails.date}
+
+            Message: ${appointmentDetails.message}
+          `
+      };
+    }
+
+    else if (status === "Service-Page") {
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`,
+        text: `
+    
+              Patient Name: ${appointmentDetails.name}
+  
+              Patient Contact: ${appointmentDetails.phone}
+                    
+              Email: ${appointmentDetails.email}
+  
+              Doctor: ${appointmentDetails.doctor}
+          
+              Date: ${appointmentDetails.date}
+  
+              Message: ${appointmentDetails.message}
+            `
+      };
+    }
+
+    else if(status === "Specialty-Page"){
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`,
+        text: `
+  
+            Patient Name: ${appointmentDetails.name}
+
+            Patient Contact: ${appointmentDetails.phone}
+                  
+            Email: ${appointmentDetails.email}
+
+            Service: ${appointmentDetails.service}
+        
+            Date: ${appointmentDetails.date}
+
+            Message: ${appointmentDetails.message}
+          `
+      };
+    }
+    else if (status === "Callback-Form") {
+      emailContent = {
+        subject: `New Callback Request from Website - ${appointmentDetails.page}`,
+        text: `
+          📞 Callback Request Details - Surgery page
+    
+          Patient Name: ${appointmentDetails.name}
+          Contact Number: ${appointmentDetails.phone}
+          Location: ${appointmentDetails.address}
+    
+          Page Filled From: ${appointmentDetails.page}
+        `
+      };
+    }
+    
+
+    else{
+      res.status(404).json({ message: 'Invalid Page Name' });
+    }
+
+
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: Array.isArray(to) ? to.join(', ') : to,
+      subject: emailContent?.subject,
+      text: emailContent?.text,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    if(emailContent){
+      console.log(emailContent.subject, emailContent.text)
+      await sendWhatsappTemplate(whatsappNumber, emailContent.subject, emailContent.text);
+    }
+
+    res.status(200).json({ message: 'Email sent successfully', info });
+
+  }
+  catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ message: 'Failed to send email' });
+  }
+
+}
+
+import axios from 'axios';
+import { sub } from 'date-fns';
+
+// ✅ WhatsApp sender function
+const sendWhatsappTemplate = async (
+  numbers: string[] | string,
+  subject: string,
+  text: string
+): Promise<void> => {
+  try {
+    // Ensure we always have an array of numbers
+    const recipients = Array.isArray(numbers) ? numbers : [numbers];
+
+    console.log(sanitizeForWhatsappSingleLine(subject), sanitizeForWhatsappSingleLine(text));
+
+    // Loop through all numbers and send individually
+    for (const to of recipients) {
+      console.log(`📱 Sending WhatsApp message to ${to}..., ${subject}, ${text}`);
+      const response = await axios.post(
+        'https://api.wacto.app/api/v1.0/messages/send-template/918884545086',
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'template',
+          template: {
+            name: 'website_lead_notification', // ✅ make sure this template is approved in Wacto
+            language: { code: 'en' },
+            components: [
+              {
+                type: 'body',
+                parameters: [
+                    { type: 'text', text: sanitizeForWhatsappSingleLine(subject) },
+                    { type: 'text', text: sanitizeForWhatsappSingleLine(text) }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer O6q5lsQag02tDXTp95DQhg'
+          }
+        }
+      );
+
+      console.log(`✅ WhatsApp message sent to ${to}:`, response.data);
+    }
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error('❌ WhatsApp API Error:', error.response?.data || error.message);
+    } else if (error instanceof Error) {
+      console.error('❌ General Error:', error.message);
+    } else {
+      console.error('❌ Unknown Error:', error);
+    }
+  }
+};
+function sanitizeForWhatsappSingleLine(text: string): string {
+  return text
+    .replace(/\r\n|\r|\n/g, ' ')   // replace all line breaks with a space
+    .replace(/\s\s+/g, ' ')        // collapse multiple spaces
+    .trim();                       // remove leading/trailing spaces
+}
+
+

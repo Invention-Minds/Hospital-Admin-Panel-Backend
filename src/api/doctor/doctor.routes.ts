@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -46,6 +46,8 @@ router.get('/:id/extraslots', getExtraSlots);
 router.put('/:doctorId/room', updateRoomNo);
 
 
+// POST /api/doctors/:doctorId/signature
+router.post("/:doctorId/signature", uploadDoctorSignature);
 
 
 

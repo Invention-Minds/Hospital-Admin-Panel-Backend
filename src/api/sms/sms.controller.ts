@@ -221,3 +221,50 @@ export const sendSMSforRadiology = async (req: Request, res: Response): Promise<
         res.status(500).json({ error: 'Internal server error' });
     }
 }
+
+
+export const sendOtpSmsNettyfish = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { patientName, otp, service, patientPhoneNumber } = req.body;
+  
+      if (!patientPhoneNumber || !otp || !service || !patientName) {
+        res.status(400).json({ error: 'Missing required fields' });
+        return;
+      }
+  
+      // Compose the OTP message
+      const message = `Dear ${patientName}, your One Time Password (OTP) for ${service} from Vasavi Hospitals is ${otp}. It will expire in 2 minutes. Please do not share it with anyone.`;
+  
+      // Nettyfish API credentials (best practice: move to .env)
+      const apiUrl = process.env.NETTYFISH_SMS_URL || 'https://sms.nettyfish.com/api/v2/SendSMS';
+      const payload = {
+        SenderId: process.env.NETTYFISH_SENDER_ID || 'VSVIHL',
+        Is_Unicode: false,
+        Is_Flash: false,
+        PrincipleEntityId: process.env.NETTYFISH_ENTITY_ID || '1201162159417491077',
+        TemplateId: process.env.NETTYFISH_TEMPLATE_ID || '1707176181130933376',
+        Message: message,
+        MobileNumbers: patientPhoneNumber,
+        ApiKey: process.env.NETTYFISH_API_KEY || 'eN8jJzg1iKAqNROm5PWYmkZV/j8YHM4kMMLo0T5p26Q=',
+        ClientId: process.env.NETTYFISH_CLIENT_ID || 'f90e5d44-628a-4caa-858d-9378d9d84c66',
+      };
+  
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+  
+      // Send SMS via Nettyfish API
+      const response = await axios.post(apiUrl, payload, { headers });
+  
+      res.status(200).json({
+        message: 'OTP SMS sent successfully via Nettyfish',
+        data: response.data,
+      });
+    } catch (error: any) {
+      console.error('Error sending OTP SMS:', error.response?.data || error.message);
+      res.status(500).json({
+        error: 'Failed to send OTP SMS',
+        details: error.response?.data || error.message,
+      });
+    }
+  };

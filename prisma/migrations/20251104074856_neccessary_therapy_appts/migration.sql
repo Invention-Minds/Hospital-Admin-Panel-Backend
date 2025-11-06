@@ -1,0 +1,15 @@
+-- AlterTable
+ALTER TABLE `TherapyAppointment` ADD COLUMN `cancelledAt` DATETIME(3) NULL,
+    ADD COLUMN `cancelledBy` VARCHAR(191) NULL,
+    ADD COLUMN `cleanedAfterUse` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `cleanedAfterUseAt` DATETIME(3) NULL,
+    ADD COLUMN `emailSent` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `entryDone` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `entryDoneAt` DATETIME(3) NULL,
+    ADD COLUMN `entryDoneBy` VARCHAR(191) NULL,
+    ADD COLUMN `lockedBy` INTEGER NULL,
+    ADD COLUMN `smsSent` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `therapyFinished` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `therapyStarted` BOOLEAN NULL DEFAULT false,
+    ADD COLUMN `userId` INTEGER NULL,
+    ADD COLUMN `whatsappSent` BOOLEAN NULL DEFAULT false;

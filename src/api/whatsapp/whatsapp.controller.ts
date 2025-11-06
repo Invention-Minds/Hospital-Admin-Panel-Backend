@@ -16,6 +16,7 @@ import moment from 'moment-timezone';
 import { start } from 'repl';
 import { Console } from 'console';
 import { callRepeatedAppointments, processRepeatedAppointments } from '../services/services.controller';
+import { sendTherapyReminders } from '../therapy/therapy.controller';
 
 // import { utcToZonedTime, format } from 'date-fns-tz';
 dotenv.config();
@@ -2145,8 +2146,8 @@ async function checkDoctorAvailability() {
       console.log(firstAppointment)
 
 
-      const adminPhoneNumbers = ["919880544866", "916364833988"]
-      // const adminPhoneNumbers = ["919342287945", "919342003000"];
+      // const adminPhoneNumbers = ["919880544866", "916364833988"]
+      const adminPhoneNumbers = ["919342287945", "919342003000"];
 
       const now = moment().tz("Asia/Kolkata").toDate();
 
@@ -2422,8 +2423,8 @@ async function checkPatientWaitingTime() {
 
 
           // Step 7: Send WhatsApp notifications to Admins & Doctor
-          // const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
-          const adminPhoneNumbers = ["919880544866", "916364833988"]
+          const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
+          // const adminPhoneNumbers = ["919880544866", "916364833988"]
           const adminsToSend = Array.isArray(adminPhoneNumbers)
             ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
             : [];
@@ -2862,19 +2863,23 @@ export const sendRadioReportMessage = async (req: Request, res: Response) => {
   }
 }
 
-cron.schedule("0 7 * * *", async () => {
-  await updateEstimation();
-  await processRepeatedAppointments();
-});
-cron.schedule("* 8-19 * * *", updateDoctorAssignments);
-cron.schedule("0 21 * * *", sendDoctorMessage);
-cron.schedule("0 * * * *", async () => {
-  await checkAndSendReminders();
-  await remainderForAdmin();
-  await reminderForServices();
-});
-cron.schedule("0 23 * * *", async () => {
-  await markComplete();
-  await markCompleteRadio();
-});
-cron.schedule("50 15 * * *", markComplete);
+// cron.schedule("0 7 * * *", async () => {
+//   await updateEstimation();
+//   await processRepeatedAppointments();
+// });
+// cron.schedule("* 8-19 * * *", updateDoctorAssignments);
+// cron.schedule("0 21 * * *", sendDoctorMessage);
+// cron.schedule("0 * * * *", async () => {
+//   await checkAndSendReminders();
+//   await remainderForAdmin();
+//   await reminderForServices();
+// });
+// cron.schedule("0 23 * * *", async () => {
+//   await markComplete();
+//   await markCompleteRadio();
+// });
+// cron.schedule("50 15 * * *", markComplete);
+
+// cron.schedule("*/1 * * * *", async () => {
+//   await sendTherapyReminders();
+// });

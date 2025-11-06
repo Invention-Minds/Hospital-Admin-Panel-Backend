@@ -3,6 +3,21 @@ import DoctorResolver from './doctor.resolver';
 import { PrismaClient } from '@prisma/client';
 import DoctorRepository from './doctor.repository';
 import moment from 'moment-timezone';
+import formidable from "formidable";
+import fs from "fs";
+import path from "path";
+import { Client } from "basic-ftp";
+
+const FTP_CONFIG = {
+  host: "srv680.main-hosting.eu",  // Your FTP hostname
+  user: "u948610439",       // Your FTP username
+  password: "Bsrenuk@1993",   // Your FTP password
+  secure: false                    // Set to true if using FTPS
+};
+// 🧼 Helper to sanitize file names
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
 
 
 const resolver = new DoctorResolver();
@@ -1324,7 +1339,8 @@ export const getAllDoctorWithDepartment = async (req: Request, res: Response): P
         name: true,
         departmentId: true,
         departmentName: true,
-        userId: true
+        userId: true,
+        kmcNumber: true,
       }
     });
     
@@ -1378,3 +1394,113 @@ export const getAllDeActiveDoctors = async (req: Request, res: Response): Promis
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 }
+export const getDoctorsByDepartment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const departmentId = Number(req.params.departmentId);
+    if (!Number.isFinite(departmentId)) {
+      res.status(400).json({ error: "Invalid departmentId" });
+      return;
+    }
+
+
+
+    const doctors = await prisma.doctor.findMany({
+      where: {
+        departmentId,
+        isActive: true,                           // always active only
+      },
+      select: { id: true, name: true },           // only id + name
+      orderBy: { name: "asc" },
+    });
+
+    res.status(200).json(doctors);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred" });
+  }
+};
+
+async function uploadToFTP(localFilePath: string, remoteFilePath: string) {
+  const client = new Client();
+  client.ftp.verbose = false;
+
+  try {
+    await client.access(FTP_CONFIG);
+    console.log("✅ Connected to FTP Server");
+
+    await client.ensureDir("/public_html/docminds/doctor_signs");
+    await client.uploadFrom(localFilePath, remoteFilePath);
+
+    console.log(`✅ Uploaded file to: ${remoteFilePath}`);
+    await client.close();
+  } catch (error) {
+    console.error("❌ FTP Upload Error:", error);
+    throw error;
+  }
+}
+
+// 🚀 Controller to upload doctor's signature
+export const uploadDoctorSignature = async (req: Request, res: Response) => {
+  try {
+    const { doctorId } = req.params;
+    if (!doctorId) {
+       res.status(400).json({ error: "Doctor ID is required" });
+       return;
+    }
+    const tmpDir = path.join(__dirname, "../../tmp"); // absolute path
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    const form = formidable({
+      uploadDir:tmpDir, // temp folder
+      keepExtensions: true,
+      multiples: false, // only one image
+    });
+
+    form.parse(req, async (err, fields, files) => {
+      if (err) {
+        console.error("❌ Formidable Parse Error:", err);
+         res.status(500).json({ error: err.message });
+         return;
+      }
+
+      const file = Array.isArray(files.file) ? files.file[0] : files.file;
+      if (!file) {
+         res.status(400).json({ error: "No signature image uploaded" });
+         return;
+      }
+
+      const tempFilePath = file.filepath;
+      const ext = path.extname(file.originalFilename || ".png");
+      const fileName = sanitizeFileName(`doctor_${doctorId}_${Date.now()}${ext}`);
+      const remoteFilePath = `/public_html/docminds/doctor_signs/${fileName}`;
+
+      // 1️⃣ Upload to FTP
+      await uploadToFTP(tempFilePath, remoteFilePath);
+
+      // 2️⃣ Generate public URL
+      const fileUrl = `https://docminds.inventionminds.com/doctor_signs/${fileName}`;
+
+      // 3️⃣ Remove temp file
+      fs.unlinkSync(tempFilePath);
+
+      // 4️⃣ Update doctor record
+      const updatedDoctor = await prisma.doctor.update({
+        where: { id: Number(doctorId) },
+        data: { signUrl: fileUrl },
+      });
+
+      // 5️⃣ Respond
+       res.status(200).json({
+        success: true,
+        message: "Doctor signature uploaded successfully",
+        fileUrl,
+        doctor: updatedDoctor,
+      });
+      return
+    });
+  } catch (error: any) {
+    console.error("❌ Upload Doctor Signature Error:", error);
+     res.status(500).json({ error: "Failed to upload doctor signature" });
+     return
+  }
+};
