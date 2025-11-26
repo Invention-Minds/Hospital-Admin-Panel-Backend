@@ -2146,8 +2146,8 @@ async function checkDoctorAvailability() {
       console.log(firstAppointment)
 
 
-      // const adminPhoneNumbers = ["919880544866", "916364833988"]
-      const adminPhoneNumbers = ["919342287945", "919342003000"];
+      const adminPhoneNumbers = ["919880544866", "916364833988"]
+      // const adminPhoneNumbers = ["919342287945", "919342003000"];
 
       const now = moment().tz("Asia/Kolkata").toDate();
 
@@ -2423,8 +2423,8 @@ async function checkPatientWaitingTime() {
 
 
           // Step 7: Send WhatsApp notifications to Admins & Doctor
-          const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
-          // const adminPhoneNumbers = ["919880544866", "916364833988"]
+          // const adminPhoneNumbers = ["919342287945", "919342003000"]; // Admin List
+          const adminPhoneNumbers = ["919880544866", "916364833988"]
           const adminsToSend = Array.isArray(adminPhoneNumbers)
             ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
             : [];
@@ -2863,23 +2863,140 @@ export const sendRadioReportMessage = async (req: Request, res: Response) => {
   }
 }
 
-// cron.schedule("0 7 * * *", async () => {
-//   await updateEstimation();
-//   await processRepeatedAppointments();
-// });
-// cron.schedule("* 8-19 * * *", updateDoctorAssignments);
-// cron.schedule("0 21 * * *", sendDoctorMessage);
-// cron.schedule("0 * * * *", async () => {
-//   await checkAndSendReminders();
-//   await remainderForAdmin();
-//   await reminderForServices();
-// });
-// cron.schedule("0 23 * * *", async () => {
-//   await markComplete();
-//   await markCompleteRadio();
-// });
-// cron.schedule("50 15 * * *", markComplete);
+cron.schedule("0 7 * * *", async () => {
+  await updateEstimation();
+  await processRepeatedAppointments();
+});
+cron.schedule("* 8-19 * * *", updateDoctorAssignments);
+cron.schedule("0 21 * * *", sendDoctorMessage);
+cron.schedule("0 * * * *", async () => {
+  await checkAndSendReminders();
+  await remainderForAdmin();
+  await reminderForServices();
+});
+cron.schedule("0 23 * * *", async () => {
+  await markComplete();
+  await markCompleteRadio();
+});
+cron.schedule("50 15 * * *", markComplete);
 
-// cron.schedule("*/1 * * * *", async () => {
-//   await sendTherapyReminders();
-// });
+cron.schedule("*/1 * * * *", async () => {
+  await sendTherapyReminders();
+});
+
+
+export const sendWhatsAppTemplate = async (
+  to: string,
+  templateid: string,
+  placeholders: string[],
+  id?:number
+) => {
+  try {
+
+    console.log("🚀 Sending WhatsApp Template:", { to, templateid, placeholders });
+    const payload = {
+      from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
+      to,
+      type: "template",
+      message: {
+        templateid,
+        placeholders,
+      },
+    };
+
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
+
+    const response = await axios.post(process.env.WHATSAPP_API_URL!, payload, {
+      headers,
+    });
+
+    console.log("📩 WhatsApp sent:", response.data);
+    await prisma.therapyAppointment.update({
+      where: { id },
+      data: { whatsappSent: true },
+    });
+    return response.data;
+  } catch (err) {
+    console.error("❌ WhatsApp Error:", err);
+    return null;
+  }
+};
+export const TEMPLATE = {
+  // Cancellation
+  PATIENT_CANCEL: "935429",
+  THERAPIST_CANCEL: "935433",
+  DOCTOR_CANCEL: "935435",
+
+  // Confirmation
+  PATIENT_CONFIRM: "935411",
+  THERAPIST_CONFIRM: "935413",
+  DOCTOR_CONFIRM: "935415",
+
+  // Reschedule
+  PATIENT_RESCHEDULE: "935419",
+  THERAPIST_RESCHEDULE: "935423",
+  DOCTOR_RESCHEDULE: "935425",
+
+  // Reminder
+  PATIENT_REMINDER: "935405",
+  THERAPIST_REMINDER: "935407",
+  DOCTOR_REMINDER: "935409",
+};
+export const buildPlaceholders = (type: string, appt: any, therapistName: string, doctorName: string) => {
+  const p = {
+    patient: appt.name,
+    therapy: appt.therapy?.name,
+    therapist: therapistName,
+    doctor: doctorName,
+    date: appt.date,
+    time: appt.time,
+  };
+
+  switch (type) {
+    /** --------------------- CANCELLATION ---------------------- **/
+    case "PATIENT_CANCEL":
+      return [p.patient, p.therapy, p.therapist, p.date, p.time];
+
+    case "THERAPIST_CANCEL":
+      return [p.therapist, p.therapy, p.patient, p.date, p.time];
+
+    case "DOCTOR_CANCEL":
+      return [p.doctor, p.therapy, p.patient, p.therapist, p.date, p.time];
+
+    /** ---------------------- CONFIRMATION ---------------------- **/
+    case "PATIENT_CONFIRM":
+      return [p.patient, p.therapy, p.therapist, p.date, p.time];
+
+    case "THERAPIST_CONFIRM":
+      return [p.therapist, p.therapy, p.patient, p.date, p.time];
+
+    case "DOCTOR_CONFIRM":
+      return [p.doctor, p.therapy, p.patient, p.therapist, p.date, p.time];
+
+    /** ---------------------- RESCHEDULE ------------------------ **/
+    case "PATIENT_RESCHEDULE":
+      return [p.patient, p.therapy, p.therapist, p.date, p.time];
+
+    case "THERAPIST_RESCHEDULE":
+      return [p.therapist, p.therapy, p.patient, p.date, p.time];
+
+    case "DOCTOR_RESCHEDULE":
+      return [p.doctor, p.therapy, p.patient, p.therapist, p.date, p.time];
+
+    /** ---------------------- REMINDER -------------------------- **/
+    case "PATIENT_REMINDER":
+      return [p.patient, p.therapy, p.therapist, p.date, p.time];
+
+    case "THERAPIST_REMINDER":
+      return [p.therapist, p.therapy, p.patient, p.date, p.time];
+
+    case "DOCTOR_REMINDER":
+      return [p.doctor, p.therapy, p.patient, p.therapist, p.date, p.time];
+
+    default:
+      return [];
+  }
+};

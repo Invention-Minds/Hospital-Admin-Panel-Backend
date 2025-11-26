@@ -34,7 +34,7 @@ export const loginDoctor = async (password: string, userId: number) => {
       isReceptionist: user.isReceptionist,
       employeeId: user.employeeId,
       subAdminType: user.subAdminType,
-      adminType: user.adminType
+      adminType: user.adminType,
     };
   }
   return null;

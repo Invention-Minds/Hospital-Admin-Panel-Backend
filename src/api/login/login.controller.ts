@@ -44,6 +44,7 @@ export const userLogin = async (req: Request, res: Response) => {
     const { password, employeeId, phoneNumber } = req.body;
     let doctors;
     let user;
+    let therapists;
 
     console.log(password, employeeId, phoneNumber);
     if (phoneNumber) {
@@ -53,7 +54,7 @@ export const userLogin = async (req: Request, res: Response) => {
       });
       const therapist = await prisma.therapist.findFirst({
         where: { phoneNumber: phoneNumber.slice(2) },
-        select: { userId: true },
+        select: { userId: true, id: true },
       });
 
       if (doctor && doctor.userId) {
@@ -64,6 +65,7 @@ export const userLogin = async (req: Request, res: Response) => {
       }else if (therapist && therapist.userId) {
         console.log("therapist found", therapist);
         user = await loginDoctor(password, therapist.userId); // reuse loginDoctor
+        therapists = therapist;
       }
 
     }
@@ -128,7 +130,7 @@ export const userLogin = async (req: Request, res: Response) => {
         throw createTokenError; // Rethrow to handle in the main catch block
       }
       console.log("tokenGeneratedAt", generatedDate, generatedTime);
-      res.status(200).json({ token, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType } }); // Send token and user data
+      res.status(200).json({ token, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, therapistId: therapists?.id } }); // Send token and user data
 
 
     } else {

@@ -1050,17 +1050,18 @@ model Therapy {
 }
 
 model Therapist {
-  id            Int                  @id @default(autoincrement())
+  id            Int                           @id @default(autoincrement())
   name          String
   phoneNumber   String
-  email         String?              @unique
+  email         String?                       @unique
   qualification String?
-  isActive      Boolean              @default(true)
+  isActive      Boolean                       @default(true)
   userId        Int? // ✅ link to User
-  user          User?                @relation(fields: [userId], references: [id])
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  appointments  TherapyAppointment[]
+  gender        String?
+  user          User?                         @relation(fields: [userId], references: [id])
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+  appointments  TherapyAppointmentTherapist[]
 }
 
 model TherapyAppointment {
@@ -1073,7 +1074,6 @@ model TherapyAppointment {
   gender         String?
   age            Int?
   doctorId       Int?
-  therapistId    Int?
   therapyId      Int
   roomNumber     String
   date           String // YYYY-MM-DD
@@ -1084,6 +1084,8 @@ model TherapyAppointment {
   checkedInBy    String? // doctor / therapist / admin name or id
   reminderSent   Boolean?  @default(false)
   reminderSentAt DateTime?
+
+  totalDurationMinutes Int? // planned duration
 
   startedAt  DateTime?
   finishedAt DateTime?
@@ -1100,8 +1102,26 @@ model TherapyAppointment {
   therapyStarted  Boolean? @default(false)
   therapyFinished Boolean? @default(false)
 
+  hasBathing Boolean @default(false)
+
+  // NEW: calculated durations
+  therapyDurationMinutes  Int?
+  cleaningDurationMinutes Int?
+  bathingDurationMinutes  Int?
+
+  // NEW: end therapy
+  therapyEnded   Boolean?  @default(false)
+  therapyEndedAt DateTime?
+  therapyEndedBy String?
+
+  // NEW: end cleaning
+  cleaningEnded   Boolean?  @default(false)
+  cleaningEndedAt DateTime?
+  cleaningEndedBy String?
+
   cleanedAfterUse   Boolean?  @default(false)
   cleanedAfterUseAt DateTime?
+  cleanedAfterUseBy String?
 
   postponed   Boolean?  @default(false)
   postponedAt DateTime?
@@ -1117,15 +1137,25 @@ model TherapyAppointment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  doctor    Doctor?    @relation(fields: [doctorId], references: [id])
-  therapist Therapist? @relation(fields: [therapistId], references: [id])
-  therapy   Therapy    @relation(fields: [therapyId], references: [id])
+  doctor Doctor? @relation(fields: [doctorId], references: [id])
+
+  therapy Therapy @relation(fields: [therapyId], references: [id])
+
+  therapists TherapyAppointmentTherapist[]
 
   // Prevent same room being double-booked
   @@unique([roomNumber, date, time], map: "unique_therapy_room_slot")
-  // Prevent same therapist being double-booked
-  @@unique([therapistId, date, time], map: "unique_therapist_slot")
   @@index([doctorId])
-  @@index([therapistId])
   @@index([therapyId])
+}
+
+model TherapyAppointmentTherapist {
+  id            Int @id @default(autoincrement())
+  appointmentId Int
+  therapistId   Int
+
+  appointment TherapyAppointment @relation(fields: [appointmentId], references: [id])
+  therapist   Therapist          @relation(fields: [therapistId], references: [id])
+
+  @@unique([appointmentId, therapistId]) // no duplicate assignment
 }

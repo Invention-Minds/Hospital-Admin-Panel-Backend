@@ -1,61 +1,194 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { addMinutes, parse, format } from "date-fns";
+import { loadTherapyTv, loadTherapyTvForTherapist } from "../appointments/appointment.controller";
+import { sendWhatsAppTemplate, buildPlaceholders, TEMPLATE } from "../whatsapp/whatsapp.controller";
+import { sendSMS } from "../sms/sms.controller";
 
 const prisma = new PrismaClient();
 
 /**
  * Create new Ayurveda therapy appointment
  */
+// export const createTherapyAppointment = async (req: Request, res: Response) => {
+//   try {
+//     const { name, phone, email, doctorId, therapistId, therapyId, roomNumber, date, time, prn, gender, age, prefix } = req.body;
+
+//     // Calculate end time (75 mins later)
+//     const startTime = parse(time, "HH:mm", new Date());
+//     const endTime = format(addMinutes(startTime, 75), "HH:mm");
+
+//     // // Check for slot conflict
+//     const conflict = await prisma.therapyAppointment.findFirst({
+//       where: {
+//         roomNumber,
+//         date,
+//         OR: [
+//           { time }
+//         ],
+//       },
+//     });
+
+//     if (conflict) {
+//       res.status(400).json({ message: "Slot already booked for this room." });
+//       return;
+//     }
+
+//     const appointment = await prisma.therapyAppointment.create({
+//       data: {
+//         prn,
+//         name,
+//         phone,
+//         email,
+//         doctorId,
+//         therapistId,
+//         therapyId,
+//         roomNumber,
+//         date,
+//         time,
+//         status: 'confirmed',
+//         age,
+//         gender,
+//         prefix
+//       },
+//     });
+
+//     res.status(201).json({ message: "Therapy appointment booked successfully", appointment });
+//   } catch (error: any) {
+//     console.error("Error booking therapy appointment:", error);
+//     res.status(500).json({ error: "Failed to create therapy appointment" });
+//   }
+// };
+
+
 export const createTherapyAppointment = async (req: Request, res: Response) => {
   try {
-    const { name, phone, email, doctorId, therapistId, therapyId, roomNumber, date, time, prn, gender, age, prefix } = req.body;
+    const {
+      prn, prefix, name, phone, email, gender, age,
+      doctorId, therapyId, therapistIds, roomNumber, date, time, hasBathing, totalDurationMinutes
+    } = req.body;
 
-    // Calculate end time (75 mins later)
-    const startTime = parse(time, "HH:mm", new Date());
-    const endTime = format(addMinutes(startTime, 75), "HH:mm");
-
-    // // Check for slot conflict
-    const conflict = await prisma.therapyAppointment.findFirst({
-      where: {
-        roomNumber,
-        date,
-        OR: [
-          { time }
-        ],
-      },
-    });
-
-    if (conflict) {
-      res.status(400).json({ message: "Slot already booked for this room." });
+    if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
+      res.status(400).json({ message: "Please select 1 or 2 therapists." });
       return;
     }
 
-    const appointment = await prisma.therapyAppointment.create({
-      data: {
-        prn,
-        name,
-        phone,
-        email,
-        doctorId,
-        therapistId,
-        therapyId,
-        roomNumber,
-        date,
-        time,
-        status: 'confirmed',
-        age,
-        gender,
-        prefix
+    // Check conflict for each therapist
+    const conflict = await prisma.therapyAppointmentTherapist.findFirst({
+      where: {
+        therapistId: { in: therapistIds },
+        appointment: { date, time }
       },
+      include: { therapist: true, appointment: true }
     });
 
-    res.status(201).json({ message: "Therapy appointment booked successfully", appointment });
-  } catch (error: any) {
-    console.error("Error booking therapy appointment:", error);
-    res.status(500).json({ error: "Failed to create therapy appointment" });
+    if (conflict) {
+      res.status(400).json({
+        message: `Therapist ${conflict.therapist.name} is already booked at ${date} ${time}.`
+      });
+      return
+    }
+    
+    let therapyMinutes = 0;
+    let cleaningMinutes = 0;
+    let bathingMinutes = 0;
+
+    if (hasBathing) {
+      therapyMinutes = Math.round(totalDurationMinutes * 0.70);
+      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes  = Math.round(totalDurationMinutes * 0.15);
+    } else {
+      therapyMinutes = Math.round(totalDurationMinutes * 0.85);
+      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes = 0;
+    }
+
+    // Create appointment
+    const appointment = await prisma.therapyAppointment.create({
+      data: {
+        prn, prefix, name, phone, email, gender, age,
+        doctorId, therapyId, roomNumber, date, time,
+        hasBathing,
+        totalDurationMinutes,
+        therapyDurationMinutes: therapyMinutes,
+        cleaningDurationMinutes: cleaningMinutes,
+        bathingDurationMinutes: bathingMinutes,
+        status: "confirmed"
+      }
+    });
+
+    console.log("Created appointment:", appointment);
+
+
+    // Attach therapists
+    await prisma.therapyAppointmentTherapist.createMany({
+      data: therapistIds.map((tid: number) => ({
+        appointmentId: appointment.id,
+        therapistId: tid
+      }))
+    });
+
+    // Fetch full appointment with all relations
+    const fullAppointment = await prisma.therapyAppointment.findUnique({
+      where: { id: appointment.id },
+      include: {
+        therapy: true,
+        doctor: true,
+        therapists: { include: { therapist: true } }
+      }
+    });
+
+    if (!fullAppointment) {
+      res.status(500).json({ message: "Failed to load appointment after creation" });
+      return;
+    }
+
+    const doctorFull = fullAppointment.doctor;
+    const therapistList = fullAppointment.therapists.map(t => t.therapist);
+    
+    // Combine names → "John, Mary"
+    const combinedTherapistNames = therapistList.map(t => t.name).join(", ");
+    
+
+    // =====================
+    // 1️⃣ PATIENT — ONE MESSAGE ONLY
+    // =====================
+    await sendWhatsAppTemplate(
+      phone,
+      TEMPLATE.PATIENT_CONFIRM,
+      buildPlaceholders("PATIENT_CONFIRM", fullAppointment, combinedTherapistNames, doctorFull?.name ?? ""),
+      fullAppointment.id
+    );
+
+    // =====================
+    // 2️⃣ DOCTOR — ONE MESSAGE ONLY
+    // =====================
+    await sendWhatsAppTemplate(
+      doctorFull?.phone_number ?? "",
+      TEMPLATE.DOCTOR_CONFIRM,
+      buildPlaceholders("DOCTOR_CONFIRM", fullAppointment, combinedTherapistNames, doctorFull?.name ?? "")
+    );
+
+    // =====================
+    // 3️⃣ THERAPISTS — INDIVIDUAL MESSAGES
+    // =====================
+    for (const th of therapistList) {
+      await sendWhatsAppTemplate(
+        th.phoneNumber,
+        TEMPLATE.THERAPIST_CONFIRM,
+        buildPlaceholders("THERAPIST_CONFIRM", fullAppointment, th.name, doctorFull?.name ?? "")
+      );
+    }
+
+
+
+    res.status(201).json({ message: "Appointment created", appointment });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to create appointment" });
   }
 };
+
 
 /**
  * Get all therapy appointments
@@ -63,178 +196,357 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
 export const getAllTherapyAppointments = async (req: Request, res: Response) => {
   try {
     const appointments = await prisma.therapyAppointment.findMany({
-      include: { doctor: true, therapist: true, therapy: true },
-      orderBy: { date: "desc" },
+      include: {
+        doctor: true,
+        therapy: true,
+        therapists: { include: { therapist: true } }
+      },
+      orderBy: { date: "desc" }
     });
     res.json(appointments);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch therapy appointments" });
   }
 };
+// export const updateTherapyAppointment = async (req: Request, res: Response) => {
+//   try {
+//     const { id } = req.params;
+//     const {
+//       prn,
+//       prefix,
+//       name,
+//       phone,
+//       email,
+//       doctorId,
+//       therapistId,
+//       therapyId,
+//       roomNumber,
+//       date,
+//       time,
+//       age,
+//       gender,
+//       status,
+//     } = req.body;
+
+//     const existing = await prisma.therapyAppointment.findUnique({
+//       where: { id: Number(id) },
+//     });
+
+//     if (!existing) {
+//       res.status(404).json({ message: "Appointment not found" });
+//       return;
+//     }
+
+//     const conflict = await prisma.therapyAppointment.findFirst({
+//       where: {
+//         roomNumber,
+//         date,
+//         time,
+//         NOT: { id: Number(id) }, // exclude self
+//       },
+//     });
+//     if (conflict) {
+//       res.status(400).json({ message: "Slot already booked for this room." });
+//       return;
+//     }
+
+
+//     const updated = await prisma.therapyAppointment.update({
+//       where: { id: Number(id) },
+//       data: {
+//         prn,
+//         prefix,
+//         name,
+//         phone,
+//         email,
+//         doctorId: Number(doctorId),
+//         therapistId: Number(therapistId),
+//         therapyId: Number(therapyId),
+//         roomNumber,
+//         date,
+//         time,
+//         age,
+//         gender,
+//         status,
+//       },
+//     });
+
+//     res.json({ message: "Therapy appointment updated successfully", appointment: updated });
+//   } catch (error) {
+//     console.error("Error updating therapy appointment:", error);
+//     res.status(500).json({ error: "Failed to update therapy appointment" });
+//   }
+// };
+
 export const updateTherapyAppointment = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const {
-      prn,
-      prefix,
-      name,
-      phone,
-      email,
-      doctorId,
-      therapistId,
-      therapyId,
-      roomNumber,
-      date,
-      time,
-      age,
-      gender,
-      status,
+      prn, prefix, name, phone, email, gender, age,
+      therapistIds, doctorId, therapyId, roomNumber, date, time, status, totalDurationMinutes, hasBathing
     } = req.body;
 
-    const existing = await prisma.therapyAppointment.findUnique({
-      where: { id: Number(id) },
-    });
-
-    if (!existing) {
-      res.status(404).json({ message: "Appointment not found" });
-      return;
+    if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
+      res.status(400).json({ message: "Please select 1 or 2 therapists." });
+      return
     }
 
-    const conflict = await prisma.therapyAppointment.findFirst({
+    // conflict check
+    const conflict = await prisma.therapyAppointmentTherapist.findFirst({
       where: {
-        roomNumber,
-        date,
-        time,
-        NOT: { id: Number(id) }, // exclude self
+        therapistId: { in: therapistIds },
+        appointment: { date, time },
+        NOT: { appointmentId: Number(id) }
       },
+      include: { therapist: true }
     });
+
     if (conflict) {
-      res.status(400).json({ message: "Slot already booked for this room." });
+      res.status(400).json({
+        message: `Therapist ${conflict.therapist.name} is already booked.`
+      });
       return;
     }
+    let therapyMinutes = 0;
+    let cleaningMinutes = 0;
+    let bathingMinutes = 0;
 
+    if (hasBathing) {
+      therapyMinutes = Math.round(totalDurationMinutes * 0.70);
+      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes  = Math.round(totalDurationMinutes * 0.15);
+    } else {
+      therapyMinutes = Math.round(totalDurationMinutes * 0.85);
+      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes = 0;
+    }
 
     const updated = await prisma.therapyAppointment.update({
       where: { id: Number(id) },
       data: {
-        prn,
-        prefix,
-        name,
-        phone,
-        email,
-        doctorId: Number(doctorId),
-        therapistId: Number(therapistId),
-        therapyId: Number(therapyId),
-        roomNumber,
-        date,
-        time,
-        age,
-        gender,
-        status,
-      },
+        prn, prefix, name, phone, email, gender, age,
+        doctorId, therapyId, roomNumber, date, time, status,
+        totalDurationMinutes,
+        therapyDurationMinutes: therapyMinutes,
+        cleaningDurationMinutes: cleaningMinutes,
+        bathingDurationMinutes: bathingMinutes,
+        hasBathing,
+      }
+    });
+    // Remove old therapists
+    await prisma.therapyAppointmentTherapist.deleteMany({
+      where: { appointmentId: updated.id }
     });
 
-    res.json({ message: "Therapy appointment updated successfully", appointment: updated });
-  } catch (error) {
-    console.error("Error updating therapy appointment:", error);
-    res.status(500).json({ error: "Failed to update therapy appointment" });
+    // Insert new therapists
+    await prisma.therapyAppointmentTherapist.createMany({
+      data: therapistIds.map((tid: number) => ({
+        appointmentId: updated.id,
+        therapistId: tid
+      }))
+    });
+
+    const appointment = await prisma.therapyAppointment.findUnique({
+      where: { id: updated.id },
+      include: {
+        therapy: true,
+        doctor: true,
+        therapists: { include: { therapist: true } }
+      }
+    });
+
+    if (!appointment) {
+      res.status(500).json({ message: "Unable to load updated appointment." });
+      return;
+    }
+
+    // Fetch doctor
+    const doctor = await prisma.doctor.findUnique({
+      where: { id: appointment.doctorId ?? undefined }
+    });
+
+    // Fetch updated therapists
+    const thList = await prisma.therapyAppointmentTherapist.findMany({
+      where: { appointmentId: appointment.id },
+      include: { therapist: true }
+    });
+
+    // Combine names → "John, Mary"
+    const combinedTherapistNames = thList.map(t => t.therapist.name).join(", ");
+
+    // =======================
+    // 1️⃣ PATIENT - ONE MESSAGE
+    // =======================
+    await sendWhatsAppTemplate(
+      appointment.phone,
+      TEMPLATE.PATIENT_RESCHEDULE,
+      buildPlaceholders("PATIENT_RESCHEDULE", appointment, combinedTherapistNames, doctor?.name ?? ""),
+      appointment.id
+    );
+
+    // =======================
+    // 2️⃣ DOCTOR - ONE MESSAGE
+    // =======================
+    await sendWhatsAppTemplate(
+      doctor?.phone_number ?? "",
+      TEMPLATE.DOCTOR_RESCHEDULE,
+      buildPlaceholders("DOCTOR_RESCHEDULE", appointment, combinedTherapistNames, doctor?.name ?? "")
+    );
+
+    // =======================
+    // 3️⃣ THERAPISTS - INDIVIDUAL MESSAGES
+    // =======================
+    for (const item of thList) {
+      const th = item.therapist;
+
+      await sendWhatsAppTemplate(
+        th.phoneNumber,
+        TEMPLATE.THERAPIST_RESCHEDULE,
+        buildPlaceholders("THERAPIST_RESCHEDULE", appointment, th.name, doctor?.name ?? "")
+      );
+    }
+
+
+
+    res.json({ message: "Appointment updated", updated });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update appointment" });
   }
 };
 
 export const getConfirmedAppointments = async (req: Request, res: Response) => {
   try {
-    const confirmedAppointments = await prisma.therapyAppointment.findMany({
+    const appointments = await prisma.therapyAppointment.findMany({
       where: { status: "confirmed" },
       orderBy: { date: "desc" },
-      select: {
-        id: true,
-        prn: true,
-        prefix: true,
-        name: true,
-        phone: true,
-        email: true,
-        gender: true,
-        age: true,
-        date: true,
-        time: true,
-        roomNumber: true,
-        status: true,
-        checkedIn: true,
-        reminderSent: true,
-        createdAt: true,
-        updatedAt: true,
 
-        doctorId: true,
-        therapistId: true,
-        therapyId: true,
-
-        doctor: { select: { id: true, name: true } },
-        therapist: { select: { id: true, name: true } },
+      include: {
         therapy: { select: { id: true, name: true } },
-      },
+        doctor: { select: { id: true, name: true } },
+
+        therapists: {
+          include: {
+            therapist: { select: { id: true, name: true } }
+          }
+        }
+      }
     });
 
-    // Flatten nested names for frontend
-    const formatted = confirmedAppointments.map(appt => ({
-      ...appt,
+    // Format for frontend
+    const formatted = appointments.map(appt => ({
+      id: appt.id,
+      prn: appt.prn,
+      prefix: appt.prefix,
+      name: appt.name,
+      phone: appt.phone,
+      email: appt.email,
+      gender: appt.gender,
+      age: appt.age,
+      date: appt.date,
+      time: appt.time,
+      roomNumber: appt.roomNumber,
+      status: appt.status,
+      checkedIn: appt.checkedIn,
+      reminderSent: appt.reminderSent,
+      createdAt: appt.createdAt,
+      updatedAt: appt.updatedAt,
+      whatsappSent: appt.whatsappSent,
+      emailSent: appt.emailSent,
+      smsSent: appt.smsSent,
+
+      doctorId: appt.doctorId,
+      therapyId: appt.therapyId,
+
       doctorName: appt.doctor?.name || null,
-      therapistName: appt.therapist?.name || null,
       therapyName: appt.therapy?.name || null,
+
+      totalDurationMinutes: appt.totalDurationMinutes,
+      therapyDurationMinutes: appt.therapyDurationMinutes,
+      cleaningDurationMinutes: appt.cleaningDurationMinutes,
+      bathingDurationMinutes: appt.bathingDurationMinutes,
+      hasBathing: appt.hasBathing,
+
+      // return list of therapists like: [{id, name}, ...]
+      therapists: appt.therapists.map(t => ({
+        id: t.therapist.id,
+        name: t.therapist.name,
+      }))
     }));
 
     res.json(formatted);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch confirmed appointments" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch confirmed appointments" });
   }
 };
 
 
 
+
 export const getCancelledAppointments = async (req: Request, res: Response) => {
   try {
-    const cancelledAppointments = await prisma.therapyAppointment.findMany({
+    const appointments = await prisma.therapyAppointment.findMany({
       where: { status: "cancelled" },
       orderBy: { date: "desc" },
-      select: {
-        id: true,
-        prn: true,
-        prefix: true,
-        name: true,
-        phone: true,
-        email: true,
-        gender: true,
-        age: true,
-        date: true,
-        time: true,
-        roomNumber: true,
-        status: true,
-        checkedIn: true,
-        reminderSent: true,
-        createdAt: true,
-        updatedAt: true,
 
-        doctorId: true,
-        therapistId: true,
-        therapyId: true,
-
-        doctor: { select: { id: true, name: true } },
-        therapist: { select: { id: true, name: true } },
+      include: {
         therapy: { select: { id: true, name: true } },
-      },
+        doctor: { select: { id: true, name: true } },
+
+        therapists: {
+          include: {
+            therapist: { select: { id: true, name: true } }
+          }
+        }
+      }
     });
 
-    const formatted = cancelledAppointments.map(appt => ({
-      ...appt,
+    // Format for frontend
+    const formatted = appointments.map(appt => ({
+      id: appt.id,
+      prn: appt.prn,
+      prefix: appt.prefix,
+      name: appt.name,
+      phone: appt.phone,
+      email: appt.email,
+      gender: appt.gender,
+      age: appt.age,
+      date: appt.date,
+      time: appt.time,
+      roomNumber: appt.roomNumber,
+      status: appt.status,
+      checkedIn: appt.checkedIn,
+      reminderSent: appt.reminderSent,
+      createdAt: appt.createdAt,
+      updatedAt: appt.updatedAt,
+      whatsappSent: appt.whatsappSent,
+      emailSent: appt.emailSent,
+      smsSent: appt.smsSent,
+
+      doctorId: appt.doctorId,
+      therapyId: appt.therapyId,
+
       doctorName: appt.doctor?.name || null,
-      therapistName: appt.therapist?.name || null,
       therapyName: appt.therapy?.name || null,
+
+      totalDurationMinutes: appt.totalDurationMinutes,
+      therapyDurationMinutes: appt.therapyDurationMinutes,
+      cleaningDurationMinutes: appt.cleaningDurationMinutes,
+      bathingDurationMinutes: appt.bathingDurationMinutes,
+      hasBathing: appt.hasBathing,
+
+      // return list of therapists like: [{id, name}, ...]
+      therapists: appt.therapists.map(t => ({
+        id: t.therapist.id,
+        name: t.therapist.name,
+      }))
     }));
 
     res.json(formatted);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch cancelled appointments" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch cancelled appointments" });
   }
 };
 
@@ -242,44 +554,67 @@ export const getCancelledAppointments = async (req: Request, res: Response) => {
 
 export const getCompletedAppointments = async (req: Request, res: Response) => {
   try {
-    const completedAppointments = await prisma.therapyAppointment.findMany({
+    const appointments = await prisma.therapyAppointment.findMany({
       where: { status: "completed" },
       orderBy: { date: "desc" },
-      select: {
-        id: true,
-        prn: true,
-        prefix: true,
-        name: true,
-        phone: true,
-        email: true,
-        gender: true,
-        age: true,
-        date: true,
-        time: true,
-        roomNumber: true,
-        status: true,
-        checkedIn: true,
-        reminderSent: true,
-        createdAt: true,
-        updatedAt: true,
 
-        doctor: { select: { name: true } },
-        therapist: { select: { name: true } },
-        therapy: { select: { name: true } },
-      },
+      include: {
+        therapy: { select: { id: true, name: true } },
+        doctor: { select: { id: true, name: true } },
+
+        therapists: {
+          include: {
+            therapist: { select: { id: true, name: true } }
+          }
+        }
+      }
     });
 
-    const formatted = completedAppointments.map(appt => ({
-      ...appt,
+    // Format for frontend
+    const formatted = appointments.map(appt => ({
+      id: appt.id,
+      prn: appt.prn,
+      prefix: appt.prefix,
+      name: appt.name,
+      phone: appt.phone,
+      email: appt.email,
+      gender: appt.gender,
+      age: appt.age,
+      date: appt.date,
+      time: appt.time,
+      roomNumber: appt.roomNumber,
+      status: appt.status,
+      checkedIn: appt.checkedIn,
+      reminderSent: appt.reminderSent,
+      createdAt: appt.createdAt,
+      updatedAt: appt.updatedAt,
+      whatsappSent: appt.whatsappSent,
+      emailSent: appt.emailSent,
+      smsSent: appt.smsSent,
+
+      doctorId: appt.doctorId,
+      therapyId: appt.therapyId,
+
       doctorName: appt.doctor?.name || null,
-      therapistName: appt.therapist?.name || null,
       therapyName: appt.therapy?.name || null,
+
+      totalDurationMinutes: appt.totalDurationMinutes,
+      therapyDurationMinutes: appt.therapyDurationMinutes,
+      cleaningDurationMinutes: appt.cleaningDurationMinutes,
+      bathingDurationMinutes: appt.bathingDurationMinutes,
+      hasBathing: appt.hasBathing,
+
+      // return list of therapists like: [{id, name}, ...]
+      therapists: appt.therapists.map(t => ({
+        id: t.therapist.id,
+        name: t.therapist.name,
+      }))
     }));
 
     res.json(formatted);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch completed appointments" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch cancelled appointments" });
   }
 };
 
@@ -296,7 +631,17 @@ export const checkInTherapyAppointment = async (req: Request, res: Response) => 
         checkedInTime: new Date(),
         checkedInBy: req.body.checkedInBy || "Receptionist",
       },
+      include: { therapists: true },
     });
+
+    const therapistIds = appointment.therapists.map(t => t.therapistId);
+
+    therapistIds.map(async (therapistId) => {
+      loadTherapyTvForTherapist(therapistId);
+    });
+
+    loadTherapyTv(1);
+
 
     res.json({ message: "Patient checked in successfully", appointment });
   } catch (error) {
@@ -341,6 +686,63 @@ export const cancelTherapyAppointment = async (req: Request, res: Response) => {
         cancelledAt: new Date(),
       },
     });
+    const appointment = await prisma.therapyAppointment.findUnique({
+      where: { id: updated.id },
+      include: {
+        therapy: true,
+        doctor: true,
+        therapists: { include: { therapist: true } }
+      }
+    });
+    if (!appointment) {
+      res.status(500).json({ message: "Failed to load appointment after update" });
+      return;
+    }
+    const doctor = await prisma.doctor.findUnique({
+      where: { id: appointment.doctorId ?? undefined }
+    });
+
+    const thList = await prisma.therapyAppointmentTherapist.findMany({
+      where: { appointmentId: appointment.id },
+      include: { therapist: true }
+    });
+
+    // Combine names → "John, Mary"
+    const combinedTherapistNames = thList.map(t => t.therapist.name).join(", ");
+
+    // =======================
+    // 1️⃣ PATIENT - ONE MESSAGE
+    // =======================
+    await sendWhatsAppTemplate(
+      appointment.phone,
+      TEMPLATE.PATIENT_CANCEL,
+      buildPlaceholders("PATIENT_CANCEL", appointment, combinedTherapistNames, doctor?.name ?? ""),
+      appointment.id
+    );
+
+    // =======================
+    // 2️⃣ DOCTOR - ONE MESSAGE
+    // =======================
+    await sendWhatsAppTemplate(
+      doctor?.phone_number ?? "",
+      TEMPLATE.DOCTOR_CANCEL,
+      buildPlaceholders("DOCTOR_CANCEL", appointment, combinedTherapistNames, doctor?.name ?? "")
+    );
+
+    // =======================
+    // 3️⃣ THERAPISTS - INDIVIDUAL MESSAGES
+    // =======================
+    for (const item of thList) {
+      const th = item.therapist;
+
+      await sendWhatsAppTemplate(
+        th.phoneNumber,
+        TEMPLATE.THERAPIST_CANCEL,
+        buildPlaceholders("THERAPIST_CANCEL", appointment, th.name, doctor?.name ?? "")
+      );
+    }
+
+
 
     res.json({ message: "Appointment cancelled successfully", appointment: updated });
   } catch (error) {
@@ -372,12 +774,80 @@ export const sendTherapyReminders = async () => {
     console.log(now, reminderTime, slotTime);
 
     if (now >= reminderTime && now < slotTime) {
-      console.log(`📩 Sending reminder to ${appt.name}, Doctor ${appt.doctorId}, Therapist ${appt.therapistId}`);
-      // TODO: integrate with SMS/Email/WhatsApp service here
+      // console.log(`📩 Sending reminder to ${appt.name}, Doctor ${appt.doctorId}, Therapist ${appt.therapistId}`);
+
+      // 🔥 Fetch full appointment with all relations
+      const fullAppointment = await prisma.therapyAppointment.findUnique({
+        where: { id: appt.id },
+        include: {
+          therapy: true,
+          doctor: true,
+          therapists: { include: { therapist: true } }
+        }
+      });
+
+      if (!fullAppointment) {
+        console.error("❌ Full appointment not found for ID:", appt.id);
+        continue;
+      }
+
+      const doctor = fullAppointment.doctor;
+      const therapistList = fullAppointment.therapists.map(t => t.therapist);
+
+      const combinedTherapistNames = therapistList
+        .map(t => t.name)
+        .join(", ");
+
+      // =======================
+      // 1️⃣ PATIENT - ONE REMINDER
+      // =======================
+      await sendWhatsAppTemplate(
+        fullAppointment.phone,
+        TEMPLATE.PATIENT_REMINDER,
+        buildPlaceholders(
+          "PATIENT_REMINDER",
+          fullAppointment,
+          combinedTherapistNames,
+          doctor?.name ?? ""
+        )
+      );
+
+      // =======================
+      // 2️⃣ DOCTOR - ONE REMINDER
+      // =======================
+      if (doctor?.phone_number) {
+        await sendWhatsAppTemplate(
+          doctor.phone_number,
+          TEMPLATE.DOCTOR_REMINDER,
+          buildPlaceholders(
+            "DOCTOR_REMINDER",
+            fullAppointment,
+            combinedTherapistNames,
+            doctor?.name ?? ""
+          )
+        );
+      }
+
+      // =======================
+      // 3️⃣ THERAPISTS - INDIVIDUAL REMINDERS
+      // =======================
+      for (const th of therapistList) {
+        await sendWhatsAppTemplate(
+          th.phoneNumber ?? th.phoneNumber ?? "",
+          TEMPLATE.THERAPIST_REMINDER,
+          buildPlaceholders(
+            "THERAPIST_REMINDER",
+            fullAppointment,
+            th.name,
+            doctor?.name ?? ""
+          )
+        );
+      }
 
       await prisma.therapyAppointment.update({
         where: { id: appt.id },
-        data: { reminderSent: true },
+        data: { reminderSent: true, reminderSentAt: new Date() },
+
       });
     }
   }
@@ -475,7 +945,7 @@ export const deleteTherapy = async (req: Request, res: Response) => {
  */
 export const createTherapist = async (req: Request, res: Response) => {
   try {
-    const { name, phoneNumber, email, qualification, isActive } = req.body;
+    const { name, phoneNumber, email, qualification, isActive, gender } = req.body;
 
     const existing = await prisma.therapist.findUnique({
       where: { email },
@@ -486,7 +956,7 @@ export const createTherapist = async (req: Request, res: Response) => {
     }
 
     const therapist = await prisma.therapist.create({
-      data: { name, phoneNumber, email, qualification, isActive },
+      data: { name, phoneNumber, email, qualification, isActive, gender },
     });
 
     res.status(201).json({ message: "Therapist created successfully", therapist });
@@ -595,8 +1065,12 @@ export const getTherapyScheduleByDate = async (req: Request, res: Response) => {
         id: true,
         time: true,
         roomNumber: true,
-        therapistId: true,
-        therapyId: true
+        therapyId: true,
+        therapists: {
+          select: {
+            therapistId: true
+          }
+        }
       },
     });
 
@@ -710,13 +1184,15 @@ export const getTodayCheckedInTherapiesByTherapist = async (req: Request, res: R
     const appointments = await prisma.therapyAppointment.findMany({
       where: {
         date: today,
-        therapistId: therapist.id,
+        therapists: {
+          some: { therapistId: therapist.id }
+        },
         status: 'confirmed',
         checkedIn: true,
       },
       include: {
         doctor: true,
-        therapist: true,
+        therapists: { include: { therapist: true } },
         therapy: true,
       },
       orderBy: {
@@ -744,7 +1220,9 @@ export const updateTherapyProgress = async (req: Request, res: Response): Promis
       therapyFinished,
       finishedBy,
       cleanedAfterUse,
-      cleanedAfterUseAt,
+      cleanedAfterUseBy,
+      therapyEnded, therapyEndedBy,
+      cleaningEnded, cleaningEndedBy,
     } = req.body;
 
     if (!id) {
@@ -766,29 +1244,51 @@ export const updateTherapyProgress = async (req: Request, res: Response): Promis
       data.startedAt = new Date();
       data.startedBy = startedBy || "Therapist";
     }
-
+    if (therapyEnded) {
+      data.therapyEnded = true;
+      data.therapyEndedAt = new Date();
+      data.therapyEndedBy = therapyEndedBy || "Therapist";
+    }
     if (therapyFinished) {
       data.therapyFinished = true;
       data.finishedAt = new Date();
       data.finishedBy = finishedBy || "Therapist";
       data.status = "completed";
     }
+    if (cleaningEnded) {
+      data.cleaningEnded = true;
+      data.cleaningEndedAt = new Date();
+      data.cleaningEndedBy = cleaningEndedBy || "Therapist";
+    }
 
     if (cleanedAfterUse) {
       data.cleanedAfterUse = true;
-      data.cleanedAfterUseAt = cleanedAfterUseAt || new Date();
+      data.cleanedAfterUseAt = new Date();
+      data.cleanedAfterUseBy = cleanedAfterUseBy || "Therapist";
     }
     if (req.body.postponed) {
       data.postponed = true;
       data.postponedAt = new Date();
       data.postponedBy = req.body.postponedBy || "Therapist";
+      data.entryDone = false;
+      data.entryDoneAt = null;
+      data.entryDoneBy = null;
     }
 
 
     const updated = await prisma.therapyAppointment.update({
       where: { id: Number(id) },
       data,
+      include: {
+        therapists: true   // <-- FIX
+      }
     });
+    loadTherapyTv(1)
+    if (updated.therapists?.length > 0) {
+      updated.therapists.forEach((t: any) => {
+        loadTherapyTvForTherapist(t.therapistId);
+      });
+    }
 
     res.status(200).json({
       message: "Therapy appointment updated successfully",
@@ -801,24 +1301,44 @@ export const updateTherapyProgress = async (req: Request, res: Response): Promis
 };
 
 
-export const getTodayConfirmedTherapies = async (req: Request, res: Response): Promise<void> => {
+// export const getTodayConfirmedTherapies = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     const today = new Date().toISOString().split('T')[0];
+//     const appointments = await prisma.therapyAppointment.findMany({
+//       where: {
+//         date: today,
+//         status: { in: ["confirmed"], },
+//         checkedIn: true,
+//       }, include: {
+//         doctor: true,
+//         therapist: true,
+//         therapy: true,
+//       },
+//       orderBy: { time: "asc", },
+//     });
+//     res.status(200).json(appointments);
+//   } catch (error) {
+//     console.error("Error fetching today's confirmed therapy appointments:", error);
+//     res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred", });
+//   }
+// };
+export const getTodayConfirmedTherapies = async (req: Request, res: Response) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
+
     const appointments = await prisma.therapyAppointment.findMany({
-      where: {
-        date: today,
-        status: { in: ["confirmed"], },
-        checkedIn: true,
-      }, include: {
-        doctor: true,
-        therapist: true,
+      where: { date: today, checkedIn: true, status: "confirmed" },
+      orderBy: { time: "asc" },
+      include: {
         therapy: true,
-      },
-      orderBy: { time: "asc", },
+        doctor: true,
+        therapists: { include: { therapist: true } }
+      }
     });
-    res.status(200).json(appointments);
-  } catch (error) {
-    console.error("Error fetching today's confirmed therapy appointments:", error);
-    res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred", });
+
+    res.json(appointments);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to load appointments" });
   }
 };

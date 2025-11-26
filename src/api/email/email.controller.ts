@@ -659,3 +659,38 @@ function sanitizeForWhatsappSingleLine(text: string): string {
 }
 
 
+const SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
+
+export const verifyRecaptcha = async (req: Request, res: Response): Promise<void> => {
+  const { token } = req.body;
+
+  if (!token) {
+    res.status(400).json({ success: false, message: 'Missing reCAPTCHA token' });
+    return;
+  }
+
+  if (!SECRET_KEY) {
+    res.status(500).json({ success: false, message: 'Missing reCAPTCHA secret key in server config' });
+    return;
+  }
+
+  try {
+    const verifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${SECRET_KEY}&response=${token}`;
+    const response = await fetch(verifyUrl, { method: 'POST' });
+    const data = await response.json();
+
+    if (data.success) {
+      console.log('✅ reCAPTCHA verified successfully');
+      res.status(200).json({ success: true });
+    } else {
+      console.warn('❌ reCAPTCHA verification failed:', data['error-codes']);
+      res.status(400).json({
+        success: false,
+        errors: data['error-codes'] || ['verification_failed'],
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying reCAPTCHA:', error);
+    res.status(500).json({ success: false, message: 'Server error during reCAPTCHA verification' });
+  }
+};

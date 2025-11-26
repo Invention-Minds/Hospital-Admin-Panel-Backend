@@ -84,6 +84,24 @@ export const loadOtTV = (doctorId: any): void => {
   });
 }
 
+export const loadTherapyTv = (type: any): void => {
+  console.log('Notifying clients of therapy tv  loading:', type);
+  clients.forEach(client => {
+    client.write(`event: loadTherapyTv\n`);
+    client.write(`data: ${JSON.stringify(type)}\n\n`);
+  });
+}
+
+export const loadTherapyTvForTherapist = (therapistId: number): void => {
+  console.log("Notify therapist:", therapistId);
+
+  clients.forEach(client => {
+      client.write(`event: therapistUpdate\n`);
+      client.write(`data: ${JSON.stringify( therapistId )}\n\n`);
+  });
+};
+
+
 export const createAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
     req.body.status = req.body.status === 'Confirm' ? 'confirmed' :
@@ -674,8 +692,8 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
 
     const whatsappPayload = {
       from: fromPhoneNumber,
-      // to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      to: ['919342287945'],
+      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
+      // to: ['919342287945'],
       // to:['919342003000'],
       type: "template",
       message: {
