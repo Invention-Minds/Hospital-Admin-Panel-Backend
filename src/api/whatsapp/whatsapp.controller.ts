@@ -2889,7 +2889,7 @@ export const sendWhatsAppTemplate = async (
   to: string,
   templateid: string,
   placeholders: string[],
-  id?:number
+  id?: number
 ) => {
   try {
 
@@ -2914,10 +2914,21 @@ export const sendWhatsAppTemplate = async (
     });
 
     console.log("📩 WhatsApp sent:", response.data);
-    await prisma.therapyAppointment.update({
-      where: { id },
-      data: { whatsappSent: true },
-    });
+    // Update only if whatsappSent is not already true
+    if (id) {
+      const existing = await prisma.therapyAppointment.findUnique({
+        where: { id },
+        select: { whatsappSent: true },
+      });
+
+      if (!existing?.whatsappSent) {
+        await prisma.therapyAppointment.update({
+          where: { id },
+          data: { whatsappSent: true },
+        });
+      }
+    }
+
     return response.data;
   } catch (err) {
     console.error("❌ WhatsApp Error:", err);
