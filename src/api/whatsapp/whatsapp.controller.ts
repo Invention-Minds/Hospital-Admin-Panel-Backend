@@ -2938,23 +2938,23 @@ export const sendWhatsAppTemplate = async (
 export const TEMPLATE = {
   // Cancellation
   PATIENT_CANCEL: "935429",
-  THERAPIST_CANCEL: "935433",
-  DOCTOR_CANCEL: "935435",
+  THERAPIST_CANCEL: "938765",
+  DOCTOR_CANCEL: "938763",
 
   // Confirmation
-  PATIENT_CONFIRM: "935411",
-  THERAPIST_CONFIRM: "935413",
-  DOCTOR_CONFIRM: "935415",
+  PATIENT_CONFIRM: "944351",
+  THERAPIST_CONFIRM: "944357",
+  DOCTOR_CONFIRM: "944361",
 
   // Reschedule
-  PATIENT_RESCHEDULE: "935419",
+  PATIENT_RESCHEDULE: "938767",
   THERAPIST_RESCHEDULE: "935423",
   DOCTOR_RESCHEDULE: "935425",
 
   // Reminder
-  PATIENT_REMINDER: "935405",
-  THERAPIST_REMINDER: "935407",
-  DOCTOR_REMINDER: "935409",
+  PATIENT_REMINDER: "936145",
+  THERAPIST_REMINDER: "944341",
+  DOCTOR_REMINDER: "944345",
 };
 export const buildPlaceholders = (type: string, appt: any, therapistName: string, doctorName: string) => {
   const p = {
