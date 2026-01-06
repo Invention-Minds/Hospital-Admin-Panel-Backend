@@ -57,6 +57,8 @@ export const userLogin = async (req: Request, res: Response) => {
         select: { userId: true, id: true },
       });
 
+      console.log(doctor)
+
       if (doctor && doctor.userId) {
         // doctors = await prisma.user.findUnique({
         //   where: { id: doctor.userId }, // Fetch the corresponding user
@@ -75,7 +77,7 @@ export const userLogin = async (req: Request, res: Response) => {
       user = await loginUser(password, employeeId);
     }
 
-    console.log(user)
+    console.log(user, 'user in login controller')
 
     if (user) {
       // const role = extractRoleFromUsername(user.username); // Extract role
