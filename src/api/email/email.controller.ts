@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import nodemailer from 'nodemailer';
 import * as dotenv from 'dotenv';
+import qs from 'qs';
 import multer from 'multer';
 import fs from 'fs';
 dotenv.config();
@@ -61,8 +62,6 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
   }
 };
 
-
-// Controller function to send email
 // Controller function to send email
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -130,6 +129,28 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
         to: Array.isArray(to) ? to.join(', ') : to,
         subject: emailContenttoFrontOffice.subject,
         text: emailContenttoFrontOffice.text,
+      };
+      const info = await transporter.sendMail(mailOptions);
+      res.status(200).json({ message: 'Email sent successfully', info });
+    }
+    else if(status === 'Call Back Request'){
+      const emailContent = {
+        subject: `New Callback Request from Website - ${appointmentDetails.page}`,
+        text: `
+          📞 Callback Request Details - Surgery page
+    
+          Patient Name: ${appointmentDetails.name}
+          Contact Number: ${appointmentDetails.phone}
+          Location: ${appointmentDetails.address}
+    
+          Page Filled From: ${appointmentDetails.page}
+        `
+      };
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: emailContent.subject,
+        text: emailContent.text,
       };
       const info = await transporter.sendMail(mailOptions);
       res.status(200).json({ message: 'Email sent successfully', info });
@@ -561,6 +582,24 @@ export const conditionalEmail = async (req: Request, res: Response): Promise<voi
           Page Filled From: ${appointmentDetails.page}
         `
       };
+      // await sendPatientWhatsappTemplate(
+      //   appointmentDetails.phone,
+      // );
+    }
+    else if (status === "Health Checkup Appointment Booking") {
+      emailContent = {
+        subject: `New Appointment Request from Website - ${status}`,
+        text: `
+  
+            Patient Name: ${appointmentDetails.name}
+
+            Patient Contact: ${appointmentDetails.phone}
+        
+            Date: ${appointmentDetails.date}
+
+            Page Filled From: ${appointmentDetails.page}
+          `
+      };
     }
     
 
@@ -657,6 +696,45 @@ function sanitizeForWhatsappSingleLine(text: string): string {
     .replace(/\s\s+/g, ' ')        // collapse multiple spaces
     .trim();                       // remove leading/trailing spaces
 }
+const sendPatientWhatsappTemplate = async (
+  number: string
+): Promise<void> => {
+  try {
+    console.log(`📱 Sending patient WhatsApp template to ${number}...`);
+
+    const response = await axios.post(
+      'https://api.wacto.app/api/v1.0/messages/send-template/918884545086',
+      {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: number,
+        type: "template",
+        template: {
+          name: "new_enquiry_reply",
+          language: {
+            code: "en"
+          },
+          components: []
+        }
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer O6q5lsQag02tDXTp95DQhg"
+        }
+      }
+    );
+
+    console.log("✅ Patient template message sent:", response.data);
+
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error("❌ WhatsApp API Error:", error.response?.data || error.message);
+    } else {
+      console.error("❌ Unknown Error:", error);
+    }
+  }
+};
 
 
 const SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
@@ -692,5 +770,90 @@ export const verifyRecaptcha = async (req: Request, res: Response): Promise<void
   } catch (error) {
     console.error('Error verifying reCAPTCHA:', error);
     res.status(500).json({ success: false, message: 'Server error during reCAPTCHA verification' });
+  }
+
+
+
+
+};
+
+const verifiedCaptchaSessions = new Set<string>();
+
+async function verifyHcaptcha(token: string, ip: string): Promise<boolean> {
+  try {
+    const response = await axios.post(
+      'https://hcaptcha.com/siteverify',
+      qs.stringify({
+        secret: process.env.HCAPTCHA_SECRET,
+        response: token,
+        remoteip: ip
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    console.log('✅ hCaptcha response:', response.data);
+    return response.data.success === true;
+
+  } catch (error: any) {
+    console.error(
+      '❌ hCaptcha verification error:',
+      error.response?.data || error.message
+    );
+    return false;
+  }
+}
+export const verifyCaptcha = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { captchaToken } = req.body;
+
+    if (!captchaToken) {
+      res.status(400).json({
+        success: false,
+        message: 'Captcha token missing'
+      });
+      return;
+    }
+
+    const ip =
+      req.headers['x-forwarded-for']?.toString().split(',')[0] ||
+      req.socket.remoteAddress ||
+      '';
+
+    console.log('🌐 Client IP:', ip);
+
+    const isHuman = await verifyHcaptcha(captchaToken, ip);
+
+    if (!isHuman) {
+      res.status(403).json({
+        success: false,
+        message: 'Captcha verification failed'
+      });
+      return;
+    }
+
+    // Optional: create a short-lived captcha session
+    const sessionKey = `${ip}-${Date.now()}`;
+    verifiedCaptchaSessions.add(sessionKey);
+
+    setTimeout(() => {
+      verifiedCaptchaSessions.delete(sessionKey);
+    }, 5 * 60 * 1000); // 5 minutes
+
+    res.status(200).json({
+      success: true,
+      message: 'Captcha verified successfully',
+      captchaSession: sessionKey
+    });
+
+  } catch (error) {
+    console.error('❌ Captcha verify error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during captcha verification'
+    });
   }
 };
