@@ -1159,3 +1159,24 @@ model TherapyAppointmentTherapist {
 
   @@unique([appointmentId, therapistId]) // no duplicate assignment
 }
+model CallbackRequest {
+  id           Int      @id @default(autoincrement())
+  name         String
+  mobile       String
+  address      String?
+  pageName     String?
+
+  status       String   @default("pending") // pending | contacted | cancelled
+
+  handledBy    String?
+  handledAt    DateTime?
+
+  notes        Json? 
+  cancelReason String?  @db.Text
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  cancelledBy  String?
+  cancelledAt  DateTime?
+}

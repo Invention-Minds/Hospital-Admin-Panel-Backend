@@ -32,6 +32,7 @@ import radiologyQueueRoutes from './api/radiology-queue/radiologu-queue.routes';
 import opdRoutes from './api/opd/opd.routes';
 import erRoutes from './api/er/er.routes';
 import therapyRoutes from './api/therapy/therapy.routes';
+import callBackRoutes from './api/callback/callback.routes'
 
 // Load environment variables from .env file
 dotenv.config();
@@ -48,7 +49,7 @@ app.use(express.urlencoded({ limit: '1gb', extended: true }));
 app.use(cors({
   origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/',
     'https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in',
-     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/'], 
+     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/', 'https://docmindsjmrh.imapps.in/'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
@@ -81,6 +82,7 @@ app.use('/api/radiology-queue', radiologyQueueRoutes);
 app.use('/api/opd', opdRoutes);
 app.use('/api/er', erRoutes);
 app.use('/api/therapy-appt', therapyRoutes);
+app.use('/api/call-back',callBackRoutes)
 
 
 app.use(compression())
