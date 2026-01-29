@@ -7,6 +7,19 @@ import { sendSMS } from "../sms/sms.controller";
 
 const prisma = new PrismaClient();
 
+const OPEN_MIN = 6 * 60;     // 06:00
+const CLOSE_MIN = 18 * 60;   // 18:00
+const BUFFER_MIN = 10;
+
+const toMinutes = (t: string): number => {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+};
+
+const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
+  aStart < bEnd && bStart < aEnd;
+
+
 /**
  * Create new Ayurveda therapy appointment
  */
@@ -65,30 +78,88 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
   try {
     const {
       prn, prefix, name, phone, email, gender, age,
-      doctorId, therapyId, therapistIds, roomNumber, date, time, hasBathing, totalDurationMinutes
+      doctorId, therapyId, therapistIds, roomNumber, therapyIds, date, time, hasBathing, totalDurationMinutes
     } = req.body;
 
     if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
       res.status(400).json({ message: "Please select 1 or 2 therapists." });
       return;
     }
+    if (!Array.isArray(therapyIds) || therapyIds.length === 0) {
+      res.status(400).json({ message: "Please select at least 1 therapy." });
+      return;
+    }
 
-    // Check conflict for each therapist
-    const conflict = await prisma.therapyAppointmentTherapist.findFirst({
-      where: {
-        therapistId: { in: therapistIds },
-        appointment: { date, time }
-      },
-      include: { therapist: true, appointment: true }
-    });
+    const dur = Number(totalDurationMinutes);
+    if (!dur || dur <= 0) {
+      res.status(400).json({ message: "Total duration must be > 0" });
+      return;
+    }
+    const startMin = toMinutes(time);
+    const endMin = startMin + dur + BUFFER_MIN;
 
-    if (conflict) {
+    //Working hours check
+    if (startMin < OPEN_MIN || endMin > CLOSE_MIN) {
       res.status(400).json({
-        message: `Therapist ${conflict.therapist.name} is already booked at ${date} ${time}.`
+        message: "Appointment must be between 06:00 and 18:00 (including 10 min buffer)."
       });
       return
     }
-    
+    const tIds = therapistIds.map((x: any) => Number(x));
+
+    //  Fetch same-day candidates (room OR therapist match)
+    const candidates = await prisma.therapyAppointment.findMany({
+      where: {
+        date,
+        status: { in: ["confirmed", "completed"] },
+        OR: [
+          { roomNumber },
+          { therapists: { some: { therapistId: { in: tIds } } } }
+        ]
+      },
+      select: {
+        id: true,
+        time: true,
+        roomNumber: true,
+        totalDurationMinutes: true,
+        therapists: { select: { therapistId: true } }
+      }
+    });
+    // Check conflict for each therapist
+    // const conflict = await prisma.therapyAppointmentTherapist.findFirst({
+    //   where: {
+    //     therapistId: { in: therapistIds },
+    //     appointment: { date, time }
+    //   },
+    //   include: { therapist: true, appointment: true }
+    // });
+
+    // if (conflict) {
+    //   res.status(400).json({
+    //     message: `Therapist ${conflict.therapist.name} is already booked at ${date} ${time}.`
+    //   });
+    //   return
+    // }
+    const conflict = candidates.some(appt => {
+      const aStart = toMinutes(appt.time);
+      const aDur = Number(appt.totalDurationMinutes || 0);
+      const aEnd = aStart + aDur + BUFFER_MIN;
+
+      if (!overlaps(startMin, endMin, aStart, aEnd)) return false;
+
+      // Room conflict
+      if (appt.roomNumber === roomNumber) return true;
+
+      // Therapist conflict
+      const booked = appt.therapists.map(t => t.therapistId);
+      return booked.some(id => tIds.includes(id));
+    });
+
+    if (conflict) {
+      res.status(400).json({ message: "Room or therapist already booked in this time range." });
+      return;
+    }
+
     let therapyMinutes = 0;
     let cleaningMinutes = 0;
     let bathingMinutes = 0;
@@ -96,7 +167,7 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
     if (hasBathing) {
       therapyMinutes = Math.round(totalDurationMinutes * 0.70);
       cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes  = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes = Math.round(totalDurationMinutes * 0.15);
     } else {
       therapyMinutes = Math.round(totalDurationMinutes * 0.85);
       cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
@@ -107,7 +178,8 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
     const appointment = await prisma.therapyAppointment.create({
       data: {
         prn, prefix, name, phone, email, gender, age,
-        doctorId, therapyId, roomNumber, date, time,
+        doctorId, roomNumber, date, time,
+        therapyId: Number(therapyIds[0]), // legacy
         hasBathing,
         totalDurationMinutes,
         therapyDurationMinutes: therapyMinutes,
@@ -128,12 +200,22 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
       }))
     });
 
+
+    await prisma.therapyAppointmentTherapy.createMany({
+      data: therapyIds.map((th: any) => ({
+        appointmentId: appointment.id,
+        therapyId: Number(th)
+      })),
+      skipDuplicates: true
+    });
+
     // Fetch full appointment with all relations
     const fullAppointment = await prisma.therapyAppointment.findUnique({
       where: { id: appointment.id },
       include: {
         therapy: true,
         doctor: true,
+        therapies: { include: { therapy: true } },
         therapists: { include: { therapist: true } }
       }
     });
@@ -145,10 +227,10 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
 
     const doctorFull = fullAppointment.doctor;
     const therapistList = fullAppointment.therapists.map(t => t.therapist);
-    
+
     // Combine names → "John, Mary"
     const combinedTherapistNames = therapistList.map(t => t.name).join(", ");
-    
+
 
     // =====================
     // 1️⃣ PATIENT — ONE MESSAGE ONLY
@@ -283,30 +365,87 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
     const { id } = req.params;
     const {
       prn, prefix, name, phone, email, gender, age,
-      therapistIds, doctorId, therapyId, roomNumber, date, time, status, totalDurationMinutes, hasBathing
+      therapistIds, doctorId, therapyId, roomNumber, date, time, status, totalDurationMinutes, hasBathing, therapyIds
     } = req.body;
 
     if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
       res.status(400).json({ message: "Please select 1 or 2 therapists." });
       return
     }
+    if (!Array.isArray(therapyIds) || therapyIds.length === 0) {
+      res.status(400).json({ message: "Please select at least 1 therapy." });
+      return;
+    }
+    const dur = Number(totalDurationMinutes);
+    if (!dur || dur <= 0) {
+      res.status(400).json({ message: "Total duration must be > 0" });
+      return;
+    }
 
-    // conflict check
-    const conflict = await prisma.therapyAppointmentTherapist.findFirst({
+    const startMin = toMinutes(time);
+    const endMin = startMin + dur + BUFFER_MIN;
+
+    if (startMin < OPEN_MIN || endMin > CLOSE_MIN) {
+      res.status(400).json({
+        message: "Appointment must be between 06:00 and 18:00 (including 10 min buffer)."
+      });
+      return
+    }
+
+    const tIds = therapistIds.map((x: any) => Number(x));
+
+    const candidates = await prisma.therapyAppointment.findMany({
       where: {
-        therapistId: { in: therapistIds },
-        appointment: { date, time },
-        NOT: { appointmentId: Number(id) }
+        date,
+        id: { not: Number(id) },
+        status: { in: ["confirmed", "completed"] },
+        OR: [
+          { roomNumber },
+          { therapists: { some: { therapistId: { in: tIds } } } }
+        ]
       },
-      include: { therapist: true }
+      select: {
+        id: true,
+        time: true,
+        roomNumber: true,
+        totalDurationMinutes: true,
+        therapists: { select: { therapistId: true } }
+      }
+    });
+
+    const conflict = candidates.some(appt => {
+      const aStart = toMinutes(appt.time);
+      const aDur = Number(appt.totalDurationMinutes || 0);
+      const aEnd = aStart + aDur + BUFFER_MIN;
+
+      if (!overlaps(startMin, endMin, aStart, aEnd)) return false;
+
+      if (appt.roomNumber === roomNumber) return true;
+
+      const booked = appt.therapists.map(t => t.therapistId);
+      return booked.some(id => tIds.includes(id));
     });
 
     if (conflict) {
-      res.status(400).json({
-        message: `Therapist ${conflict.therapist.name} is already booked.`
-      });
+      res.status(400).json({ message: "Room or therapist already booked in this time range." });
       return;
     }
+    // conflict check
+    // const conflict = await prisma.therapyAppointmentTherapist.findFirst({
+    //   where: {
+    //     therapistId: { in: therapistIds },
+    //     appointment: { date, time },
+    //     NOT: { appointmentId: Number(id) }
+    //   },
+    //   include: { therapist: true }
+    // });
+
+    // if (conflict) {
+    //   res.status(400).json({
+    //     message: `Therapist ${conflict.therapist.name} is already booked.`
+    //   });
+    //   return;
+    // }
     let therapyMinutes = 0;
     let cleaningMinutes = 0;
     let bathingMinutes = 0;
@@ -314,7 +453,7 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
     if (hasBathing) {
       therapyMinutes = Math.round(totalDurationMinutes * 0.70);
       cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes  = Math.round(totalDurationMinutes * 0.15);
+      bathingMinutes = Math.round(totalDurationMinutes * 0.15);
     } else {
       therapyMinutes = Math.round(totalDurationMinutes * 0.85);
       cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
@@ -325,7 +464,8 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
       where: { id: Number(id) },
       data: {
         prn, prefix, name, phone, email, gender, age,
-        doctorId, therapyId, roomNumber, date, time, status,
+        doctorId, roomNumber, date, time, status,
+        therapyId: Number(therapyIds[0]),
         totalDurationMinutes,
         therapyDurationMinutes: therapyMinutes,
         cleaningDurationMinutes: cleaningMinutes,
@@ -346,11 +486,19 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
       }))
     });
 
+    // ✅ replace therapies
+    await prisma.therapyAppointmentTherapy.deleteMany({ where: { appointmentId: updated.id } });
+    await prisma.therapyAppointmentTherapy.createMany({
+      data: therapyIds.map((th: any) => ({ appointmentId: updated.id, therapyId: Number(th) })),
+      skipDuplicates: true
+    });
+
     const appointment = await prisma.therapyAppointment.findUnique({
       where: { id: updated.id },
       include: {
         therapy: true,
         doctor: true,
+        therapies: { include: { therapy: true } },
         therapists: { include: { therapist: true } }
       }
     });
@@ -423,7 +571,14 @@ export const getConfirmedAppointments = async (req: Request, res: Response) => {
 
       include: {
         therapy: { select: { id: true, name: true } },
+
         doctor: { select: { id: true, name: true } },
+
+        therapies: {
+          include: {
+            therapy: { select: { id: true, name: true } }
+          }
+        },
 
         therapists: {
           include: {
@@ -432,6 +587,18 @@ export const getConfirmedAppointments = async (req: Request, res: Response) => {
         }
       }
     });
+    const getTherapyNames = (appt: any): string => {
+  if (appt.therapies?.length > 0) {
+    return appt.therapies
+      .map((t: any) => t.therapy?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  // legacy fallback
+  return appt.therapy?.name || "";
+};
+
 
     // Format for frontend
     const formatted = appointments.map(appt => ({
@@ -460,6 +627,7 @@ export const getConfirmedAppointments = async (req: Request, res: Response) => {
 
       doctorName: appt.doctor?.name || null,
       therapyName: appt.therapy?.name || null,
+      therapyNames: getTherapyNames(appt),
 
       totalDurationMinutes: appt.totalDurationMinutes,
       therapyDurationMinutes: appt.therapyDurationMinutes,
@@ -493,14 +661,32 @@ export const getCancelledAppointments = async (req: Request, res: Response) => {
       include: {
         therapy: { select: { id: true, name: true } },
         doctor: { select: { id: true, name: true } },
-
+        therapies: {
+          include: {
+            therapy: { select: { id: true, name: true } }
+          }
+        },
         therapists: {
           include: {
             therapist: { select: { id: true, name: true } }
           }
         }
+
       }
     });
+
+    const getTherapyNames = (appt: any): string => {
+  if (appt.therapies?.length > 0) {
+    return appt.therapies
+      .map((t: any) => t.therapy?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  // legacy fallback
+  return appt.therapy?.name || "";
+};
+
 
     // Format for frontend
     const formatted = appointments.map(appt => ({
@@ -529,6 +715,7 @@ export const getCancelledAppointments = async (req: Request, res: Response) => {
 
       doctorName: appt.doctor?.name || null,
       therapyName: appt.therapy?.name || null,
+      therapyNames: getTherapyNames(appt),
 
       totalDurationMinutes: appt.totalDurationMinutes,
       therapyDurationMinutes: appt.therapyDurationMinutes,
@@ -561,7 +748,11 @@ export const getCompletedAppointments = async (req: Request, res: Response) => {
       include: {
         therapy: { select: { id: true, name: true } },
         doctor: { select: { id: true, name: true } },
-
+        therapies: {
+          include: {
+            therapy: { select: { id: true, name: true } }
+          }
+        },
         therapists: {
           include: {
             therapist: { select: { id: true, name: true } }
@@ -569,6 +760,19 @@ export const getCompletedAppointments = async (req: Request, res: Response) => {
         }
       }
     });
+
+    const getTherapyNames = (appt: any): string => {
+  if (appt.therapies?.length > 0) {
+    return appt.therapies
+      .map((t: any) => t.therapy?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  // legacy fallback
+  return appt.therapy?.name || "";
+};
+
 
     // Format for frontend
     const formatted = appointments.map(appt => ({
@@ -597,6 +801,7 @@ export const getCompletedAppointments = async (req: Request, res: Response) => {
 
       doctorName: appt.doctor?.name || null,
       therapyName: appt.therapy?.name || null,
+      therapyNames: getTherapyNames(appt),
 
       totalDurationMinutes: appt.totalDurationMinutes,
       therapyDurationMinutes: appt.therapyDurationMinutes,
@@ -782,6 +987,7 @@ export const sendTherapyReminders = async () => {
         include: {
           therapy: true,
           doctor: true,
+          therapies: { include: { therapy: true } },
           therapists: { include: { therapist: true } }
         }
       });
@@ -1066,6 +1272,7 @@ export const getTherapyScheduleByDate = async (req: Request, res: Response) => {
         time: true,
         roomNumber: true,
         therapyId: true,
+        totalDurationMinutes: true,
         therapists: {
           select: {
             therapistId: true

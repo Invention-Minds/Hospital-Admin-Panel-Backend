@@ -2957,9 +2957,10 @@ export const TEMPLATE = {
   DOCTOR_REMINDER: "944345",
 };
 export const buildPlaceholders = (type: string, appt: any, therapistName: string, doctorName: string) => {
+  const therapyNames = getTherapyNames(appt);
   const p = {
     patient: appt.name,
-    therapy: appt.therapy?.name,
+    therapy: therapyNames,
     therapist: therapistName,
     doctor: doctorName,
     date: appt.date,
@@ -3010,4 +3011,16 @@ export const buildPlaceholders = (type: string, appt: any, therapistName: string
     default:
       return [];
   }
+};
+const getTherapyNames = (appt: any): string => {
+  // NEW multi-therapy
+  if (Array.isArray(appt.therapies) && appt.therapies.length > 0) {
+    return appt.therapies
+      .map((t: any) => t.therapy?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  // LEGACY fallback
+  return appt.therapy?.name ?? "";
 };

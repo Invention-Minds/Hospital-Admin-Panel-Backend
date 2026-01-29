@@ -1040,13 +1040,14 @@ model ERAssessment {
 }
 
 model Therapy {
-  id           Int                  @id @default(autoincrement())
-  name         String               @unique
-  description  String?
-  duration     Int                  @default(75) // in minutes
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  appointments TherapyAppointment[]
+  id                  Int                         @id @default(autoincrement())
+  name                String                      @unique
+  description         String?
+  duration            Int                         @default(75) // in minutes
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  appointments        TherapyAppointmentTherapy[]
+  therapyAppointments TherapyAppointment[]
 }
 
 model Therapist {
@@ -1074,7 +1075,7 @@ model TherapyAppointment {
   gender         String?
   age            Int?
   doctorId       Int?
-  therapyId      Int
+  therapyId      Int?
   roomNumber     String
   date           String // YYYY-MM-DD
   time           String // HH:mm
@@ -1139,9 +1140,11 @@ model TherapyAppointment {
 
   doctor Doctor? @relation(fields: [doctorId], references: [id])
 
-  therapy Therapy @relation(fields: [therapyId], references: [id])
+  therapy Therapy? @relation(fields: [therapyId], references: [id])
 
   therapists TherapyAppointmentTherapist[]
+
+  therapies TherapyAppointmentTherapy[]
 
   // Prevent same room being double-booked
   @@unique([roomNumber, date, time], map: "unique_therapy_room_slot")
@@ -1159,24 +1162,36 @@ model TherapyAppointmentTherapist {
 
   @@unique([appointmentId, therapistId]) // no duplicate assignment
 }
+
+model TherapyAppointmentTherapy {
+  id            Int @id @default(autoincrement())
+  appointmentId Int
+  therapyId     Int
+
+  appointment TherapyAppointment @relation(fields: [appointmentId], references: [id])
+  therapy     Therapy            @relation(fields: [therapyId], references: [id])
+
+  @@unique([appointmentId, therapyId])
+}
+
 model CallbackRequest {
-  id           Int      @id @default(autoincrement())
-  name         String
-  mobile       String
-  address      String?
-  pageName     String?
+  id       Int     @id @default(autoincrement())
+  name     String
+  mobile   String
+  address  String?
+  pageName String?
 
-  status       String   @default("pending") // pending | contacted | cancelled
+  status String @default("pending") // pending | contacted | cancelled
 
-  handledBy    String?
-  handledAt    DateTime?
+  handledBy String?
+  handledAt DateTime?
 
-  notes        Json? 
-  cancelReason String?  @db.Text
+  notes        Json?
+  cancelReason String? @db.Text
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  cancelledBy  String?
-  cancelledAt  DateTime?
+  cancelledBy String?
+  cancelledAt DateTime?
 }
