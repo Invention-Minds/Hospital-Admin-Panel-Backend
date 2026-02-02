@@ -1135,6 +1135,8 @@ model TherapyAppointment {
   lockedBy Int?
   userId   Int?
 
+  remarks        String?  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

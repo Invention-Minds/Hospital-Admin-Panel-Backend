@@ -78,7 +78,7 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
   try {
     const {
       prn, prefix, name, phone, email, gender, age,
-      doctorId, therapyId, therapistIds, roomNumber, therapyIds, date, time, hasBathing, totalDurationMinutes
+      doctorId, therapyId, therapistIds, roomNumber, therapyIds, date, time, hasBathing, totalDurationMinutes, remarks
     } = req.body;
 
     if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
@@ -180,6 +180,7 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
         prn, prefix, name, phone, email, gender, age,
         doctorId, roomNumber, date, time,
         therapyId: Number(therapyIds[0]), // legacy
+        remarks: remarks || null,
         hasBathing,
         totalDurationMinutes,
         therapyDurationMinutes: therapyMinutes,
@@ -365,7 +366,7 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
     const { id } = req.params;
     const {
       prn, prefix, name, phone, email, gender, age,
-      therapistIds, doctorId, therapyId, roomNumber, date, time, status, totalDurationMinutes, hasBathing, therapyIds
+      therapistIds, doctorId, therapyId, roomNumber, date, time, status, totalDurationMinutes, hasBathing, therapyIds, remarks
     } = req.body;
 
     if (!Array.isArray(therapistIds) || therapistIds.length === 0 || therapistIds.length > 2) {
@@ -466,6 +467,7 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
         prn, prefix, name, phone, email, gender, age,
         doctorId, roomNumber, date, time, status,
         therapyId: Number(therapyIds[0]),
+        remarks: remarks || null,
         totalDurationMinutes,
         therapyDurationMinutes: therapyMinutes,
         cleaningDurationMinutes: cleaningMinutes,
@@ -629,6 +631,8 @@ export const getConfirmedAppointments = async (req: Request, res: Response) => {
       therapyName: appt.therapy?.name || null,
       therapyNames: getTherapyNames(appt),
 
+      remarks: appt.remarks,
+
       totalDurationMinutes: appt.totalDurationMinutes,
       therapyDurationMinutes: appt.therapyDurationMinutes,
       cleaningDurationMinutes: appt.cleaningDurationMinutes,
@@ -709,6 +713,8 @@ export const getCancelledAppointments = async (req: Request, res: Response) => {
       whatsappSent: appt.whatsappSent,
       emailSent: appt.emailSent,
       smsSent: appt.smsSent,
+
+      remarks: appt.remarks,
 
       doctorId: appt.doctorId,
       therapyId: appt.therapyId,
@@ -795,6 +801,9 @@ export const getCompletedAppointments = async (req: Request, res: Response) => {
       whatsappSent: appt.whatsappSent,
       emailSent: appt.emailSent,
       smsSent: appt.smsSent,
+
+
+      remarks: appt.remarks,
 
       doctorId: appt.doctorId,
       therapyId: appt.therapyId,
