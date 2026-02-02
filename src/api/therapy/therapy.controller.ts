@@ -588,16 +588,16 @@ export const getConfirmedAppointments = async (req: Request, res: Response) => {
       }
     });
     const getTherapyNames = (appt: any): string => {
-  if (appt.therapies?.length > 0) {
-    return appt.therapies
-      .map((t: any) => t.therapy?.name)
-      .filter(Boolean)
-      .join(", ");
-  }
+      if (appt.therapies?.length > 0) {
+        return appt.therapies
+          .map((t: any) => t.therapy?.name)
+          .filter(Boolean)
+          .join(", ");
+      }
 
-  // legacy fallback
-  return appt.therapy?.name || "";
-};
+      // legacy fallback
+      return appt.therapy?.name || "";
+    };
 
 
     // Format for frontend
@@ -676,16 +676,16 @@ export const getCancelledAppointments = async (req: Request, res: Response) => {
     });
 
     const getTherapyNames = (appt: any): string => {
-  if (appt.therapies?.length > 0) {
-    return appt.therapies
-      .map((t: any) => t.therapy?.name)
-      .filter(Boolean)
-      .join(", ");
-  }
+      if (appt.therapies?.length > 0) {
+        return appt.therapies
+          .map((t: any) => t.therapy?.name)
+          .filter(Boolean)
+          .join(", ");
+      }
 
-  // legacy fallback
-  return appt.therapy?.name || "";
-};
+      // legacy fallback
+      return appt.therapy?.name || "";
+    };
 
 
     // Format for frontend
@@ -762,16 +762,16 @@ export const getCompletedAppointments = async (req: Request, res: Response) => {
     });
 
     const getTherapyNames = (appt: any): string => {
-  if (appt.therapies?.length > 0) {
-    return appt.therapies
-      .map((t: any) => t.therapy?.name)
-      .filter(Boolean)
-      .join(", ");
-  }
+      if (appt.therapies?.length > 0) {
+        return appt.therapies
+          .map((t: any) => t.therapy?.name)
+          .filter(Boolean)
+          .join(", ");
+      }
 
-  // legacy fallback
-  return appt.therapy?.name || "";
-};
+      // legacy fallback
+      return appt.therapy?.name || "";
+    };
 
 
     // Format for frontend
@@ -1401,13 +1401,34 @@ export const getTodayCheckedInTherapiesByTherapist = async (req: Request, res: R
         doctor: true,
         therapists: { include: { therapist: true } },
         therapy: true,
+        therapies: {
+          include: {
+            therapy: true
+          }
+        }
+
       },
       orderBy: {
         time: "asc",
       },
     });
+    const formatted = appointments.map(appt => {
+      const therapyNames =
+        appt.therapies?.length > 0
+          ? appt.therapies
+            .map(t => t.therapy?.name)
+            .filter(Boolean)
+            .join(", ")
+          : appt.therapy?.name || ""; // fallback for legacy
 
-    res.status(200).json(appointments);
+      return {
+        ...appt,
+        therapyNames
+      };
+    });
+
+
+    res.status(200).json(formatted);
   } catch (error) {
     console.error("Error fetching today's checked-in therapies:", error);
     res.status(500).json({
@@ -1440,17 +1461,20 @@ export const updateTherapyProgress = async (req: Request, res: Response): Promis
     // Build dynamic update data
     const data: any = {};
 
-    if (entryDone) {
+    if (entryDone || therapyStarted) {
       data.entryDone = true;
       data.entryDoneAt = new Date();
       data.entryDoneBy = entryDoneBy || "System";
-    }
-
-    if (therapyStarted) {
       data.therapyStarted = true;
       data.startedAt = new Date();
       data.startedBy = startedBy || "Therapist";
     }
+
+    // if (therapyStarted) {
+    //   data.therapyStarted = true;
+    //   data.startedAt = new Date();
+    //   data.startedBy = startedBy || "Therapist";
+    // }
     if (therapyEnded) {
       data.therapyEnded = true;
       data.therapyEndedAt = new Date();
@@ -1539,11 +1563,30 @@ export const getTodayConfirmedTherapies = async (req: Request, res: Response) =>
       include: {
         therapy: true,
         doctor: true,
-        therapists: { include: { therapist: true } }
+        therapists: { include: { therapist: true } },
+        therapies: {
+          include: { therapy: true }
+        }
       }
     });
 
-    res.json(appointments);
+    const formatted = appointments.map(appt => {
+  const therapyNames =
+    appt.therapies?.length > 0
+      ? appt.therapies
+          .map(t => t.therapy?.name)
+          .filter(Boolean)
+          .join(", ")
+      : appt.therapy?.name || "";
+
+  return {
+    ...appt,
+    therapyNames
+  };
+});
+
+
+    res.json(formatted);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to load appointments" });

@@ -101,7 +101,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
         text: emailContenttoFrontOffice.text,
       };
       const info = await transporter.sendMail(mailOptions);
-      if(emailContenttoFrontOffice && process.env.HOSPITAL_NAME === 'Vasavi Hospitals' && whatsappNumber){
+      if (emailContenttoFrontOffice && process.env.HOSPITAL_NAME === 'Vasavi Hospitals' && whatsappNumber) {
         await sendWhatsappTemplate(whatsappNumber, emailContenttoFrontOffice.subject, emailContenttoFrontOffice.text);
       }
       res.status(200).json({ message: 'Email sent successfully', info });
@@ -133,7 +133,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       const info = await transporter.sendMail(mailOptions);
       res.status(200).json({ message: 'Email sent successfully', info });
     }
-    else if(status === 'Call Back Request'){
+    else if (status === 'Call Back Request') {
       const emailContent = {
         subject: `New Callback Request from Website - ${appointmentDetails.page}`,
         text: `
@@ -478,7 +478,7 @@ export const conditionalEmail = async (req: Request, res: Response): Promise<voi
 
     if (status === "Contact-Page") {
       emailContent = {
-        subject: `New Appointment Request from Website - ${status}`, 
+        subject: `New Appointment Request from Website - ${status}`,
         text: `
         
             Patient Name: ${appointmentDetails.name}
@@ -550,7 +550,7 @@ export const conditionalEmail = async (req: Request, res: Response): Promise<voi
       };
     }
 
-    else if(status === "Specialty-Page"){
+    else if (status === "Specialty-Page") {
       emailContent = {
         subject: `New Appointment Request from Website - ${status}`,
         text: `
@@ -601,9 +601,9 @@ export const conditionalEmail = async (req: Request, res: Response): Promise<voi
           `
       };
     }
-    
 
-    else{
+
+    else {
       res.status(404).json({ message: 'Invalid Page Name' });
     }
 
@@ -616,7 +616,7 @@ export const conditionalEmail = async (req: Request, res: Response): Promise<voi
     };
 
     const info = await transporter.sendMail(mailOptions);
-    if(emailContent){
+    if (emailContent) {
       console.log(emailContent.subject, emailContent.text)
       await sendWhatsappTemplate(whatsappNumber, emailContent.subject, emailContent.text);
     }
@@ -663,8 +663,8 @@ const sendWhatsappTemplate = async (
               {
                 type: 'body',
                 parameters: [
-                    { type: 'text', text: sanitizeForWhatsappSingleLine(subject) },
-                    { type: 'text', text: sanitizeForWhatsappSingleLine(text) }
+                  { type: 'text', text: sanitizeForWhatsappSingleLine(subject) },
+                  { type: 'text', text: sanitizeForWhatsappSingleLine(text) }
                 ]
               }
             ]
@@ -855,5 +855,44 @@ export const verifyCaptcha = async (req: Request, res: Response): Promise<void> 
       success: false,
       message: 'Server error during captcha verification'
     });
+  }
+};
+export const sendEmailOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, name, otp } = req.body;
+
+    if (!email || !otp) {
+      res.status(400).json({ message: 'Email and OTP are required' });
+      return;
+    }
+
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: email,
+      subject: `${process.env.HOSPITAL_NAME} - OTP Verification`,
+      text: `
+Dear ${name || 'User'},
+
+Your One-Time Password (OTP) is:
+
+🔐 ${otp}
+
+This OTP is valid for 2 minutes.
+Please do not share it with anyone.
+
+Regards,
+Team ${process.env.HOSPITAL_NAME}
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP sent successfully via email',
+    });
+  } catch (error) {
+    console.error('❌ Email OTP error:', error);
+    res.status(500).json({ message: 'Failed to send OTP email' });
   }
 };

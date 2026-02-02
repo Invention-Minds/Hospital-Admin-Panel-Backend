@@ -1,7 +1,8 @@
 // email.routes.ts
 import { Router } from 'express';
 import { sendEmail, sendEmailForApprover, sendHealthCheckupConfirmationEmail, sendMailtoLab, sendPackageMail, sendServiceEmail, conditionalEmail,
-     verifyRecaptcha, verifyCaptcha } from './email.controller';
+     verifyRecaptcha, verifyCaptcha, 
+     sendEmailOtp} from './email.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import multer from 'multer';
 import { verify } from 'crypto';
@@ -25,5 +26,7 @@ const upload = multer({ dest: 'uploads/' }); // or use a different configuration
 
 router.post('/send-email-lab', upload.single('file'), sendMailtoLab);
 router.post('/send-approver-email', sendEmailForApprover);
+router.post('/send-email-otp', sendEmailOtp);
+
 
 export default router;
