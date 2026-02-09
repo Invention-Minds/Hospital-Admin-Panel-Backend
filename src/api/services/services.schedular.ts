@@ -61,20 +61,20 @@ export const scheduleServiceCompletion = async (req: Request, res: Response): Pr
             try {
               await axios.post(url!, payload, { headers });
               let success = 'true'
-              if (success === 'true') {
-                const apiKey = process.env.SMS_API_KEY;
-                const apiUrl = process.env.SMS_API_URL;
-                const sender = process.env.SMS_SENDER;
-                let success_message = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
-                const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
-                const urlforComplete = `${apiUrl}/${sender}/${service.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
-                const responseofcomplete = await axios.get(urlforComplete);
-                console.log('SMS sent successfully to patient', responseofcomplete.data);
-                await prisma.service.update({
-                  where: { id: serviceId },
-                  data: { smsSent: true },
-                });
-              }
+              // if (success === 'true') {
+              //   const apiKey = process.env.SMS_API_KEY;
+              //   const apiUrl = process.env.SMS_API_URL;
+              //   const sender = process.env.SMS_SENDER;
+              //   let success_message = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+              //   const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+              //   const urlforComplete = `${apiUrl}/${sender}/${service.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+              //   const responseofcomplete = await axios.get(urlforComplete);
+              //   console.log('SMS sent successfully to patient', responseofcomplete.data);
+              //   await prisma.service.update({
+              //     where: { id: serviceId },
+              //     data: { smsSent: true },
+              //   });
+              // }
               console.log('WhatsApp message(s) sent successfully');
               await prisma.service.update({
                 where: { id: serviceId },

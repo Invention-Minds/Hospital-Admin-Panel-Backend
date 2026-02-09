@@ -32,7 +32,8 @@ import {
     opdGenderWise,
     checkedOutAppointments,
     getDoctorTodayReport,
-    getAppointmentById
+    getAppointmentById,
+    getCheckedInAppointmentsByDateRange
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -67,6 +68,7 @@ router.get('/future-consultations', authenticateToken, futureConsultations);
 router.get('/mhc-report-appts', authenticateToken, mhcReportAppointment);
 router.get('/get-checkedOut', authenticateToken, checkedOutAppointments)
 router.get('/pending', authenticateToken, getPendingAppointments);
+router.get('/checkin-reports', authenticateToken, getCheckedInAppointmentsByDateRange);
 router.get('/mhc-appts',authenticateToken, confirmedMhc);
 router.get('/by-user', authenticateToken, getAppointmentsByUser);
 router.get('/by-doctor', getDoctorReport);

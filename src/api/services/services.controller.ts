@@ -401,28 +401,28 @@ export const processRepeatedAppointments = async () => {
       } catch (error) {
         console.error('Error sending WhatsApp message:', error);
       }
-      try {
-        const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
-        const patientName = `${firstName} ${lastName}`;
-        let status = 'confirmed';
-        let patient_message = "";
-        patient_message = `Namaste ${patientName}, Your ${packageName} package is ${status} for ${appointmentDate} at ${appointmentTime}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana	`;
+      // try {
+      //   const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia } = newService;
+      //   const patientName = `${firstName} ${lastName}`;
+      //   let status = 'confirmed';
+      //   let patient_message = "";
+      //   patient_message = `Namaste ${patientName}, Your ${packageName} package is ${status} for ${appointmentDate} at ${appointmentTime}. Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We appreciate your patience and recommend consulting your doctor once the reports are ready. For any assistance, please contact 97420 20123. Thank You! Regards, Team Rashtrotthana	`;
 
-        const apiKey = process.env.SMS_API_KEY;
-        const apiUrl = process.env.SMS_API_URL;
-        const sender = process.env.SMS_SENDER;
-        const dltTemplateIdForPatient = process.env.SMS_DLT_TE_ID_FOR_HEALTH_CHECKUP_STATUS;
-        const url = `${apiUrl}/${sender}/${phoneNumber}/${encodeURIComponent(patient_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForPatient}`;
-        const response = await axios.get(url);
-        console.log('SMS sent successfully:', response.data);
-      }
-      catch (error) {
-        console.error('Error sending SMS:', error);
-        await prisma.service.update({
-          where: { id: newService.id },
-          data: { smsSent: true },
-        });
-      }
+      //   const apiKey = process.env.SMS_API_KEY;
+      //   const apiUrl = process.env.SMS_API_URL;
+      //   const sender = process.env.SMS_SENDER;
+      //   const dltTemplateIdForPatient = process.env.SMS_DLT_TE_ID_FOR_HEALTH_CHECKUP_STATUS;
+      //   const url = `${apiUrl}/${sender}/${phoneNumber}/${encodeURIComponent(patient_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForPatient}`;
+      //   const response = await axios.get(url);
+      //   console.log('SMS sent successfully:', response.data);
+      // }
+      // catch (error) {
+      //   console.error('Error sending SMS:', error);
+      //   await prisma.service.update({
+      //     where: { id: newService.id },
+      //     data: { smsSent: true },
+      //   });
+      // }
       try {
         const { firstName, lastName, packageName, phoneNumber, appointmentDate, appointmentTime, appointmentStatus, requestVia, email } = newService;
         const to = email;
@@ -448,7 +448,7 @@ export const processRepeatedAppointments = async () => {
 
   Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We recommend consulting your doctor once the reports are ready for further guidance.
 
-  If you have any questions or need assistance, please contact us at 97420 20123.
+  If you have any questions or need assistance, please contact us at 080 6923 9999.
 
   Thank you for choosing us.
 
@@ -782,7 +782,7 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
           const apiKey = process.env.SMS_API_KEY;
           const apiUrl = process.env.SMS_API_URL;
           const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 080 6923 9999 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
           const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
           const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
@@ -1036,11 +1036,11 @@ export const individualComplete = async (req: Request, res: Response) => {
 
         console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
-        const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+        // const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
 
-        const smsUrl = `${process.env.SMS_API_URL}/${process.env.SMS_SENDER}/${appointment.phoneNumber}/${encodeURIComponent(successMessage)}/TXT?apikey=${process.env.SMS_API_KEY}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${process.env.SMS_DLT_TE_ID_FOR_COMPLETE}`;
+        // const smsUrl = `${process.env.SMS_API_URL}/${process.env.SMS_SENDER}/${appointment.phoneNumber}/${encodeURIComponent(successMessage)}/TXT?apikey=${process.env.SMS_API_KEY}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${process.env.SMS_DLT_TE_ID_FOR_COMPLETE}`;
 
-        await axios.get(smsUrl);
+        // await axios.get(smsUrl);
         console.log('SMS sent successfully to', appointment.phoneNumber);
       } catch (error) {
         console.error('Failed to send WhatsApp or SMS:', (error as any).response ? (error as any).response.data : (error as any).message);

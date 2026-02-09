@@ -259,17 +259,17 @@ export const checkAndSendReminders = async () => {
           }
           console.log(payload);
           let success = 'true'
-          if (success === 'true') {
-            const apiKey = process.env.SMS_API_KEY;
-            const apiUrl = process.env.SMS_API_URL;
-            const sender = process.env.SMS_SENDER;
-            // let success_message = `Namaste ${name}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
-            let success_message = `Namaste ${name}, This is a gentle reminder regarding your appointment with ${appointment.doctorName} scheduled at ${appointment.time} on ${formatDateYear(new Date(appointment.date))}. Kindly note that this is an indicative time and the actual appointment time may vary. Please contact 9742020123 for any further assistance. Regards, Team Rashtrotthana.`
-            const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
-            const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
-            const responseofcomplete = await axios.get(urlforComplete);
-            console.log('SMS sent successfully to patient', responseofcomplete.data);
-          }
+          // if (success === 'true') {
+          //   const apiKey = process.env.SMS_API_KEY;
+          //   const apiUrl = process.env.SMS_API_URL;
+          //   const sender = process.env.SMS_SENDER;
+          //   // let success_message = `Namaste ${name}, This is a kind reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for tomorrow, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Thank you. Regards, Team Rashtrotthana`;
+          //   let success_message = `Namaste ${name}, This is a gentle reminder regarding your appointment with ${appointment.doctorName} scheduled at ${appointment.time} on ${formatDateYear(new Date(appointment.date))}. Kindly note that this is an indicative time and the actual appointment time may vary. Please contact 9742020123 for any further assistance. Regards, Team Rashtrotthana.`
+          //   const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_TOMORROW;
+          //   const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+          //   const responseofcomplete = await axios.get(urlforComplete);
+          //   console.log('SMS sent successfully to patient', responseofcomplete.data);
+          // }
           await prisma.appointment.update({
             where: { id: appointment.id },
             data: { remainder1Sent: true }
@@ -443,17 +443,17 @@ export const checkAndSendReminders = async () => {
           console.log('WhatsApp message(s) sent successfully', payload1);
           console.log('WhatsApp message(s) sent successfully');
           let success = 'true'
-          if (success === 'true') {
-            const apiKey = process.env.SMS_API_KEY;
-            const apiUrl = process.env.SMS_API_URL;
-            const sender = process.env.SMS_SENDER;
-            // let success_message = `Namaste ${name}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
-            let success_message = `Namaste ${name},This is a gentle reminder regarding your appointment with ${appointment.doctorName} that is scheduled for today ${appointment.time}  on ${formatDateYear(new Date(appointment.date))}.Please note:1. Kindly arrive at least 10 minutes prior to complete the registration process.2. Your appointment may be delayed if the doctor is handling an emergency.Thank you for your cooperation.Regards,Team Rashtrotthana`
-            const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
-            const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
-            const responseofcomplete = await axios.get(urlforComplete);
-            console.log('SMS sent successfully to patient', responseofcomplete.data);
-          }
+          // if (success === 'true') {
+          //   const apiKey = process.env.SMS_API_KEY;
+          //   const apiUrl = process.env.SMS_API_URL;
+          //   const sender = process.env.SMS_SENDER;
+          //   // let success_message = `Namaste ${name}, This is a gentle reminder of your upcoming appointment with ${appointment.doctorName} is scheduled for today, ${formatDateYear(new Date(appointment.date))} at ${appointment.time}. Please note: 1. Kindly arrive at least 10 minutes prior to complete the billing process. 2. Appointments are attended on a first-come, first-served basis. 3. Delays may occur if the doctor is handling an emergency. Thank you for your cooperation. Regards, Team Rashtrotthana`;
+          //   let success_message = `Namaste ${name},This is a gentle reminder regarding your appointment with ${appointment.doctorName} that is scheduled for today ${appointment.time}  on ${formatDateYear(new Date(appointment.date))}.Please note:1. Kindly arrive at least 10 minutes prior to complete the registration process.2. Your appointment may be delayed if the doctor is handling an emergency.Thank you for your cooperation.Regards,Team Rashtrotthana`
+          //   const dltTemplateIdfordoctor = process.env.SMS_DLT_TE_ID_FOR_REMAINDER;
+          //   const urlforComplete = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(success_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdfordoctor}`;
+          //   const responseofcomplete = await axios.get(urlforComplete);
+          //   console.log('SMS sent successfully to patient', responseofcomplete.data);
+          // }
           await prisma.appointment.update({
             where: { id: appointment.id },
             data: { remainder2Sent: true }
@@ -1238,19 +1238,19 @@ export const markComplete = async () => {
           await axios.post(url!, whatsappPayload, { headers });
           console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
-          // If WhatsApp message is successful, send SMS
-          const apiKey = process.env.SMS_API_KEY;
-          const apiUrl = process.env.SMS_API_URL;
-          const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
-          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+          // // If WhatsApp message is successful, send SMS
+          // const apiKey = process.env.SMS_API_KEY;
+          // const apiUrl = process.env.SMS_API_URL;
+          // const sender = process.env.SMS_SENDER;
+          // const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+          // const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
-          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
-            successMessage
-          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+          // const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+          //   successMessage
+          // )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
 
-          const smsResponse = await axios.get(smsUrl);
-          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+          // const smsResponse = await axios.get(smsUrl);
+          // console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
         } catch (error) {
           console.error(
             'Failed to send WhatsApp or SMS:',
@@ -1321,18 +1321,18 @@ export const markCompleteRadio = async () => {
           console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
           // If WhatsApp message is successful, send SMS
-          const apiKey = process.env.SMS_API_KEY;
-          const apiUrl = process.env.SMS_API_URL;
-          const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
-          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+          // const apiKey = process.env.SMS_API_KEY;
+          // const apiUrl = process.env.SMS_API_URL;
+          // const sender = process.env.SMS_SENDER;
+          // const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+          // const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
-          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
-            successMessage
-          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+          // const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+          //   successMessage
+          // )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
 
-          const smsResponse = await axios.get(smsUrl);
-          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+          // const smsResponse = await axios.get(smsUrl);
+          // console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
         } catch (error) {
           console.error(
             'Failed to send WhatsApp or SMS:',
@@ -1731,18 +1731,18 @@ export const individualComplete = async (req: Request, res: Response) => {
           console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
           // If WhatsApp message is successful, send SMS
-          const apiKey = process.env.SMS_API_KEY;
-          const apiUrl = process.env.SMS_API_URL;
-          const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
-          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+          // const apiKey = process.env.SMS_API_KEY;
+          // const apiUrl = process.env.SMS_API_URL;
+          // const sender = process.env.SMS_SENDER;
+          // const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+          // const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
-          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
-            successMessage
-          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+          // const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+          //   successMessage
+          // )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
 
-          const smsResponse = await axios.get(smsUrl);
-          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+          // const smsResponse = await axios.get(smsUrl);
+          // console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
         } catch (error) {
           console.error(
             'Failed to send WhatsApp or SMS:',
@@ -1929,28 +1929,28 @@ export const cancelExpiredAppointments = async () => {
     const status = 'cancelled'
     // **Step 6: Send SMS to Patient**
     if (phoneNumber) {
-      const patientMessage = `Hello ${patientName}, your appointment with ${doctor?.name} is ${status} on ${formatDateYear(new Date(date))} at ${time}. For any questions, contact 97420 20123. hank You! Regards, Rashtrotthana Team`;
-      const smsUrlPatient = `${smsApiUrl}/${smsSender}/${phoneNumber}/${encodeURIComponent(patientMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsPatientTemplateId}`;
+      // const patientMessage = `Hello ${patientName}, your appointment with ${doctor?.name} is ${status} on ${formatDateYear(new Date(date))} at ${time}. For any questions, contact 97420 20123. hank You! Regards, Rashtrotthana Team`;
+      // const smsUrlPatient = `${smsApiUrl}/${smsSender}/${phoneNumber}/${encodeURIComponent(patientMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsPatientTemplateId}`;
 
-      try {
-        const smsResponsePatient = await axios.get(smsUrlPatient);
-        console.log(`📩 SMS sent successfully to Patient: ${phoneNumber}`, smsResponsePatient.data);
-      } catch (error) {
-        console.error(`❌ Error sending SMS to Patient: ${phoneNumber}`, error);
-      }
+      // try {
+      //   const smsResponsePatient = await axios.get(smsUrlPatient);
+      //   console.log(`📩 SMS sent successfully to Patient: ${phoneNumber}`, smsResponsePatient.data);
+      // } catch (error) {
+      //   console.error(`❌ Error sending SMS to Patient: ${phoneNumber}`, error);
+      // }
     }
 
     // **Step 7: Send SMS to Doctor**
     if (doctor?.phone_number) {
-      const doctorMessage = `Hi ${doctor.name}, you have a ${status} appointment with ${patientName} on ${formatDateYear(new Date(date))} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
-      const smsUrlDoctor = `${smsApiUrl}/${smsSender}/${doctor.phone_number}/${encodeURIComponent(doctorMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsDoctorTemplateId}`;
+      // const doctorMessage = `Hi ${doctor.name}, you have a ${status} appointment with ${patientName} on ${formatDateYear(new Date(date))} at ${time}. For any questions, please contact 8904943673. Thank You! Regards, Rashtrotthana Team`;
+      // const smsUrlDoctor = `${smsApiUrl}/${smsSender}/${doctor.phone_number}/${encodeURIComponent(doctorMessage)}/TXT?apikey=${smsApiKey}&dltentityid=${smsDltEntityId}&dlttempid=${smsDoctorTemplateId}`;
 
-      try {
-        const smsResponseDoctor = await axios.get(smsUrlDoctor);
-        console.log(`📩 SMS sent successfully to Doctor: ${doctor.phone_number}`, smsResponseDoctor.data);
-      } catch (error) {
-        console.error(`❌ Error sending SMS to Doctor: ${doctor.phone_number}`, error);
-      }
+      // try {
+      //   const smsResponseDoctor = await axios.get(smsUrlDoctor);
+      //   console.log(`📩 SMS sent successfully to Doctor: ${doctor.phone_number}`, smsResponseDoctor.data);
+      // } catch (error) {
+      //   console.error(`❌ Error sending SMS to Doctor: ${doctor.phone_number}`, error);
+      // }
     }
 
     // **Step 8: Insert into `unavailableSlot` table**

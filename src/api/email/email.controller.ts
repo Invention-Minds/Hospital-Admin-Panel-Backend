@@ -29,12 +29,12 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
     if (recipientType === 'doctor') {
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Confirmed`,
-        text: `Hi  ${appointmentDetails.doctorName},\n\nYou have a confirmed appointment with ${appointmentDetails.patientName} on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact the admin staff at 97420 20123. Thank you!`,
+        text: `Hi  ${appointmentDetails.doctorName},\n\nYou have a confirmed appointment with ${appointmentDetails.patientName} on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact the admin staff at 080 6923 9999. Thank you!`,
       };
     } else if (recipientType === 'patient') {
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Confirmed`,
-        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} is confirmed on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact us at 97420 20123. Thank you!`,
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} is confirmed on ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nFor any questions, please contact us at 080 6923 9999. Thank you!`,
       };
     }
   }
@@ -42,22 +42,22 @@ const generateEmailContent = (status: string, appointmentDetails: any, recipient
     case 'received':
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Received`,
-        text: `Hi ${appointmentDetails.patientName},\n\nWe have received your appointment request with  ${appointmentDetails.doctorName}. Our team will process it and get back to you shortly.\n\nIf you have any immediate questions, please reach out to us at 97420 20123. Thank you!`,
+        text: `Hi ${appointmentDetails.patientName},\n\nWe have received your appointment request with  ${appointmentDetails.doctorName}. Our team will process it and get back to you shortly.\n\nIf you have any immediate questions, please reach out to us at 080 6923 9999. Thank you!`,
       };
     case 'rescheduled':
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Rescheduled`,
-        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} has been rescheduled to ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nIf you have any questions, feel free to reach out to us at 97420 20123. Thank you!`,
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} has been rescheduled to ${appointmentDetails.date} at ${appointmentDetails.time}.\n\nIf you have any questions, feel free to reach out to us at 080 6923 9999. Thank you!`,
       };
     case 'cancelled':
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Cancelled`,
-        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} on ${appointmentDetails.date} has been cancelled.\n\nIf you need to reschedule or have any questions, please contact us at 97420 20123. Thank you for understanding!`,
+        text: `Hi ${appointmentDetails.patientName},\n\nYour appointment with  ${appointmentDetails.doctorName} on ${appointmentDetails.date} has been cancelled.\n\nIf you need to reschedule or have any questions, please contact us at 080 6923 9999. Thank you for understanding!`,
       };
     default:
       return {
         subject: `${process.env.HOSPITAL_NAME} - Appointment Update`,
-        text: `Hi ${appointmentDetails.patientName},\n\nThere has been an update to your appointment.\n\nFor any questions, please contact us at 97420 20123. Thank you!`,
+        text: `Hi ${appointmentDetails.patientName},\n\nThere has been an update to your appointment.\n\nFor any questions, please contact us at 080 6923 9999. Thank you!`,
       };
   }
 };
@@ -273,7 +273,7 @@ export const sendHealthCheckupConfirmationEmail = async (req: Request, res: Resp
 
         Kindly note that there is a standard Turnaround Time (TAT) for all investigation reports. We recommend consulting your doctor once the reports are ready for further guidance.
 
-        If you have any questions or need assistance, please contact us at 97420 20123.
+        If you have any questions or need assistance, please contact us at 080 6923 9999.
 
         Thank you for choosing us.
 
@@ -301,7 +301,7 @@ export const sendHealthCheckupConfirmationEmail = async (req: Request, res: Resp
 
         Your ${appointmentDetails.packageName} package scheduled for ${appointmentDetails.appointmentDate} has been Cancelled.
 
-        If you require any further assistance or wish to reschedule your appointment, please feel free to contact us at 97420 20123.
+        If you require any further assistance or wish to reschedule your appointment, please feel free to contact us at 080 6923 9999.
 
         Thank you!
 
@@ -328,7 +328,7 @@ Namaste!
 
 We have received your health check request for the ${appointmentDetails.packageName} package. Our team will get back to you shortly with further details.
 
-For any assistance, please feel free to reach out to us at 97420 20123.
+For any assistance, please feel free to reach out to us at 080 6923 9999.
 
 Thank you!
 

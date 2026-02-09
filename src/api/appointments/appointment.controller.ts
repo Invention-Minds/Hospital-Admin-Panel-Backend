@@ -1390,3 +1390,63 @@ export const checkedOutAppointments = async(req: Request, res: Response): Promis
     });
   }
 }
+
+export const getCheckedInAppointmentsByDateRange = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { fromDate, toDate } = req.query;
+
+    if (!fromDate || !toDate) {
+      res.status(400).json({ error: 'fromDate and toDate are required' });
+      return;
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        checkedIn: true,
+        date: {
+          gte: String(fromDate),
+          lte: String(toDate),
+        },
+      },
+      select: {
+        id: true,
+        patientName: true,
+        phoneNumber: true,
+        email: true,
+        date: true,
+        time: true,
+        requestVia: true,
+        type: true,
+        created_at: true,
+        checkedInTime: true,
+        checkedInBy: true,
+        doctor: {
+          select: {
+            id: true,
+            name: true,
+            department: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+      orderBy: {
+        date: 'desc',
+      },
+    });
+
+    res.status(200).json(appointments);
+  } catch (error) {
+    console.error('Error fetching checked-in appointments:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'An error occurred',
+    });
+  }
+};

@@ -515,29 +515,29 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
           },
         };
 
-        try {
-          await axios.post(url!, whatsappPayload, { headers });
-          console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
+        // try {
+        //   await axios.post(url!, whatsappPayload, { headers });
+        //   console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
-          // If WhatsApp message is successful, send SMS
-          const apiKey = process.env.SMS_API_KEY;
-          const apiUrl = process.env.SMS_API_URL;
-          const sender = process.env.SMS_SENDER;
-          const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
-          const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
+        //   // If WhatsApp message is successful, send SMS
+        //   const apiKey = process.env.SMS_API_KEY;
+        //   const apiUrl = process.env.SMS_API_URL;
+        //   const sender = process.env.SMS_SENDER;
+        //   const successMessage = `Thank you for visiting Rashtrotthana Hospital! We appreciate your trust in us. Please contact 9742020123 for further assistance. Wishing you good health! Regards, Team Rashtrotthana`;
+        //   const dltTemplateIdForDoctor = process.env.SMS_DLT_TE_ID_FOR_COMPLETE;
 
-          const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
-            successMessage
-          )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
+        //   const smsUrl = `${apiUrl}/${sender}/${appointment.phoneNumber}/${encodeURIComponent(
+        //     successMessage
+        //   )}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdForDoctor}`;
 
-          const smsResponse = await axios.get(smsUrl);
-          console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
-        } catch (error) {
-          console.error(
-            'Failed to send WhatsApp or SMS:',
-            (error as any).response ? (error as any).response.data : (error as any).message
-          );
-        }
+        //   const smsResponse = await axios.get(smsUrl);
+        //   console.log('SMS sent successfully to', appointment.phoneNumber, smsResponse.data);
+        // } catch (error) {
+        //   console.error(
+        //     'Failed to send WhatsApp or SMS:',
+        //     (error as any).response ? (error as any).response.data : (error as any).message
+        //   );
+        // }
       })
     );
 
