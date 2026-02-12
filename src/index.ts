@@ -32,7 +32,8 @@ import radiologyQueueRoutes from './api/radiology-queue/radiologu-queue.routes';
 import opdRoutes from './api/opd/opd.routes';
 import erRoutes from './api/er/er.routes';
 import therapyRoutes from './api/therapy/therapy.routes';
-import callBackRoutes from './api/callback/callback.routes'
+import callBackRoutes from './api/callback/callback.routes';
+import voiceOPDRoutes from './api/voiceOPD/voiceOPD.routes';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -82,7 +83,8 @@ app.use('/api/radiology-queue', radiologyQueueRoutes);
 app.use('/api/opd', opdRoutes);
 app.use('/api/er', erRoutes);
 app.use('/api/therapy-appt', therapyRoutes);
-app.use('/api/call-back',callBackRoutes)
+app.use('/api/call-back',callBackRoutes);
+app.use('/api/voice-opd', voiceOPDRoutes)
 
 
 app.use(compression())
