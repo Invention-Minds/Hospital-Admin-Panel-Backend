@@ -32,29 +32,44 @@ export const voiceAssessment = async (req: Request, res: Response) => {
                 {
                     role: "system",
                     content: `
-You are a medical assistant.
+        You are a medical assistant.
 
-Split the doctor's dictation into these four sections:
+        Split the doctor's dictation into these four sections:
 
-history
-examination
-investigation
-treatmentPlan
+        history
+        examination
+        investigation
+        treatmentPlan
 
-IMPORTANT RULES:
-- Each field must contain plain text only.
-- Do NOT return objects.
-- Do NOT nest anything.
-- Do NOT add extra fields.
-- Return only this JSON structure:
+        IMPORTANT RULES:
+        - Each field must contain plain text only.
+        - Do NOT return objects.
+        - Do NOT nest anything.
+        - Do NOT add extra fields.
+        - Return only this JSON structure:
 
-{
-  "history": "text",
-  "examination": "text",
-  "investigation": "text",
-  "treatmentPlan": "text"
-}
-`,
+        {
+          "history": "text",
+          "examination": "text",
+          "investigation": "text",
+          "treatmentPlan": "text"
+        }
+
+        FORMATTING RULES: 
+        1. Investigation → each test on a new line.
+        2. Treatment Plan → each medication or instruction on a new line.
+        3. Do NOT return treatment plan as a paragraph.
+
+          Example treatmentPlan:
+Dolo 650 mg – Three times a day for 5 days
+Citrazin – Twice a day (morning and night) for 5 days
+Monta-LC – Once at night for 5 days
+
+Example investigation:
+CBC
+ESR
+X-ray right knee
+        `,
 
                 },
                 {
@@ -64,8 +79,59 @@ IMPORTANT RULES:
             ],
             response_format: { type: "json_object" },
         });
+        //         const structured = await openai.chat.completions.create({
+        //             model: "gpt-4o-mini",
+        //             messages: [
+        //                 {
+        //                     role: "system",
+        //                     content: `
+        // You are a medical assistant.
 
-        // console.log(structured, 'structured text')
+        // Split the doctor's dictation into these four sections:
+
+        // history
+        // examination
+        // investigation
+        // treatmentPlan
+
+        // IMPORTANT RULES:
+        // - Each field must contain plain text only.
+        // - Do NOT return objects.
+        // - Do NOT nest anything.
+        // - Do NOT add extra fields.
+        // - Return only this JSON structure:
+
+        // {
+        //   "history": "text",
+        //   "examination": "text",
+        //   "investigation": "text",
+        //   "treatmentPlan": "text"
+        // }
+
+
+        // Example treatmentPlan:
+        // Dolo 650 mg – Three times a day for 5 days
+        // Citrazin – Twice a day (morning and night) for 5 days
+        // Monta-LC – Once at night for 5 days
+
+        // Example investigation:
+        // CBC
+        // ESR
+        // X-ray right knee
+
+        // Return JSON only.
+        //       `,
+        //                 },
+        //                 {
+        //                     role: "user",
+        //                     content: rawText,
+        //                 },
+        //             ],
+        //             response_format: { type: "json_object" },
+        //         });
+
+
+        console.log(structured.choices[0].message.content, 'structured text')
 
         const parsed = JSON.parse(structured.choices[0].message.content || "{}");
 

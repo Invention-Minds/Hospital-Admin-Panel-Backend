@@ -984,7 +984,12 @@ export const getAppointmentById = async (req: Request, res: Response): Promise<v
         id: Number(appointmentId), // Match service ID
       },
       include:{
-        user: true
+        user: true,
+        doctor:{
+          select:{
+            name: true, id: true, kmcNumber: true
+          }
+        }
       }
     });
 
@@ -1448,5 +1453,31 @@ export const getCheckedInAppointmentsByDateRange = async (
     res.status(500).json({
       error: error instanceof Error ? error.message : 'An error occurred',
     });
+  }
+};
+const sendFollowUpWhatsApp = async (appointment: any) => {
+  try {
+    const patientName = `${appointment.prefix || ""} ${appointment.firstName} ${appointment.lastName}`.trim();
+
+    const payload = {
+      from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
+      to: appointment.phoneNumber,
+      type: "template",
+      message: {
+        templateid: process.env.WHATSAPP_FOLLOWUP_TEMPLATE_ID,
+        placeholders: [patientName, appointment.doctorName],
+      },
+    };
+
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
+
+    await axios.post(process.env.WHATSAPP_API_URL!, payload, { headers });
+
+    console.log("Follow-up WhatsApp sent to:", appointment.phoneNumber);
+  } catch (error) {
+    console.error("WhatsApp follow-up failed:", error);
   }
 };

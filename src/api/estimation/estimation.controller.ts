@@ -2080,12 +2080,15 @@ Additional treatments may be suggested by the doctor, depending on the patient�
             // const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
             console.log(pdfUrl);
 
+            const mediaId = await uploadMediaToPinbot(tempFilePath);
+            console.log(mediaId)
+
             // Save PDF details to the database (assuming you have a function for this)
             await savePdfToDatabase(estimationId, pdfUrl);
 
             // Delete the local file after upload
             fs.unlinkSync(tempFilePath);
-            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, pdfUrl, patientName, estimationId);
+            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfUrl);
 
             res.status(200).json({
                 success: true,
@@ -2142,51 +2145,78 @@ async function savePdfToDatabase(estimationId: string, pdfUrl: string) {
         console.error("Error saving PDF URL:", error);
     }
 }
+import FormData from "form-data";
+
+async function uploadMediaToPinbot(filePath: string) {
+    try {
+        const formData = new FormData();
+        formData.append("sheet", fs.createReadStream(filePath));
+
+        const response = await axios.post(
+            "https://api.pinbot.ai/v2/wamessage/media",
+            formData,
+            {
+                headers: {
+                    ...formData.getHeaders(),
+                    apikey: process.env.WHATSAPP_AUTH_TOKEN!,
+                    wanumber: process.env.WHATSAPP_FROM_PHONE_NUMBER!,
+                },
+            }
+        );
+
+        console.log("Media Upload Response:", response.data);
+
+        return response.data.data[0].MediaId;
+
+    } catch (error: any) {
+        console.error("❌ Media upload failed:", error?.response?.data || error.message);
+        throw error;
+    }
+}
 import axios from "axios";
 
-async function sendWhatsAppMessage(patientPhoneNumber: string, pdfUrl: string, patientName: string, estimationId: string) {
+async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, patientName: string, estimationId: string, pdfUrl: string) {
     try {
+        console.log(mediaId)
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         const url = process.env.WHATSAPP_API_URL;
-        console.log(patientName)
         patientPhoneNumber = formatPhoneNumber(patientPhoneNumber);
         const payload = {
             from: fromPhoneNumber,
-            to: patientPhoneNumber, // Recipient's WhatsApp number
+            to: patientPhoneNumber,
             type: "template",
             message: {
-                templateid: "715873", // Use your actual template ID
-                url: pdfUrl,
+                templateid: "715873",
+                id: mediaId,
                 caption: "Here is your estimation document.",
-                filename: pdfUrl.split("/").pop(), // Extracts PDF name
+                filename: pdfUrl.split("/").pop(), 
                 placeholders: [patientName]
             }
         };
 
         const headers = {
             "Content-Type": "application/json",
-            apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
+            apikey: process.env.WHATSAPP_AUTH_TOKEN, 
         };
 
         const response = await axios.post(url!, payload, { headers });
 
         if (response.data.code === "200") {
-            console.log("✅ WhatsApp message sent successfully:", response.data);
             await prisma.estimationDetails.update({
-                where: { estimationId: estimationId }, // Ensure correct structure
+                where: { estimationId: estimationId },
                 data: {
                     messageSent: true,
                     messageSentDateAndTime: new Date()
-                } // This should be an object with the field name
+                } 
 
             });
             return response;
         } else {
-            console.error("❌ Failed to send WhatsApp message:", response.data);
+            console.error("Failed to send WhatsApp message:", response.data);
             throw new Error("WhatsApp API failed");
         }
     } catch (error) {
-        console.error("❌ WhatsApp API Error:", error);
+        console.error("WhatsApp API Error:", error);
         throw error;
     }
 }

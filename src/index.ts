@@ -84,7 +84,7 @@ app.use('/api/opd', opdRoutes);
 app.use('/api/er', erRoutes);
 app.use('/api/therapy-appt', therapyRoutes);
 app.use('/api/call-back',callBackRoutes);
-app.use('/api/voice-opd', voiceOPDRoutes)
+app.use('/api/voice-opd', voiceOPDRoutes);
 
 
 app.use(compression())

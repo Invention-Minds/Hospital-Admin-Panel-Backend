@@ -2863,6 +2863,55 @@ export const sendRadioReportMessage = async (req: Request, res: Response) => {
   }
 }
 
+export const sendWhatsAppFollowUpMessage = async (req: Request, res: Response) => {
+  try {
+    const { patientName, prefix, phoneNumber, doctorName } = req.body;
+
+    const name = `${prefix} ${patientName}`.trim();
+
+    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    const url = process.env.WHATSAPP_API_URL;
+
+    const templateId = '975511'
+
+    const payload = {
+      from: fromPhoneNumber,
+      to: phoneNumber,
+      type: "template",
+      message: {
+        templateid: templateId, // dynamic template
+        placeholders: [name, doctorName], // dynamic data
+      },
+    };
+
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    };
+
+    const response = await axios.post(url!, payload, { headers });
+
+    if (response.data.code === "200") {
+      res.status(200).json({
+        message: "WhatsApp message sent successfully",
+        data: response.data,
+      });
+    } else {
+      res.status(500).json({
+        message: "Failed to send",
+        data: response.data,
+      });
+    }
+
+    console.log("WhatsApp message sent successfully:", response.data);
+  } catch (error) {
+    console.error("Error sending WhatsApp message:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+
 cron.schedule("0 7 * * *", async () => {
   await updateEstimation();
   await processRepeatedAppointments();
