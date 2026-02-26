@@ -5,6 +5,7 @@ import AppointmentRepository from './appointment.repository';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import axios from 'axios';
+import { sendConfirmedWhatsApp } from '../whatsapp/whatsapp.controller';
 
 const prisma = new PrismaClient();
 
@@ -146,13 +147,6 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Check availability before proceeding
     const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
     console.log(day, 'selected slot is not available request')
-    // const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day,date);
-    // console.log(doctorAvailability,'selected slot is not available request')
-
-    // if (!doctorAvailability) {
-    //   res.status(400).json({ error: 'Doctor is not available on the selected day.' });
-    //   return;
-    // }
     // Check if the doctor is a Visiting Consultant
     if (doctorType === 'Visiting Consultant') {
       console.log('Skipping availability check for Visiting Consultant.');
@@ -178,11 +172,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     // Check if the requested time falls within the available slots
     const requestedTime = time.split('-');
-    // console.log(requestedTime,'selected slot is not available request')
-    // if (requestedTime[0] < availableStartTime || requestedTime[1] > availableEndTime) {
-    //   res.status(400).json({ error: 'Selected time slot is not available.' });
-    //   return;
-    // }
+
     const userId = req.body.userId || null;
     // Create the appointment with Prisma
     const newAppointment = await resolver.createAppointment({
@@ -228,10 +218,34 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     }
 
+    // if (newAppointment.status === 'confirmed') {
+    //   await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
+    //   res.status(201).json(newAppointment);
+    // }
     if (newAppointment.status === 'confirmed') {
-      await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
-      res.status(201).json(newAppointment);
-    }
+  await doctorRepository.addBookedSlot(doctorId, date, time, userId?.toString());
+
+  try {
+    // 🔹 get doctor phone (if needed)
+    const doctor = await doctorRepository.getDoctorById(doctorId);
+
+    await sendConfirmedWhatsApp({
+      patientName,
+      doctorName,
+      date,
+      time,
+      patientPhoneNumber: phoneNumber,
+      doctorPhoneNumber: doctor?.phone_number,
+      prefix
+    });
+
+  } catch (err) {
+    console.error('WhatsApp failed but appointment created', err);
+    // ❗ DO NOT break flow
+  }
+
+  res.status(201).json(newAppointment);
+}
 
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });

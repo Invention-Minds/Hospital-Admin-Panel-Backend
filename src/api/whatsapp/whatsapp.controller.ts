@@ -3073,3 +3073,176 @@ const getTherapyNames = (appt: any): string => {
   // LEGACY fallback
   return appt.therapy?.name ?? "";
 };
+
+
+export const sendWhatsAppMessageService = async ({
+  doctorName,
+  time,
+  date,
+  patientPhoneNumber,
+  doctorPhoneNumber,
+  status,
+  requestVia,
+  prefix,
+  patientName
+}: {
+  doctorName: string;
+  time: string;
+  date: string;
+  patientPhoneNumber: string;
+  doctorPhoneNumber?: string;
+  status: string;
+  requestVia?: string;
+  prefix?: string;
+  patientName: string;
+}) => {
+
+  const url = process.env.WHATSAPP_API_URL;
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+  };
+
+  const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+  const fullName = `${prefix || ''} ${patientName}`.trim();
+
+  let payloads: any[] = [];
+
+  // --------------------
+  // Patient Message
+  // --------------------
+  if (status === 'confirmed') {
+    payloads.push({
+      from: fromPhoneNumber,
+      to: patientPhoneNumber,
+      type: "template",
+      message: {
+        templateid: "751725",
+        placeholders: [fullName, doctorName, status, time, date],
+      },
+    });
+  }
+
+  if (status === 'cancelled') {
+    payloads.push({
+      from: fromPhoneNumber,
+      to: patientPhoneNumber,
+      type: "template",
+      message: {
+        templateid: "790519",
+        placeholders: [fullName, doctorName, time, date],
+      },
+    });
+  }
+
+  if (status === 'rescheduled') {
+    payloads.push({
+      from: fromPhoneNumber,
+      to: patientPhoneNumber,
+      type: "template",
+      message: {
+        templateid: "751725",
+        placeholders: [fullName, doctorName, status, time, date],
+      },
+    });
+  }
+
+  // --------------------
+  // Doctor Message
+  // --------------------
+  if (doctorPhoneNumber && ['confirmed', 'cancelled', 'rescheduled'].includes(status)) {
+    payloads.push({
+      from: fromPhoneNumber,
+      to: doctorPhoneNumber,
+      type: "template",
+      message: {
+        templateid: "774273",
+        placeholders: [doctorName, status, fullName, time, date],
+      },
+    });
+  }
+
+  // --------------------
+  // Send all messages
+  // --------------------
+  try {
+    const responses = [];
+
+    for (const payload of payloads) {
+      const res = await axios.post(url!, payload, { headers });
+      responses.push(res.data);
+    }
+
+    return responses;
+  } catch (error) {
+    console.error('WhatsApp sending failed:', error);
+    throw error;
+  }
+};
+
+
+export const sendConfirmedWhatsApp = async ({
+  patientName,
+  doctorName,
+  date,
+  time,
+  patientPhoneNumber,
+  doctorPhoneNumber,
+  prefix
+}: {
+  patientName: string;
+  doctorName: string;
+  date: string;
+  time: string;
+  patientPhoneNumber: string;
+  doctorPhoneNumber?: string;
+  prefix?: string;
+}) => {
+
+  const url = process.env.WHATSAPP_API_URL!;
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: process.env.WHATSAPP_AUTH_TOKEN,
+  };
+
+  const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+
+  const fullName = `${prefix || ''} ${patientName}`.trim();
+  const formattedDate = formatDateYear(new Date(date));
+
+  const payloads: any[] = [];
+
+  // ✅ Patient message
+  payloads.push({
+    from: fromPhoneNumber,
+    to: patientPhoneNumber,
+    type: "template",
+    message: {
+      templateid: "751725",
+      placeholders: [fullName, doctorName, 'confirmed', time, formattedDate],
+    },
+  });
+
+  // ✅ Doctor message
+  if (doctorPhoneNumber) {
+    payloads.push({
+      from: fromPhoneNumber,
+      to: doctorPhoneNumber,
+      type: "template",
+      message: {
+        templateid: "774273",
+        placeholders: [doctorName, 'confirmed', fullName, time, formattedDate],
+      },
+    });
+  }
+
+  try {
+    for (const payload of payloads) {
+      await axios.post(url, payload, { headers });
+    }
+  } catch (error) {
+    console.error("WhatsApp sending failed:", error);
+    throw error;
+  }
+};
