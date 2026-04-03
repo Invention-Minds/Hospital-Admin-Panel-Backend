@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import axios from 'axios';
 import { sendConfirmedWhatsApp } from '../whatsapp/whatsapp.controller';
+import { sendConfirmedSMS } from '../sms/sms.controller';
 
 const prisma = new PrismaClient();
 
@@ -239,8 +240,18 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       prefix
     });
 
+    await sendConfirmedSMS({
+      patientName,
+      doctorName,
+      date,
+      time,
+      patientPhoneNumber: phoneNumber,
+      doctorPhoneNumber: doctor?.phone_number,
+      prefix
+    });
+
   } catch (err) {
-    console.error('WhatsApp failed but appointment created', err);
+    console.error('WhatsApp/SMS failed but appointment created', err);
     // ❗ DO NOT break flow
   }
 

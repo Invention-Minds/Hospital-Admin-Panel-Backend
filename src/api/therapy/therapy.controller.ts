@@ -9,7 +9,7 @@ const prisma = new PrismaClient();
 
 const OPEN_MIN = 6 * 60;     // 06:00
 const CLOSE_MIN = 18 * 60;   // 18:00
-const BUFFER_MIN = 10;
+const BUFFER_MIN = 5;
 
 const toMinutes = (t: string): number => {
   const [h, m] = t.split(":").map(Number);

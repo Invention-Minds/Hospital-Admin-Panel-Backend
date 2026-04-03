@@ -137,7 +137,7 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       const emailContent = {
         subject: `New Callback Request from Website - ${appointmentDetails.page}`,
         text: `
-          📞 Callback Request Details - Surgery page
+          📞 Callback Request Details - ${appointmentDetails.page}
     
           Patient Name: ${appointmentDetails.name}
           Contact Number: ${appointmentDetails.phone}
