@@ -80,6 +80,7 @@ model User {
   adminType      String?
   createdBy      String?
   updatedBy      String?
+  isActive       Boolean        @default(true)
   doctors        Doctor[]       @relation("DoctorUser")
   Notification   Notification[]
   activeTokens   ActiveToken[]

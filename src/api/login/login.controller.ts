@@ -79,6 +79,11 @@ export const userLogin = async (req: Request, res: Response) => {
 
     console.log(user, 'user in login controller')
 
+    if (user && (user as any).inactive) {
+      res.status(403).json({ error: 'Your account is inactive. Please contact the administrator.' });
+      return;
+    }
+
     if (user) {
       // const role = extractRoleFromUsername(user.username); // Extract role
       const role = user.role;
@@ -152,6 +157,28 @@ export const getAllUsers = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export const toggleUserActive = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      res.status(400).json({ error: 'Invalid user ID' });
+      return;
+    }
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { isActive: !user.isActive },
+    });
+    res.status(200).json({ id: updated.id, isActive: updated.isActive });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
 
 
 export const userRegister = async (req: Request, res: Response): Promise<void> => {

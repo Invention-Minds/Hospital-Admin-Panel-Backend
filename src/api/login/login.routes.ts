@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers } from './login.controller';
+import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive } from './login.controller';
 import { authenticateToken } from '../../middleware/middleware';
 const router = Router();
 
@@ -11,6 +11,7 @@ router.get('/user-details', authenticateToken, getUserDetails); // Protected rou
 router.get('/get-all-users', authenticateToken, getAllUsers); // Protected route
 
 router.delete('/delete-user/:username', authenticateToken, deleteUserByUsername);
+router.patch('/toggle-active/:userId', authenticateToken, toggleUserActive);
 
 export default router;
 

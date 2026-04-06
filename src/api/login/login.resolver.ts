@@ -6,12 +6,13 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 export const loginUser = async (password: string, employeeId: string) => {
-  // const user = await loginRepository.findUserByUsername(username);
   const user = await loginRepository.findUserByEmployeeId(employeeId)
   console.log("user", user);
-  if (user && bcrypt.compareSync(password, user.password)) {
+  if (!user) return null;
+  if (user.isActive === false) return { inactive: true } as any;
+  if (bcrypt.compareSync(password, user.password)) {
     return {
-      id: user.id,           // Include id in the returned user object
+      id: user.id,
       username: user.username,
       role: user.role,
       isReceptionist: user.isReceptionist,
@@ -23,12 +24,13 @@ export const loginUser = async (password: string, employeeId: string) => {
   return null;
 };
 export const loginDoctor = async (password: string, userId: number) => {
-  // const user = await loginRepository.findUserByUsername(username);
   const user = await loginRepository.findUserById(userId)
   console.log("user", user);
-  if (user && bcrypt.compareSync(password, user.password)) {
+  if (!user) return null;
+  if (user.isActive === false) return { inactive: true } as any;
+  if (bcrypt.compareSync(password, user.password)) {
     return {
-      id: user.id,           // Include id in the returned user object
+      id: user.id,
       username: user.username,
       role: user.role,
       isReceptionist: user.isReceptionist,
