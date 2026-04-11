@@ -50,7 +50,8 @@ app.use(express.urlencoded({ limit: '1gb', extended: true }));
 app.use(cors({
   origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/',
     'https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in',
-     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/', 'https://docmindsjmrh.imapps.in/'], 
+     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/', 'https://docmindsjmrh.imapps.in/',
+    'http://192.168.13.148:4200/'], 
   methods: ['GET', 'POST'],
   credentials: true
 }));
