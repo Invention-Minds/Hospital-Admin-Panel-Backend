@@ -1170,7 +1170,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
             costForDeluxe, costForPresidential, selectedRoomCost, estimationCreatedTime,
             submittedDateAndTime
         } = updateFields;
-        const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
+        const sanitizedEstimationId = estimationId
+            .replace(/[^A-Za-z0-9._-]+/g, "_")
+            .replace(/_+/g, "_")
+            .replace(/^_|_$/g, "");
         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
         const storageDir = process.env.PDF_STORAGE_DIR || "/var/www/docminds/pdfs";
         const estimationDir = path.join(storageDir, "estimations");
