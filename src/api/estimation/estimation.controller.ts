@@ -2048,21 +2048,22 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
 
         writeStream.on("finish", async () => {
             const publicBaseUrl = process.env.PUBLIC_BASE_URL || "https://docmindsjmrh.imapps.in";
-            const pdfUrl = `${publicBaseUrl}/files/estimations/${fileName}`;
-            console.log(pdfUrl);
+            const pdfPath = `/files/estimations/${fileName}`;
+            const pdfPublicUrl = `${publicBaseUrl}${pdfPath}`;
+            console.log(pdfPublicUrl);
 
             const mediaId = await uploadMediaToPinbot(tempFilePath);
             console.log(mediaId)
 
-            await savePdfToDatabase(estimationId, pdfUrl);
+            await savePdfToDatabase(estimationId, pdfPath);
 
-            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfUrl);
+            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfPublicUrl);
 
             res.status(200).json({
                 success: true,
                 message: "PDF generated & sent via WhatsApp successfully.",
-                filePath: pdfUrl,
-                whatsappResponse: whatsappResponse.data // Include WhatsApp API response
+                filePath: pdfPath,
+                whatsappResponse: whatsappResponse.data
             });
         });
 
