@@ -4,22 +4,12 @@ import fs from "fs";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
 import path from "path";
-import { Client } from "basic-ftp";
 import { ServiceRepository } from '../services/services.repository';
 import { notifyPendingAppointments } from '../appointments/appointment.controller';
 import { loadOtTV } from '../appointments/appointment.controller';
 
 const prisma = new PrismaClient();
 const repository = new ServiceRepository();
-
-const FTP_CONFIG = {
-    host: "srv680.main-hosting.eu",  // Your FTP hostname
-    user: "u948610439",       // Your FTP username
-    password: "Bsrenuk@1993",   // Your FTP password
-    secure: false                    // Set to true if using FTPS
-};
-
-
 
 export const createEstimation = async (req: Request, res: Response) => {
     try {
@@ -777,27 +767,6 @@ export const estConfirm = async (req: Request, res: Response) => {
         res.status(500).json({ error: "Internal server error" });
     }
 }
-async function uploadToFTP(localFilePath: any, remoteFilePath: any) {
-    const client = new Client();
-    client.ftp.verbose = true; // Optional: Logs FTP operations
-
-    try {
-        await client.access(FTP_CONFIG);
-        console.log("Connected to FTP Server!");
-
-        // Ensure the "pdfs" directory exists
-        // await client.ensureDir("/docminds/pdfs");
-        await client.ensureDir("/docminds/demo_pdfs");
-
-        // Upload the file
-        await client.uploadFrom(localFilePath, remoteFilePath);
-        console.log(`Uploaded: ${remoteFilePath}`);
-
-        await client.close();
-    } catch (error) {
-        console.error("FTP Upload Error:", error);
-    }
-}
 //  export const generateEstimationPDF = async (req: Request, res: Response) => {
 //     try {
 //         const {
@@ -1203,7 +1172,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         } = updateFields;
         const sanitizedEstimationId = estimationId.replace(/[\/\\:*?"<>|]/g, "_");
         const fileName = `Estimation_${sanitizedEstimationId}.pdf`;
-        const tempFilePath = path.join(__dirname, fileName);
+        const storageDir = process.env.PDF_STORAGE_DIR || "/var/www/docminds/pdfs";
+        const estimationDir = path.join(storageDir, "estimations");
+        fs.mkdirSync(estimationDir, { recursive: true });
+        const tempFilePath = path.join(estimationDir, fileName);
         const doc = new PDFDocument({ size: "A4", margin: 30 });
         const writeStream = fs.createWriteStream(tempFilePath);
         doc.pipe(writeStream);
@@ -2072,22 +2044,15 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
 
 
         writeStream.on("finish", async () => {
-            // const remoteFilePath = `/public_html/docminds/pdfs/${fileName}`; // demo
-            const remoteFilePath = `/public_html/docminds/demo_pdfs/${fileName}`; //rashtrotthana
-            console.log(remoteFilePath);
-            await uploadToFTP(tempFilePath, remoteFilePath);
-            const pdfUrl = `https://docminds.inventionminds.com/demo_pdfs/Estimation_${sanitizedEstimationId}.pdf`;
-            // const pdfUrl = `https://docminds.inventionminds.com/pdfs/Estimation_${sanitizedEstimationId}.pdf`;
+            const publicBaseUrl = process.env.PUBLIC_BASE_URL || "https://docmindsjmrh.imapps.in";
+            const pdfUrl = `${publicBaseUrl}/files/estimations/${fileName}`;
             console.log(pdfUrl);
 
             const mediaId = await uploadMediaToPinbot(tempFilePath);
             console.log(mediaId)
 
-            // Save PDF details to the database (assuming you have a function for this)
             await savePdfToDatabase(estimationId, pdfUrl);
 
-            // Delete the local file after upload
-            fs.unlinkSync(tempFilePath);
             const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfUrl);
 
             res.status(200).json({
