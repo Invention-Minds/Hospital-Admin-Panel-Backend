@@ -381,18 +381,42 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
     try {
         const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
 
-        const where: any = { NOT: { estimationId: 'emergency' } };
+        // Filter by surgery date (estimatedDate). Note: estimatedDate is nullable —
+        // pending/unscheduled estimations have estimatedDate = null but still need to be visible.
+        const baseWhere: any = { NOT: { estimationId: 'emergency' } };
+        let where: any = baseWhere;
 
         if (fromDate || toDate) {
-            // Explicit date range — filter on estimationCreatedTime (DateTime field)
-            where.estimationCreatedTime = {};
-            if (fromDate) where.estimationCreatedTime.gte = new Date(fromDate + 'T00:00:00');
-            if (toDate)   where.estimationCreatedTime.lte = new Date(toDate + 'T23:59:59');
+            // Explicit date range from user — only include estimations whose surgery date falls in range
+            where = {
+                ...baseWhere,
+                estimatedDate: {
+                    ...(fromDate ? { gte: fromDate } : {}),
+                    ...(toDate ? { lte: toDate } : {})
+                }
+            };
         } else {
-            // Default: last 30 days of estimations (avoids loading all historical records)
+            // Default: surgery date in last 7 days + today + future,
+            // OR estimation is recent (last 30 days) but unscheduled (estimatedDate = null)
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            where.estimationCreatedTime = { gte: thirtyDaysAgo };
+
+            where = {
+                ...baseWhere,
+                OR: [
+                    { estimatedDate: { gte: sevenDaysAgoStr } },          // scheduled surgeries in range
+                    {
+                        AND: [
+                            { estimatedDate: null },                         // unscheduled
+                            { estimationCreatedTime: { gte: thirtyDaysAgo } } // but recently created
+                        ]
+                    }
+                ]
+            };
         }
 
         const estimationDetails = await prisma.estimationDetails.findMany({
@@ -402,7 +426,10 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
                 exclusions: true,
                 followUpDates: true
             },
-            orderBy: { estimationCreatedTime: 'desc' }
+            orderBy: [
+                { estimatedDate: 'asc' },                // earliest scheduled surgeries first
+                { estimationCreatedTime: 'desc' }        // unscheduled — newest first
+            ]
         });
 
         res.status(200).json(estimationDetails);
