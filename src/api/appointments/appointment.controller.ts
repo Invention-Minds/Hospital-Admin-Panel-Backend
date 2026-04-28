@@ -78,6 +78,47 @@ export const adminAlertSent = (doctorId: any): void => {
   });
 }
 
+// Priority feature — broadcast nurse-flagged patient priority to all SSE clients
+export const notifyPriorityUpdate = (payload: {
+  appointmentId: number;
+  priority: string;
+  reason?: string;
+  setBy?: string;
+  setAt?: string;
+}): void => {
+  console.log('Notifying clients of priority update:', payload);
+  clients.forEach(client => {
+    client.write(`event: priorityUpdate\n`);
+    client.write(`data: ${JSON.stringify(payload)}\n\n`);
+  });
+}
+
+// Cross-browser consultation-start broadcast — so TVs on separate devices announce next patient
+export const notifyConsultationStarted = (payload: {
+  doctorId: number;
+  appointmentId: number;
+  channelId?: number;
+  patientName?: string;
+  doctorName?: string;
+}): void => {
+  console.log('Notifying clients of consultation started:', payload);
+  clients.forEach(client => {
+    client.write(`event: consultationStarted\n`);
+    client.write(`data: ${JSON.stringify(payload)}\n\n`);
+  });
+}
+
+// HTTP endpoint to trigger consultation-start broadcast (called by doctor's frontend)
+export const broadcastConsultationStart = (req: Request, res: Response): void => {
+  const { doctorId, appointmentId, channelId, patientName, doctorName } = req.body || {};
+  if (!doctorId || !appointmentId) {
+    res.status(400).json({ error: 'doctorId and appointmentId required' });
+    return;
+  }
+  notifyConsultationStarted({ doctorId, appointmentId, channelId, patientName, doctorName });
+  res.json({ success: true });
+}
+
 export const loadOtTV = (doctorId: any): void => {
   console.log('Notifying clients of load ot tv:', doctorId);
   clients.forEach(client => {
@@ -174,7 +215,10 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Check if the requested time falls within the available slots
     const requestedTime = time.split('-');
 
-    const userId = req.body.userId || null;
+    // Sprint 4b.2 — attribution from JWT, not body. Route stays public (anonymous
+    // website booking allowed); when there's no JWT, userId is null — same
+    // behaviour as before, just body.userId is ignored.
+    const userId = req.user?.id ?? null;
     // Create the appointment with Prisma
     const newAppointment = await resolver.createAppointment({
       patientName,
@@ -224,7 +268,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     //   res.status(201).json(newAppointment);
     // }
     if (newAppointment.status === 'confirmed') {
-  await doctorRepository.addBookedSlot(doctorId, date, time, userId?.toString());
+  await doctorRepository.addBookedSlot(doctorId, date, time, String(userId ?? ''));
 
   try {
     // 🔹 get doctor phone (if needed)
@@ -426,17 +470,45 @@ export const getAppointments = async (req: Request, res: Response): Promise<void
 
 export const updateAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.body.userId || null;
-    // Destructure and remove unnecessary nested objects before updating
-    const { id, doctor, user, ...updateData } = req.body;
+    // Sprint 4b.2 — attribution from JWT, not body. authenticateToken guarantees req.user.
+    const userId = req.user?.id ?? null;
+    // Destructure and remove unnecessary nested objects before updating.
+    // `userId` is also destructured off so the body value cannot leak in via ...updateData.
+    const { id, doctor, user, userId: _bodyUserId, ...updateData } = req.body;
     console.log("updateDatsa", updateData)
 
-    // Include userId if needed
+    // Include userId if present (from JWT).
     if (userId) {
       updateData.userId = userId;
     }
 
+    // Fetch existing appointment before update to detect status transition
+    const existingAppointment = await prisma.appointment.findUnique({
+      where: { id: Number(req.params.id) }
+    });
+
     const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), updateData);
+
+    // If status changed to confirmed, create booked slot (pending → confirmed flow)
+    if (updateData.status === 'confirmed' && existingAppointment?.status !== 'confirmed') {
+      const existingSlot = await prisma.bookedSlot.findFirst({
+        where: {
+          doctorId: updatedAppointment.doctorId,
+          date: updatedAppointment.date,
+          time: updatedAppointment.time,
+        }
+      });
+      if (!existingSlot && updatedAppointment.doctorId && updatedAppointment.date && updatedAppointment.time) {
+        await doctorRepository.addBookedSlot(
+          updatedAppointment.doctorId,
+          updatedAppointment.date,
+          updatedAppointment.time,
+          String(userId ?? '')
+        );
+        console.log(`Booked slot created on confirmation: Doctor ${updatedAppointment.doctorId}, ${updatedAppointment.date} ${updatedAppointment.time}`);
+      }
+    }
+
     res.status(200).json(updatedAppointment);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -562,9 +634,13 @@ export const lockAppointment = async (req: Request, res: Response): Promise<void
   console.log(req.body)
   try {
     const appointmentId = Number(req.params.id);
-    const userId = req.body.userId;
-    const userIdNum = Number(userId);
-    console.log(appointmentId, userId)
+    // Sprint 4b.2 — lock attribution from JWT, not body. authenticateToken guarantees req.user.
+    const userIdNum = req.user?.id ?? NaN;
+    if (!Number.isFinite(userIdNum) || userIdNum <= 0) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+    console.log(appointmentId, userIdNum)
     const appointment = await appointmentRepository.getAppointmentById(appointmentId);
     if (!appointment) {
       res.status(404).json({ message: 'Appointment not found' });
@@ -1047,14 +1123,28 @@ export const todayCheckedInAppointments = async (req: Request, res: Response): P
 
 export const confirmedAppointments = async (req: Request, res: Response):Promise<void> => {
   try{
+    const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    const where: any = { status: 'confirmed' };
+
+    if (fromDate || toDate) {
+      // User specified a date range — apply it
+      where.date = {};
+      if (fromDate) where.date.gte = fromDate;
+      if (toDate)   where.date.lte = toDate;
+    } else {
+      // Default: today + future only (avoids loading 80k+ historical records)
+      where.date = { gte: today };
+    }
+
     const appointments = await prisma.appointment.findMany({
-      where: {
-        status: 'confirmed'
-      },
+      where,
       include:{
         user: true,
         doctor:true
       },
+      orderBy: { date: 'asc' }
     });
     res.status(200).json(appointments)
   }
@@ -1064,14 +1154,28 @@ export const confirmedAppointments = async (req: Request, res: Response):Promise
 }
 export const cancelledAppointments = async (req: Request, res: Response):Promise<void> => {
   try{
+    const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+    const last7 = new Date();
+    last7.setDate(last7.getDate() - 7);
+    const last7Str = last7.toISOString().split('T')[0];
+
+    const where: any = { status: 'cancelled' };
+    if (fromDate || toDate) {
+      where.date = {};
+      if (fromDate) where.date.gte = fromDate;
+      if (toDate)   where.date.lte = toDate;
+    } else {
+      // Default: last 7 days + today + future (recent cancellations + upcoming cancelled slots)
+      where.date = { gte: last7Str };
+    }
+
     const appointments = await prisma.appointment.findMany({
-      where: {
-        status: 'cancelled'
-      },
+      where,
       include:{
         user: true,
         doctor:true
       },
+      orderBy: { date: 'desc' }   // Latest dates first (future > today > recent past)
     });
     res.status(200).json(appointments)
   }
@@ -1081,10 +1185,21 @@ export const cancelledAppointments = async (req: Request, res: Response):Promise
 }
 export const completedAppointments = async (req: Request, res: Response):Promise<void> => {
   try{
+    const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+    const today = new Date().toISOString().split('T')[0];
+
+    const where: any = { status: 'completed' };
+    if (fromDate || toDate) {
+      where.date = {};
+      if (fromDate) where.date.gte = fromDate;
+      if (toDate)   where.date.lte = toDate;
+    } else {
+      // Default: today's completed appointments only
+      where.date = today;
+    }
+
     const appointments = await prisma.appointment.findMany({
-      where: {
-        status: 'completed'
-      },
+      where,
       select: {
         patientName: true,
         phoneNumber: true,
@@ -1105,7 +1220,8 @@ export const completedAppointments = async (req: Request, res: Response):Promise
             username: true,
           },
         },
-      }
+      },
+      orderBy: { date: 'desc' }
     });
     res.status(200).json(appointments)
   }
@@ -1115,14 +1231,26 @@ export const completedAppointments = async (req: Request, res: Response):Promise
 }
 export const PendingAppointments = async (req: Request, res: Response):Promise<void> => {
   try{
+    const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+    const today = new Date().toISOString().split('T')[0];
+
+    const where: any = { status: 'pending' };
+    if (fromDate || toDate) {
+      where.date = {};
+      if (fromDate) where.date.gte = fromDate;
+      if (toDate)   where.date.lte = toDate;
+    } else {
+      // Default: today + future pending appointments
+      where.date = { gte: today };
+    }
+
     const appointments = await prisma.appointment.findMany({
-      where: {
-        status: 'pending'
-      },
+      where,
       include:{
         user: true,
         doctor:true
       },
+      orderBy: { date: 'asc' }
     });
     res.status(200).json(appointments)
   }

@@ -379,17 +379,30 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
 
 export const getAllEstimationDetails = async (req: Request, res: Response) => {
     try {
+        const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+
+        const where: any = { NOT: { estimationId: 'emergency' } };
+
+        if (fromDate || toDate) {
+            // Explicit date range — filter on estimationCreatedTime (DateTime field)
+            where.estimationCreatedTime = {};
+            if (fromDate) where.estimationCreatedTime.gte = new Date(fromDate + 'T00:00:00');
+            if (toDate)   where.estimationCreatedTime.lte = new Date(toDate + 'T23:59:59');
+        } else {
+            // Default: last 30 days of estimations (avoids loading all historical records)
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            where.estimationCreatedTime = { gte: thirtyDaysAgo };
+        }
+
         const estimationDetails = await prisma.estimationDetails.findMany({
-            where: {
-                NOT: {
-                    estimationId: 'emergency'
-                }
-            },
+            where,
             include: {
                 inclusions: true,
                 exclusions: true,
                 followUpDates: true
-            }
+            },
+            orderBy: { estimationCreatedTime: 'desc' }
         });
 
         res.status(200).json(estimationDetails);

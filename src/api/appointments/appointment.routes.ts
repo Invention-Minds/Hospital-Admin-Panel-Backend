@@ -33,12 +33,14 @@ import {
     checkedOutAppointments,
     getDoctorTodayReport,
     getAppointmentById,
-    getCheckedInAppointmentsByDateRange
+    getCheckedInAppointmentsByDateRange,
+    broadcastConsultationStart
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
 const router = Router();
 router.get('/updates', registerForUpdates);
+router.post('/notify-consultation-start', broadcastConsultationStart);
 router.post('/', createAppointment);
 router.post('/new', createNewAppointment);
 router.put('/bulk-updates-accept', bulkUpdateAccepted);

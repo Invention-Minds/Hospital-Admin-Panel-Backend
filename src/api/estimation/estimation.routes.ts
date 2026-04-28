@@ -25,7 +25,7 @@ router.put("/estimation-details/:estimationId/pacDone", authenticateToken, updat
 router.put("/estimation-details/:estimationId/confirm", authenticateToken, estConfirm);
 router.put('/estimation-details/:estimationId/updateDate', updateSurgeryDate);
 router.post('/new-estimation-details', authenticateToken, createNewEstimationDetails);
-router.post('/generate-pdf', generateEstimationPDF)
+router.post('/generate-pdf',authenticateToken, generateEstimationPDF)
 router.get('/department/:estimationType', authenticateToken, getEstimationsByType);
 router.put('/unlock-bulk', authenticateToken, bulkUnlockServices);
 
