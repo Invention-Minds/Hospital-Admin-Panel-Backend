@@ -168,7 +168,8 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       gender,
       serviceId,
       patientType,
-      prefix
+      prefix,
+      userId
     } = req.body;
     console.log(req.body, 'request');
 
@@ -218,7 +219,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // Sprint 4b.2 — attribution from JWT, not body. Route stays public (anonymous
     // website booking allowed); when there's no JWT, userId is null — same
     // behaviour as before, just body.userId is ignored.
-    const userId = req.user?.id ?? null;
+    // const userId = req.user?.id ?? null;
     // Create the appointment with Prisma
     const newAppointment = await resolver.createAppointment({
       patientName,
