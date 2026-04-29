@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, updateDoctorUserId, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -37,6 +37,7 @@ router.patch('/:doctorId/mark-available', markDatesAsAvailable);
 router.get('/:id', async (req, res) => {
   await getDoctorById(req, res);  // Awaiting to ensure proper response flow
 });
+router.patch('/:id/user-id', authenticateToken, updateDoctorUserId);
 router.put('/:id',authenticateToken, updateDoctor);
 router.delete('/:id', authenticateToken,deleteDoctor);
 router.get('/available',authenticateToken, getAvailableDoctors);

@@ -592,6 +592,25 @@ export const getDoctorById = async (req: Request, res: Response): Promise<Respon
   }
 };
 
+export const updateDoctorUserId = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required.' });
+      return;
+    }
+    const updated = await prisma.doctor.update({
+      where: { id: Number(id) },
+      data: { userId },
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    console.error('updateDoctorUserId error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
 export const updateDoctor = async (req: Request, res: Response) => {
   console.log("Update Request Body before try:", req.body);
   try {
@@ -720,6 +739,7 @@ export const updateDoctor = async (req: Request, res: Response) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
+
 export const addUnavailableSlots = async (req: Request, res: Response) => {
   try {
     const { doctorId, date, times, userId } = req.body;
