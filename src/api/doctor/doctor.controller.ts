@@ -366,8 +366,10 @@ export const getDoctorDetails = async (req: Request, res: Response) => {
     const today = new Date();
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
     const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+    const isPast = requestedDate < startOfToday;
 
     const doctors = await prisma.doctor.findMany({
+      where: isPast ? {} : { isActive: true },
       include: {
         availability: {
           where: isToday
@@ -1436,6 +1438,40 @@ export const getDoctorsByDepartment = async (req: Request, res: Response): Promi
     res.status(200).json(doctors);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred" });
+  }
+};
+
+export const deactivateDoctor = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'Invalid doctor ID' });
+      return;
+    }
+    const updated = await prisma.doctor.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
+export const activateDoctor = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'Invalid doctor ID' });
+      return;
+    }
+    const updated = await prisma.doctor.update({
+      where: { id },
+      data: { isActive: true },
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 };
 
