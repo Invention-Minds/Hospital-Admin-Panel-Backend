@@ -1,19 +1,27 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 
 const prisma = new PrismaClient();
 
-// Create doctor note
+// Create history note
 export const createDoctorNote = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const note = await prisma.historyNotes.create({
-      data: req.body,
+      data: {
+        ...stripAuditFields({ ...req.body }),
+        createdBy: req.user!.username,
+        updatedBy: req.user!.username,
+      },
     });
 
-    res.status(201).json({ message: 'Doctor note created successfully', data: note });
+    res.status(201).json({ message: 'History note created successfully', data: note });
   } catch (error) {
     console.error('Error creating note:', error);
-    res.status(500).json({ message: 'Failed to create doctor note', error });
+    res.status(500).json({ message: 'Failed to create history note', error });
   }
 };
 
@@ -26,7 +34,7 @@ export const getAllDoctorNotes = async (_req: Request, res: Response) => {
 
     res.json(notes);
   } catch (error) {
-    res.status(500).json({ message: 'Failed to fetch doctor notes', error });
+    res.status(500).json({ message: 'Failed to fetch history notes', error });
   }
 };
 
@@ -36,7 +44,7 @@ export const getDoctorNotesByPRN = async (req: Request, res: Response) => {
   const date = req.query.date as string; // optional
 
   try {
-  
+
     if (!date) {
       res.status(400).json({ message: 'Date is required' });
       return
@@ -51,15 +59,18 @@ export const getDoctorNotesByPRN = async (req: Request, res: Response) => {
 
     res.json(existing);
   } catch (error) {
-    console.error('Error fetching doctor notes:', error);
-    res.status(500).json({ message: 'Failed to fetch doctor notes', error });
+    console.error('Error fetching history notes:', error);
+    res.status(500).json({ message: 'Failed to fetch history notes', error });
   }
 };
 export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const { prn } = req.params;
     const date = req.query.date as string;
-    const payload = req.body;
+    const payload = stripAuditFields({ ...req.body });
 
     if (!date) {
        res.status(400).json({ message: 'Date is required' });
@@ -83,6 +94,7 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
           ...payload,
           prn: Number(prn), // Ensure PRN is stored as a number
           date, // Ensure date is stored correctly
+          updatedBy: req.user!.username,
         },
       });
     } else {
@@ -91,16 +103,18 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
         data: {
           prn: Number(prn),
           date,
-          ...payload
+          ...payload,
+          createdBy: req.user!.username,
+          updatedBy: req.user!.username,
         }
       });
     }
 
-    res.status(200).json({ message: 'Doctor note saved successfully', data: result });
+    res.status(200).json({ message: 'History note saved successfully', data: result });
 
   } catch (error) {
-    console.error('Error saving doctor note:', error);
-    res.status(500).json({ message: 'Failed to save doctor note', error });
+    console.error('Error saving history note:', error);
+    res.status(500).json({ message: 'Failed to save history note', error });
   }
 };
 

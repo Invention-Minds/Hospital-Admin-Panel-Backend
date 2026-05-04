@@ -1302,10 +1302,15 @@ export const getTherapyScheduleByDate = async (req: Request, res: Response) => {
 export const lockTherapyAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
     const appointmentId = Number(req.params.id);
-    const userId = Number(req.body.userId);
+    // Sprint 4b.2 — lock attribution from JWT, not body.
+    const userId = req.user?.id ?? NaN;
 
-    if (!appointmentId || isNaN(appointmentId) || !userId || isNaN(userId)) {
-      res.status(400).json({ message: 'Invalid appointment ID or user ID' });
+    if (!appointmentId || isNaN(appointmentId)) {
+      res.status(400).json({ message: 'Invalid appointment ID' });
+      return;
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+      res.status(401).json({ message: 'Authentication required' });
       return;
     }
 

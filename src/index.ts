@@ -34,27 +34,52 @@ import erRoutes from './api/er/er.routes';
 import therapyRoutes from './api/therapy/therapy.routes';
 import callBackRoutes from './api/callback/callback.routes';
 import voiceOPDRoutes from './api/voiceOPD/voiceOPD.routes';
+import emergencyRoutes from './api/emergency/emergency.routes';
+import mlcRoutes from './api/mlc/mlc.routes';
+import lamaDamaRoutes from './api/lama-dama/lama-dama.routes';
+import hmisSyncRoutes from './api/hmis-sync/hmis-sync.routes';
+import ipdRoutes from './api/ipd/ipd.routes';
+import ipdPrescriptionRoutes from './api/ipd/ipd-prescription.routes';
+import wardManagementRoutes from './api/ipd/ward-management.routes';
+import criticalValuesRoutes from './api/hmis-sync/critical-values.routes';
+import priorityRoutes from './api/priority/priority.routes';
+import signatureRoutes from './api/signature/signature.routes';
+import featureFlagRoutes from './api/feature-flag/feature-flag.routes';
+import { clearAllPriorities } from './api/priority/priority.controller';
+import { hmisSyncQueue } from './api/hmis-sync/hmis-sync.queue';
+import { initializeFollowUpReminders } from './api/ipd/follow-up-automation';
+import { registerBedCensusCron } from './api/ipd/bed-census-snapshot';
 
 // Load environment variables from .env file
 dotenv.config();
 
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be set and at least 32 characters long. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
+}
+
 const PORT = process.env.PORT || 3000;
 
 const app = express();
-app.use(cors());
-// app.use(express.json());
+
+app.use(cors({
+  origin: [
+    'http://localhost:4200',
+    'https://www.rashtrotthanahospital.com',
+    'https://rashtrotthanahospital.docminds.in',
+    'https://demo.docminds.in',
+    'http://192.168.9.139:4200',
+    'https://vasavihospitals.com',
+    'https://docminds.inventionminds.com',
+    'https://docmindsjmrh.imapps.in',
+    'http://192.168.13.148:4200',
+  ],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  credentials: true,
+}));
+
 app.use(helmet());
 app.use(express.json({ limit: '1gb' }));
 app.use(express.urlencoded({ limit: '1gb', extended: true }));
-
-app.use(cors({
-  origin: ['http://localhost:4200','https://www.rashtrotthanahospital.com/','https://rashtrotthanahospital.docminds.in/',
-    'https://www.publicholidaysglobal.com/api/holidays/IN/2024','https://demo.docminds.in',
-     'http://192.168.9.139:4200/', 'https://vasavihospitals.com/', 'https://docminds.inventionminds.com/', 'https://docmindsjmrh.imapps.in/',
-    'http://192.168.13.148:4200/'], 
-  methods: ['GET', 'POST'],
-  credentials: true
-}));
 
 
 // Use department and doctor routes
@@ -86,6 +111,19 @@ app.use('/api/er', erRoutes);
 app.use('/api/therapy-appt', therapyRoutes);
 app.use('/api/call-back',callBackRoutes);
 app.use('/api/voice-opd', voiceOPDRoutes);
+app.use('/api/emergency', emergencyRoutes);
+app.use('/api/mlc', mlcRoutes);
+app.use('/api/lama-dama', lamaDamaRoutes);
+app.use('/api/hmis-sync', hmisSyncRoutes);
+app.use('/api/ipd', ipdRoutes);
+app.use('/api/ipd-pharmacy', ipdPrescriptionRoutes);
+app.use('/api/ward', wardManagementRoutes);
+app.use('/api/critical-values', criticalValuesRoutes);
+app.use('/api/priority', priorityRoutes);
+app.use('/api/signature', signatureRoutes);
+app.use('/api/feature-flag', featureFlagRoutes);
+
+app.use('/files', express.static(process.env.PDF_STORAGE_DIR || '/var/www/docminds/pdfs'));
 
 
 app.use(compression())
@@ -97,6 +135,29 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+
+  // Initialize Phase 3 background services
+  setTimeout(() => {
+    console.log('\n🚀 Initializing Phase 3 services...');
+
+    // Initialize HMIS polling queue (lab/radiology results, bed availability, retry logic)
+    // hmisSyncQueue.initializePollingJobs();
+
+    // // Initialize follow-up appointment reminders (daily at 8 AM)
+    // initializeFollowUpReminders();
+
+    // // Sprint 4a Phase 1e — Daily bed census snapshot cron (00:05 local)
+    // registerBedCensusCron();
+
+    // Patient priority — clear in-memory map at midnight (same-day data only)
+    const cron = require('node-cron');
+    cron.schedule('0 0 * * *', () => {
+      clearAllPriorities();
+    });
+    console.log('✅ Patient priority daily-reset cron registered (00:00)');
+
+    console.log('✅ Phase 3 services initialized successfully\n');
+  }, 2000); // Wait 2 seconds to ensure database connection
 });
 
 const unexpectedErrorHandler = (error: Error) => {

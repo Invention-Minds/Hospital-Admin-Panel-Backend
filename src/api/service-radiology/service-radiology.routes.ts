@@ -38,7 +38,7 @@ router.put('/:id', authenticateToken, updateServiceStatus); // Update a service 
 router.delete('/:id', authenticateToken, deleteService); // Delete a service by ID
 router.put('/:id/update', authenticateToken, updateService);
 router.put('/:id/update-message', authenticateToken, updateServiceMessage);
-router.put('/:id/lock', lockService);
+router.put('/:id/lock', authenticateToken, lockService);
 router.put('/:id/unlock', unlockService);
 
 export default router;

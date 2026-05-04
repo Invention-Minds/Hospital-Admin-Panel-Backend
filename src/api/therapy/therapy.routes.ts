@@ -26,6 +26,7 @@ import {
   getTodayCheckedInTherapiesByTherapist,
   getTodayConfirmedTherapies,
 } from "./therapy.controller";
+import { authenticateToken } from "../../middleware/middleware";
 
 const router = Router();
 
@@ -38,7 +39,7 @@ router.get('/confirmed',getConfirmedAppointments);
 router.get('/cancelled',getCancelledAppointments);
 router.get('/completed', getCompletedAppointments);
 router.patch("/cancel/:id", cancelTherapyAppointment);
-router.patch("/lock/:id", lockTherapyAppointment);
+router.patch("/lock/:id", authenticateToken, lockTherapyAppointment);
 router.patch("/unlock/:id", unlockTherapyAppointment);
 router.get("/today-confirmed/:therapistId", getTodayCheckedInTherapiesByTherapist);
 router.get('/today-checkedin', getTodayConfirmedTherapies)

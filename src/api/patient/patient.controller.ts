@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { PatientRepository } from './patient.repository';
 import { PrismaClient } from '@prisma/client';
+import { generatePRN, syncPatientToHmis } from './patient-helper';
+import { stripAuditFields } from '../../middleware/audit-guard';
 
 const prisma = new PrismaClient();
 
@@ -13,7 +15,7 @@ export class PatientController {
 
   async createPatient(req: Request, res: Response): Promise<void> {
     try {
-      const { name, phoneNumber, email, prn } = req.body;
+      const { name, phoneNumber, email, prn: providedPrn, dob, gender, bloodGroup, address } = req.body;
       const mobileNo = phoneNumber
        // Check if the patient with the phone number already exists
     const existingPatient = await this.patientRepository.getPatientByMobileNumber(phoneNumber);
@@ -23,7 +25,32 @@ export class PatientController {
       res.status(409).json({ message: 'Patient with this phone number already exists', patient: existingPatient });
       return;
     }
+
+    // Auto-generate PRN if not provided
+    let prn = providedPrn;
+    if (!prn) {
+      prn = await generatePRN();
+    }
+
       const patient = await this.patientRepository.createPatient({ name, mobileNo, email, prn });
+
+      // Enhanced patient data for HMIS sync
+      const patientDataForSync = {
+        ...patient,
+        dob,
+        gender,
+        bloodGroup,
+        address,
+      };
+
+      // Push to HMIS asynchronously (don't wait for this)
+      try {
+        await syncPatientToHmis(patientDataForSync);
+      } catch (hmisError) {
+        console.error('HMIS sync failed (non-blocking):', hmisError);
+        // Don't fail the request if HMIS sync fails
+      }
+
       res.status(201).json(patient);
     } catch (error) {
       res.status(500).json({ message: 'Error creating patient', error });
@@ -181,10 +208,13 @@ export const createPatient = async (req: Request, res: Response) => {
        return
     }
 
-    // Create new patient
+    // Create new patient.
+    // Sprint 4b.2 — stripAuditFields prophylactic: PatientDetails has no audit
+    // columns today, but the body-spread pattern would silently leak the moment
+    // createdBy / updatedBy are added. Strip defensively; zero behaviour change now.
     const newPatient = await prisma.patientDetails.create({
       data: {
-        ...patientData,
+        ...stripAuditFields(patientData),
         created_at: new Date()
       }
     });

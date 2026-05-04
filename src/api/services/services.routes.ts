@@ -62,7 +62,7 @@ router.post('/stop-repeat', stopRepeat);
 router.post('/schedule-completion', scheduleServiceCompletion);
 
 
-router.put('/:id/lock', lockService);
+router.put('/:id/lock', authenticateToken, lockService);
 
 
 // Route to unlock a service

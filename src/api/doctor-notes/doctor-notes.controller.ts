@@ -1,13 +1,21 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 
 const prisma = new PrismaClient();
 
 // Create doctor note
 export const createDoctorNote = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const note = await prisma.doctorNote.create({
-      data: req.body,
+      data: {
+        ...stripAuditFields({ ...req.body }),
+        createdBy: req.user!.username,
+        updatedBy: req.user!.username,
+      },
     });
 
     res.status(201).json({ message: 'Doctor note created successfully', data: note });
@@ -36,7 +44,7 @@ export const getDoctorNotesByPRN = async (req: Request, res: Response) => {
   const date = req.query.date as string; // optional
 
   try {
-  
+
     if (!date) {
       res.status(400).json({ message: 'Date is required' });
       return
@@ -57,9 +65,12 @@ export const getDoctorNotesByPRN = async (req: Request, res: Response) => {
 };
 export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const { prn } = req.params;
     const date = req.query.date as string;
-    const payload = req.body;
+    const payload = stripAuditFields({ ...req.body });
 
     if (!date) {
        res.status(400).json({ message: 'Date is required' });
@@ -83,6 +94,7 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
           ...payload,
           prn: Number(prn), // Ensure PRN is stored as a number
           date, // Ensure date is stored correctly
+          updatedBy: req.user!.username,
         },
       });
     } else {
@@ -92,6 +104,8 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
           prn: Number(prn),
           date,
           ...payload,
+          createdBy: req.user!.username,
+          updatedBy: req.user!.username,
         }
       });
     }

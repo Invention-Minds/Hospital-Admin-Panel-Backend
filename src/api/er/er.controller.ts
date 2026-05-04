@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { PrismaClient } from '@prisma/client';
+import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 
 const prisma = new PrismaClient();
 
@@ -7,8 +8,14 @@ const prisma = new PrismaClient();
 // ➡️ Create ER Assessment
 export const createERAssessment = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const er = await prisma.eRAssessment.create({
-      data: req.body,
+      data: {
+        ...stripAuditFields({ ...req.body }),
+        createdBy: actorId, // ERAssessment.createdBy is Int — store JWT id
+      },
     });
     res.json(er);
   } catch (err: any) {
@@ -34,10 +41,13 @@ export const getERAssessmentByAppointmentId = async (req: Request, res: Response
 // ➡️ Update ER Assessment
 export const updateERAssessment = async (req: Request, res: Response) => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const { id } = req.params;
     const er = await prisma.eRAssessment.update({
       where: { id: Number(id) },
-      data: req.body,
+      data: stripAuditFields({ ...req.body }),
     });
     res.json(er);
   } catch (err: any) {
@@ -57,4 +67,3 @@ export const getAllERAssessments = async (req: Request, res: Response) => {
       res.status(500).json({ error: err.message });
     }
   };
-  

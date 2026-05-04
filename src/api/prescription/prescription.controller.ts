@@ -1,6 +1,7 @@
 
 import { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
+import { syncPrescriptionToHmis } from './prescription-sync';
 
 const generatePrescriptionId = async (): Promise<string> => {
   const latest = await prisma.prescription.findFirst({
@@ -45,6 +46,11 @@ export const createPrescription = async (req: Request, res: Response) => {
     });
 
     res.status(201).json({ message: 'Prescription created', data: newPrescription });
+
+    // Async HMIS sync (fire-and-forget, doesn't block response)
+    syncPrescriptionToHmis(newPrescription).catch((err) =>
+      console.error('HMIS prescription sync failed:', err)
+    );
   } catch (error) {
     console.error('Error creating prescription:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -83,6 +89,13 @@ export const getPrescriptionByPrn = async (req: Request, res: Response) => {
 
 export const createTablet = async (req: Request, res: Response) => {
   try {
+    // Sprint 4b.2 — createdBy is now server-derived (was: req.body.doctorId).
+    // authenticateToken middleware guarantees req.user at this point.
+    if (!req.user?.username) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     const { genericName, brandName, type, description } = req.body;
     const existing = await prisma.tabletMaster.findFirst({
       where: { brandName },
@@ -99,7 +112,7 @@ export const createTablet = async (req: Request, res: Response) => {
         brandName,
         type,
         description,
-        createdBy: req.body.doctorId
+        createdBy: req.user.username,
       },
     });
 

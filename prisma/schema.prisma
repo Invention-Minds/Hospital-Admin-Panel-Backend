@@ -272,6 +272,9 @@ model PatientDetails {
   spo2            String?
   temp            String?
   weight          String?
+  hmisUhid        String?
+
+  @@index([hmisUhid])
 }
 
 model ActiveToken {
@@ -1136,7 +1139,7 @@ model TherapyAppointment {
   lockedBy Int?
   userId   Int?
 
-  remarks        String?  
+  remarks String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1197,4 +1200,529 @@ model CallbackRequest {
 
   cancelledBy String?
   cancelledAt DateTime?
+}
+
+// ============================================================================
+// EMERGENCY & TRAUMA MODULE (Phase 0)
+// ============================================================================
+
+model Emergency {
+  id            Int     @id @default(autoincrement())
+  prn           String  @unique // Auto-generated: JMRH-ER-001
+  appointmentId Int?
+  patientName   String
+  phoneNumber   String?
+  age           Int?
+  gender        String?
+
+  triageCategory      String // red | yellow | green | black
+  presentingComplaint String @db.LongText
+  abcdeAssessment     String @db.LongText
+
+  traumaScore Int? // ISS (Injury Severity Score) or GCS
+  vitalsBP    String?
+  vitalsHR    Int?
+  vitalsRR    Int?
+  vitalsSpO2  Int?
+  vitalsTemp  Float?
+
+  proceduresDone String? @db.LongText
+  status         String // arrived | stabilized | referred | admitted-ipd | LAMA | DAMA | discharged
+
+  docmindsCreated Boolean @default(true)
+  hmisCreated     Boolean @default(false)
+  hmisEmergencyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  updatedBy String?
+
+  progressNotes EmergencyProgressNote[]
+  mlcCase       MlcCase?
+  lamaRecord    LamaRecord?
+  damaRecord    DamaRecord?
+
+  @@index([prn])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model EmergencyProgressNote {
+  id          Int      @id @default(autoincrement())
+  emergencyId Int
+  time        DateTime @default(now())
+  doctorName  String
+  observation String   @db.LongText
+
+  vitalsBP   String?
+  vitalsHR   Int?
+  vitalsRR   Int?
+  vitalsSpO2 Int?
+  vitalsTemp Float?
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+
+  @@index([emergencyId])
+  @@index([time])
+}
+
+model MlcCase {
+  id          Int    @id @default(autoincrement())
+  emergencyId Int    @unique
+  mlcNo       String @unique // Auto: MLC-YYYY-001
+  caseType    String // accident | assault | poison | burn | other
+
+  policeStationName    String?
+  fir_No               String?
+  fir_Date             DateTime?
+  investigatingOfficer String?
+
+  patientConsent   Boolean // Consent for treatment documented
+  consentTime      DateTime?
+  consentSignature String? // URL
+
+  firstExaminationDone Boolean
+  firstExaminationTime DateTime?
+  examinerName         String?
+  examinerSignature    String? // URL
+
+  injuries         String  @db.LongText
+  photographsTaken Boolean
+  photoUrls        String? @db.Text // JSON array of GCS URLs
+
+  samplesCollected  String? // Blood, saliva, etc.
+  sampleStorageInfo String? @db.LongText
+
+  followUpExams String? @db.LongText
+  finalReport   String? @db.LongText
+
+  reportSubmittedTo String? // Police, court
+  submissionDate    DateTime?
+  submissionProof   String? // URL of submission document
+
+  status String // documented | examination-done | samples-collected | report-submitted | closed
+
+  hmisMlcId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+  updatedBy   String?
+  createdById Int? // Sprint 4a — MRD audit typed creator
+  updatedById Int? // Sprint 4b — MRD audit typed updater
+
+  emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+
+  @@index([mlcNo])
+  @@index([status])
+  @@index([emergencyId])
+}
+
+model LamaRecord {
+  id          Int @id @default(autoincrement())
+  emergencyId Int @unique
+
+  lamaTime         DateTime
+  doctorAdvice     String   @db.LongText
+  riskExplained    Boolean
+  patientSignature String? // URL
+
+  witnessName      String?
+  witnessSignature String? // URL
+  reasonForLama    String  @db.Text
+
+  hmisLamaId String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @updatedAt // Sprint 4a — MRD.1 timestamp gap-fill
+  createdBy   String?
+  createdById Int? // Sprint 4a — MRD audit typed creator
+  updatedBy   String? // Sprint 4b — MRD audit username updater
+  updatedById Int? // Sprint 4b — MRD audit typed updater
+
+  emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+
+  @@index([emergencyId])
+}
+
+model DamaRecord {
+  id          Int @id @default(autoincrement())
+  emergencyId Int @unique
+
+  dischargeTime         DateTime
+  doctorRecommendation  String   @db.LongText
+  patientDeclinesAdvice Boolean
+  patientSignature      String? // URL
+
+  witnessName      String?
+  witnessSignature String? // URL
+  followUpAdvice   String? @db.LongText
+
+  hmisDamaId String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @updatedAt // Sprint 4a — MRD.1 timestamp gap-fill
+  createdBy   String?
+  createdById Int? // Sprint 4a — MRD audit typed creator
+  updatedBy   String? // Sprint 4b — MRD audit username updater
+  updatedById Int? // Sprint 4b — MRD audit typed updater
+
+  emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+
+  @@index([emergencyId])
+}
+
+// ============================================================================
+// HMIS AUDIT LOG & INVESTIGATION RESULTS
+// ============================================================================
+
+model HmisAuditLog {
+  id         Int      @id @default(autoincrement())
+  direction  String // push | pull
+  module     String // patient | opd | ipd | lab | pharmacy | billing | emergency | mlc | lama | dama
+  action     String // create | update | result | webhook
+  payload    String   @db.LongText // JSON
+  response   String?  @db.LongText // HMIS response
+  status     String // success | failed | pending
+  retryCount Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([direction])
+  @@index([module])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model InvestigationResult {
+  id             Int       @id @default(autoincrement())
+  orderId        Int
+  prn            String
+  testName       String
+  department     String // lab | radiology
+  result         String?   @db.LongText
+  unit           String?
+  referenceRange String?
+  criticalFlag   Boolean   @default(false)
+  reportUrl      String? // GCS URL of report PDF
+  reportedAt     DateTime?
+  hmisResultId   String?
+  status         String // pending | partial | final
+  createdAt      DateTime  @default(now())
+
+  @@index([prn])
+  @@index([orderId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// IPD Ward Management
+model IpdWard {
+  id         String   @id @default(uuid())
+  wardName   String
+  wardCode   String   @unique
+  floor      String?
+  department String
+  totalBeds  Int
+  hmisWardId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  admissions IpdAdmission[]
+  beds       IpdBed[]
+
+  @@index([wardCode])
+  @@index([department])
+}
+
+model IpdBed {
+  id         String   @id @default(uuid())
+  bedNumber  String
+  wardId     String
+  bedType    String // general | ICU | HDU | isolation
+  status     String   @default("available") // available | occupied | maintenance | reserved
+  hmisBedrId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ward       IpdWard        @relation(fields: [wardId], references: [id], onDelete: Cascade)
+  admissions IpdAdmission[]
+
+  @@unique([wardId, bedNumber])
+  @@index([wardId])
+  @@index([status])
+}
+
+// IPD Admission
+model IpdAdmission {
+  id                  String   @id @default(uuid())
+  admissionNo         String   @unique
+  prn                 String
+  admissionDate       DateTime
+  admissionTime       String
+  admissionType       String // elective | emergency | transfer
+  sourceModule        String // opd | emergency | direct
+  referralOpdId       String?
+  referralEmergencyId String?
+  referralMlcId       String?
+  referringDoctor     String?
+  admittingDoctor     String
+  department          String
+  wardId              String
+  bedId               String
+  roomType            String // general | semi-private | private | ICU | HDU
+  diagnosis           String   @db.LongText
+  status              String   @default("admitted") // admitted | transferred | discharged | LAMA | DAMA | expired
+  hmisAdmissionId     String?
+  hmisTransferId      String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  createdBy           String?
+  updatedBy           String?
+
+  bed           IpdBed            @relation(fields: [bedId], references: [id])
+  ward          IpdWard           @relation(fields: [wardId], references: [id])
+  progressNotes IpdProgressNote[]
+  discharge     IpdDischarge?
+  prescriptions IpdPrescription[]
+
+  @@index([prn])
+  @@index([admissionNo])
+  @@index([wardId])
+  @@index([bedId])
+  @@index([status])
+  @@index([admissionDate])
+}
+
+// IPD Progress Notes (SOAP)
+model IpdProgressNote {
+  id           String    @id @default(uuid())
+  admissionId  String
+  date         DateTime  @default(now())
+  doctorName   String
+  subjective   String    @db.LongText // SOAP
+  objective    String    @db.LongText
+  assessment   String    @db.LongText
+  plan         String    @db.LongText
+  nursingNotes String?   @db.LongText
+  vitalsBP     String?
+  vitalsHR     String?
+  vitalsTemp   String?
+  vitalsSpO2   String?
+  vitalsRR     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime? @updatedAt // Sprint 4a — MRD.1 timestamp gap-fill
+  createdBy    String?
+  createdById  Int? // Sprint 4a — MRD audit typed creator
+  updatedBy    String? // Sprint 4b — MRD audit username updater
+  updatedById  Int? // Sprint 4b — MRD audit typed updater
+
+  admission IpdAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  @@index([admissionId])
+  @@index([date])
+}
+
+// IPD Discharge Summary
+model IpdDischarge {
+  id                   String    @id @default(uuid())
+  admissionId          String    @unique
+  dischargeDate        DateTime
+  dischargeTime        String
+  dischargeType        String // regular | LAMA | transfer | expired
+  finalDiagnosis       String    @db.LongText
+  proceduresDone       String?   @db.LongText
+  conditionAtDischarge String
+  dischargeSummary     String    @db.LongText
+  followUpDate         DateTime?
+  followUpDoctor       String?
+  medications          String    @db.LongText // JSON array
+  advice               String?   @db.LongText
+  doctorSignature      String? // Sprint 4a — NABH MRD.3
+  hmisDischargeId      String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime? @updatedAt // Sprint 4a — MRD.1 timestamp gap-fill
+  createdBy            String?
+  createdById          Int? // Sprint 4a — MRD audit typed creator
+  updatedBy            String? // Sprint 4b — MRD audit username updater
+  updatedById          Int? // Sprint 4b — MRD audit typed updater
+
+  admission IpdAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  @@index([admissionId])
+  @@index([dischargeDate])
+}
+
+// IPD Prescriptions (with carry-over from OPD/Emergency)
+model IpdPrescription {
+  id             String   @id @default(uuid())
+  admissionId    String
+  prescriptionId String? // Link to original OPD/Emergency prescription
+  prescribedBy   String
+  prescribedDate DateTime @default(now())
+  carryOverFrom  String? // opd | emergency (source module if carryover)
+
+  // Drug details
+  genericName  String
+  brandName    String?
+  dose         String
+  frequency    String
+  duration     String
+  route        String  @default("oral") // oral | iv | im | topical | sc | id
+  instructions String?
+  quantity     Int
+
+  // IPD-specific fields
+  isCarryOver        Boolean   @default(false)
+  lastAdminTime      DateTime?
+  nextAdminTime      DateTime?
+  adminStatus        String // pending | administered | skipped | stopped
+  status             String    @default("active") // active | paused | discontinued
+  modificationReason String? // Sprint 4a — NABH MOM.4
+  hmisRxId           String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  createdBy          String?
+  updatedBy          String?
+  createdById        Int? // Sprint 4a — MRD audit typed creator
+  updatedById        Int? // Sprint 4b — MRD audit typed updater
+
+  admission IpdAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  @@index([admissionId])
+  @@index([status])
+  @@index([adminStatus])
+}
+
+// IPD Medication Administration Record (MAR)
+model IpdMedicationLog {
+  id             String    @id @default(uuid())
+  prescriptionId String
+  admissionId    String
+  administeredAt DateTime  @default(now())
+  administeredBy String // Nursing staff name
+  quantity       Int
+  route          String
+  remarks        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime? @updatedAt // Sprint 4a — MRD.1 timestamp gap-fill
+  createdById    Int? // Sprint 4a — MRD audit typed creator
+  updatedBy      String? // Sprint 4b — MRD audit username updater
+  updatedById    Int? // Sprint 4b — MRD audit typed updater
+
+  @@index([prescriptionId])
+  @@index([admissionId])
+  @@index([administeredAt])
+}
+
+// Sprint 4a · Phase 1e — Daily bed census snapshot for NABH audit trail.
+// One row per (snapshotDate, wardId). Generated by midnight cron; also supports manual/recovery writes.
+model BedCensusSnapshot {
+  id              Int      @id @default(autoincrement())
+  snapshotDate    DateTime
+  snapshotTime    DateTime @default(now())
+  wardId          String
+  wardName        String
+  wardCode        String
+  department      String
+  totalBeds       Int
+  occupiedBeds    Int
+  availableBeds   Int
+  maintenanceBeds Int
+  reservedBeds    Int
+  generalBeds     Int      @default(0)
+  icuBeds         Int      @default(0)
+  hduBeds         Int      @default(0)
+  isolationBeds   Int      @default(0)
+  snapshotReason  String // 'cron' | 'manual' | 'recovery'
+  createdById     Int?
+  createdAt       DateTime @default(now())
+
+  @@unique([snapshotDate, wardId])
+  @@index([snapshotDate])
+  @@index([wardId])
+  @@index([snapshotReason])
+}
+
+// ============================================================================
+// PHASE 0 — NABH FOUNDATION MODELS
+// Shared infrastructure consumed by every later phase (consent, admission
+// handshake, daily closure, staff handover, OT, incident, discharge AI).
+// ============================================================================
+
+// Generic in-app audit log. Distinct from HmisAuditLog (which captures
+// HMIS push/pull traffic only). This table records WHO did WHAT inside
+// Docminds for any clinically- or financially-relevant event.
+//
+// Tied to NABH IMS.5 (audit trail) and PSQ.7 (incident traceability).
+// Every Phase 1+ controller writes one row per user-driven write.
+model AppAuditLog {
+  id         String   @id @default(uuid())
+  module     String // e.g. "patient" | "consent" | "incident" | "ipd" | "ot"
+  action     String // e.g. "CREATE" | "UPDATE" | "STATUS_CHANGE" | "SIGN" | "DELETE"
+  entityType String? // e.g. "IpdAdmission" | "IncidentReport" | "ConsentSignature"
+  entityId   String? // FK as string (works for both Int and UUID source tables)
+  payload    String?  @db.LongText // optional JSON snapshot of what changed
+  notes      String?  @db.Text // free text reason (e.g., override reason)
+  actorId    Int? // User.id when present (matches existing createdById pattern)
+  actorName  String? // snapshot of username at time of action
+  actorRole  String? // role snapshot (super_admin | sub_admin | admin | doctor | unknown)
+  ipAddress  String?
+  userAgent  String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([module, action])
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// Reusable signature capture record. One row per signature event
+// (consent sign-off, MAR attender ack, handover sign, CAPA close, etc.).
+// The actual signature image is stored at `blobUrl` (S3 / GCS / local).
+//
+// Tied to NABH PRE.4 (informed consent), AAC.10.d (handover sign-off),
+// COP.14.e (operative note signature), PSQ.7 (incident closure ack).
+model SignatureBlob {
+  id                String   @id @default(uuid())
+  blobUrl           String // image URL (data URI for small inline, otherwise object-storage URL)
+  mimeType          String   @default("image/png")
+  signerType        String // "doctor" | "nurse" | "patient" | "attender" | "supervisor" | "witness" | "other"
+  signerId          Int? // User.id when the signer is staff; null for patient/attender
+  signerName        String // snapshot — never deleted even if user is removed
+  signerRole        String? // role snapshot for staff signers
+  signerRelation    String? // for attender: "father" | "spouse" | etc.
+  capturedAt        DateTime @default(now())
+  deviceFingerprint String? // browser fingerprint for forensic trail
+  ipAddress         String?
+  sha256Hash        String? // hash of the blob bytes — integrity check
+  contextType       String? // optional reverse-link: "consent" | "handover" | "mar-ack" | "capa" | "incident-close"
+  contextId         String? // id of the consuming row (kept loose so any model can link)
+  createdAt         DateTime @default(now())
+
+  @@index([signerType, signerId])
+  @@index([contextType, contextId])
+  @@index([capturedAt])
+}
+
+// Lightweight feature-flag table. Each phase ships behind a flag so the
+// hospital can enable rollout per-ward / per-role.
+//
+// Reads are cached on the frontend on app boot; writes are admin-only.
+model FeatureFlag {
+  id           Int      @id @default(autoincrement())
+  flagKey      String   @unique // e.g. "phase8.incident-module"
+  description  String
+  enabled      Boolean  @default(false)
+  rolloutScope String   @default("global") // "global" | "role:doctor" | "ward:icu-1" | comma list
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  updatedById  Int?
+  updatedBy    String?
+
+  @@index([flagKey])
+  @@index([enabled])
 }

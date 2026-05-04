@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
+import { syncInvestigationOrderToHmis } from './investigation-sync';
 
 export const createInvestigationOrder = async (req: Request, res: Response) => {
   try {
@@ -30,6 +31,11 @@ export const createInvestigationOrder = async (req: Request, res: Response) => {
     });
 
     res.status(201).json(newOrder);
+
+    // Async HMIS sync (fire-and-forget, doesn't block response)
+    syncInvestigationOrderToHmis(newOrder).catch((err) =>
+      console.error('HMIS investigation order sync failed:', err)
+    );
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create investigation order' });

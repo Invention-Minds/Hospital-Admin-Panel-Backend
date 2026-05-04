@@ -684,10 +684,15 @@ export const getPackages = async (_req: Request, res: Response): Promise<void> =
 export const lockService = async (req: Request, res: Response): Promise<void> => {
   try {
     const serviceId = Number(req.params.id);
-    const userId = Number(req.body.userId);
+    // Sprint 4b.2 — lock attribution from JWT, not body.
+    const userId = req.user?.id ?? NaN;
 
-    if (!serviceId || isNaN(serviceId) || !userId || isNaN(userId)) {
-      res.status(400).json({ message: 'Invalid service ID or user ID' });
+    if (!serviceId || isNaN(serviceId)) {
+      res.status(400).json({ message: 'Invalid service ID' });
+      return;
+    }
+    if (!Number.isFinite(userId) || userId <= 0) {
+      res.status(401).json({ message: 'Authentication required' });
       return;
     }
 

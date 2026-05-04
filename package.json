@@ -8,7 +8,9 @@
     "start": "node ./dist/src/index.js",
     "clean": "rimraf dist",
     "build": "npm run clean && tsc && npm run copy-assets",
-    "copy-assets": "cp -r assets dist/assets"
+    "copy-assets": "cp -r assets dist/assets",
+    "test": "jest",
+    "mock:hmis": "ts-node scripts/hmis-mock-server.ts"
   },
   "keywords": [],
   "author": "",
@@ -47,6 +49,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/formidable": "^3.4.5",
+    "@types/jest": "^29.5.14",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/multer": "^2.0.0",
     "@types/node": "^22.7.4",
@@ -54,8 +57,10 @@
     "@types/nodemailer": "^6.4.16",
     "@types/pdfkit": "^0.13.8",
     "install": "^0.13.0",
+    "jest": "^29.7.0",
     "nodemon": "^3.1.7",
     "npm": "^11.2.0",
+    "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.2"
   }

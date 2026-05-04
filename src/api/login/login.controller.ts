@@ -34,6 +34,7 @@ const extractRoleFromUsername = (username: string): UserRole => {
 // Function to generate JWT token
 const generateToken = (user: any) => {
   return jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET as string, {
+    algorithm: 'HS256',
     expiresIn: process.env.JWT_EXPIRES_IN, // Token expires in 1 hour
   });
 };

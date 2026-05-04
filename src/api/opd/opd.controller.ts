@@ -1,10 +1,13 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../../service/prisma-client';
+import { convertOpdToIpd } from '../conversion/opd-to-ipd';
+import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 
 export const createOpdAssessment = async (req: Request, res: Response): Promise<void> => {
     try {
+      const actorId = getClinicalActor(req, res);
+      if (actorId === null) return;
+
       const data = {
         name: req.body.patientName,
         age: req.body.age.toString(),
@@ -42,9 +45,10 @@ export const createOpdAssessment = async (req: Request, res: Response): Promise<
         kmcNo: req.body.kmcNo,
         staffName: req.body.staffName,
         staffEmpId: req.body.staffEmpId,
-        appointmentId: req.body.appointmentId ? Number(req.body.appointmentId) : null
+        appointmentId: req.body.appointmentId ? Number(req.body.appointmentId) : null,
+        createdBy: actorId, // OPDAssessment.createdBy is Int — store JWT id
       };
-  
+
       const opd = await prisma.oPDAssessment.create({ data });
       res.status(200).json(opd);
     } catch (error) {
@@ -67,9 +71,12 @@ export const getOpdAssessmentById = async (req: Request, res: Response): Promise
 
 export const updateOpdAssessment = async (req: Request, res: Response): Promise<void> => {
   try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
     const updated = await prisma.oPDAssessment.update({
       where: { id: Number(req.params.id) },
-      data: req.body
+      data: stripAuditFields({ ...req.body })
     });
     res.status(200).json(updated);
   } catch (error) {
@@ -92,14 +99,61 @@ export const getOpdByAppointmentId = async (req: Request, res: Response): Promis
       const opd = await prisma.oPDAssessment.findFirst({
         where: { appointmentId: Number(req.params.appointmentId) }
       });
-  
+
       if (!opd) {
         res.status(200).json(null); // Return null if no record exists
         return;
       }
-  
+
       res.status(200).json(opd);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Error fetching OPD assessment' });
     }
   };
+
+/**
+ * Admit OPD patient to IPD
+ * Converts OPD appointment to IPD admission, carries forward prescriptions and investigations
+ */
+export const admitToIpd = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      appointmentId,
+      wardId,
+      bedId,
+      admittingDoctorId,
+      admittingDoctorName,
+      admissionType = 'routine',
+    } = req.body;
+
+    // Validate required fields
+    if (!appointmentId || !wardId || !bedId || !admittingDoctorName) {
+      res.status(400).json({
+        message:
+          'Missing required fields: appointmentId, wardId, bedId, admittingDoctorName',
+      });
+      return;
+    }
+
+    // Convert OPD to IPD
+    const result = await convertOpdToIpd(
+      appointmentId,
+      wardId,
+      bedId,
+      admittingDoctorId || 0,
+      admittingDoctorName,
+      admissionType
+    );
+
+    res.status(201).json({
+      message: 'Patient admitted to IPD from OPD',
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error admitting OPD patient to IPD:', error);
+    res.status(500).json({
+      message: 'Error admitting patient to IPD',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};

@@ -5,12 +5,14 @@ import {
   getDoctorNotesByPRN,
   updateDoctorNoteByPRNAndDate
 } from './history-notes.controller';
+import { authenticateToken } from '../../middleware/middleware';
+import { requireClinicalActor } from '../../middleware/audit-guard';
 
 const router = Router();
 
-router.post('/', createDoctorNote); // Add doctor note
+router.post('/', authenticateToken, requireClinicalActor, createDoctorNote); // Add history note
 router.get('/', getAllDoctorNotes); // Get all notes
 router.get('/:prn', getDoctorNotesByPRN); // ?date=YYYY-MM-DD
-router.put('/:prn', updateDoctorNoteByPRNAndDate); // ?date=YYYY-MM-DD
+router.put('/:prn', authenticateToken, requireClinicalActor, updateDoctorNoteByPRNAndDate); // ?date=YYYY-MM-DD
 
 export default router;
