@@ -11,6 +11,10 @@ import { auditLog } from '../../service/app-audit';
  * Roles:
  *   • Anyone authenticated may READ the flag table (frontend needs this on boot).
  *   • Only super_admin / sub_admin may WRITE flags.
+ *
+ * Role lookup is via the User table (the JWT only carries id + username — see
+ * global.d.ts) so each write incurs one extra select. Cheap; flag writes are
+ * very low volume.
  */
 
 interface FlagBody {
@@ -20,8 +24,14 @@ interface FlagBody {
   rolloutScope?: string;
 }
 
-const isAdminRole = (role: string | undefined): boolean =>
-  role === 'super_admin' || role === 'sub_admin';
+async function isAdmin(actorId: number | undefined): Promise<boolean> {
+  if (typeof actorId !== 'number') return false;
+  const user = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { role: true },
+  });
+  return user?.role === 'super_admin' || user?.role === 'sub_admin';
+}
 
 /**
  * GET /api/feature-flag — list all flags (frontend caches this).
@@ -59,7 +69,7 @@ export const getFlag = async (req: Request, res: Response): Promise<void> => {
  */
 export const createFlag = async (req: Request, res: Response): Promise<void> => {
   try {
-    if (!isAdminRole(req.user?.role)) {
+    if (!(await isAdmin(req.user?.id))) {
       res.status(403).json({ error: 'Only admins may create feature flags' });
       return;
     }
@@ -104,7 +114,7 @@ export const createFlag = async (req: Request, res: Response): Promise<void> => 
  */
 export const updateFlag = async (req: Request, res: Response): Promise<void> => {
   try {
-    if (!isAdminRole(req.user?.role)) {
+    if (!(await isAdmin(req.user?.id))) {
       res.status(403).json({ error: 'Only admins may update feature flags' });
       return;
     }

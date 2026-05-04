@@ -63,7 +63,9 @@ export const auditLog = async (
         notes: data.notes ?? null,
         actorId: typeof req?.user?.id === 'number' ? req.user.id : null,
         actorName: req?.user?.username ?? null,
-        actorRole: req?.user?.role ?? null,
+        // The JWT only carries id + username (see global.d.ts). Role is
+        // joinable from User.id at query time, so we don't snapshot it here.
+        actorRole: null,
         ipAddress: extractIp(req),
         userAgent: req?.headers?.['user-agent']?.toString() ?? null,
       },
