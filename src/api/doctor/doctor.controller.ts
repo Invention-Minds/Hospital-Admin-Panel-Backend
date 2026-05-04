@@ -1448,9 +1448,18 @@ export const deactivateDoctor = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ error: 'Invalid doctor ID' });
       return;
     }
-    const updated = await prisma.doctor.update({
-      where: { id },
-      data: { isActive: false },
+    const updated = await prisma.$transaction(async (tx) => {
+      const doctor = await tx.doctor.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      if (doctor.userId) {
+        await tx.user.update({
+          where: { id: doctor.userId },
+          data: { isActive: false },
+        });
+      }
+      return doctor;
     });
     res.status(200).json(updated);
   } catch (error) {
@@ -1465,9 +1474,18 @@ export const activateDoctor = async (req: Request, res: Response): Promise<void>
       res.status(400).json({ error: 'Invalid doctor ID' });
       return;
     }
-    const updated = await prisma.doctor.update({
-      where: { id },
-      data: { isActive: true },
+    const updated = await prisma.$transaction(async (tx) => {
+      const doctor = await tx.doctor.update({
+        where: { id },
+        data: { isActive: true },
+      });
+      if (doctor.userId) {
+        await tx.user.update({
+          where: { id: doctor.userId },
+          data: { isActive: true },
+        });
+      }
+      return doctor;
     });
     res.status(200).json(updated);
   } catch (error) {
