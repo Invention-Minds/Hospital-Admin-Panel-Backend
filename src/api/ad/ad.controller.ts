@@ -8,7 +8,7 @@ import { loadTv } from '../appointments/appointment.controller';
 const FTP_CONFIG = {
     host: "srv680.main-hosting.eu",  // Your FTP hostname
     user: "u948610439",       // Your FTP username
-    password: "Bsrenuk@1993",   // Your FTP password
+    password: "My@!!iTuD3@202!",   // Your FTP password
     secure: false                    // Set to true if using FTPS
 };
 
