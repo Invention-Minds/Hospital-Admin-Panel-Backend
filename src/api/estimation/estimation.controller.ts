@@ -2092,18 +2092,24 @@ Additional treatments may be suggested by the doctor, depending on the patient�
             const pdfPublicUrl = `${publicBaseUrl}${pdfPath}`;
             console.log(pdfPublicUrl);
 
-            const mediaId = await uploadMediaToPinbot(tempFilePath);
-            console.log(mediaId)
+            // Pinbot media upload — not needed with GoBuzz (sends the public PDF URL directly)
+            // const mediaId = await uploadMediaToPinbot(tempFilePath);
 
             await savePdfToDatabase(estimationId, pdfPath);
 
-            // const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfPublicUrl);
+            let whatsappResult: any = null;
+            try {
+                const whatsappResponse = await sendEstimationViaGoBuzz(patientPhoneNumber, patientName, estimationId, pdfPublicUrl);
+                whatsappResult = whatsappResponse.data;
+            } catch (waError) {
+                console.error("GoBuzz send failed (PDF still generated):", waError);
+            }
 
             res.status(200).json({
                 success: true,
                 message: "PDF generated.",
                 filePath: pdfPath,
-                // whatsappResponse: whatsappResponse.data
+                whatsappResponse: whatsappResult
             });
         });
 
@@ -2156,6 +2162,7 @@ async function savePdfToDatabase(estimationId: string, pdfUrl: string) {
 }
 import FormData from "form-data";
 
+/* ===== Pinbot WhatsApp — replaced by GoBuzz (sendEstimationViaGoBuzz). Kept for reference. =====
 async function uploadMediaToPinbot(filePath: string) {
     try {
         const formData = new FormData();
@@ -2182,8 +2189,10 @@ async function uploadMediaToPinbot(filePath: string) {
         throw error;
     }
 }
+===== end Pinbot uploadMediaToPinbot ===== */
 import axios from "axios";
 
+/* ===== Pinbot WhatsApp — replaced by GoBuzz (sendEstimationViaGoBuzz). Kept for reference. =====
 async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, patientName: string, estimationId: string, pdfUrl: string) {
     try {
         console.log(mediaId)
@@ -2198,14 +2207,14 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
                 templateid: "715873",
                 id: mediaId,
                 caption: "Here is your estimation document.",
-                filename: pdfUrl.split("/").pop(), 
+                filename: pdfUrl.split("/").pop(),
                 placeholders: [patientName]
             }
         };
 
         const headers = {
             "Content-Type": "application/json",
-            apikey: process.env.WHATSAPP_AUTH_TOKEN, 
+            apikey: process.env.WHATSAPP_AUTH_TOKEN,
         };
 
         const response = await axios.post(url!, payload, { headers });
@@ -2216,7 +2225,7 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
                 data: {
                     messageSent: true,
                     messageSentDateAndTime: new Date()
-                } 
+                }
 
             });
             return response;
@@ -2226,6 +2235,76 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
         }
     } catch (error) {
         console.error("WhatsApp API Error:", error);
+        throw error;
+    }
+}
+===== end Pinbot sendWhatsAppMessage ===== */
+
+// ===== GoBuzz WhatsApp (v3 single — Send Message Template Media) =====
+// Sends the estimation PDF (public URL) as a document-header template via GoBuzz.
+async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: string, estimationId: string, pdfUrl: string) {
+    try {
+        const baseUrl = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
+        const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
+        const templateName = process.env.GOBUZZ_ESTIMATION_TEMPLATE_NAME;
+        const templateLang = process.env.GOBUZZ_ESTIMATION_TEMPLATE_LANG || "en";
+        const apiKey = process.env.GOBUZZ_API_KEY;
+
+        const toNumber = formatPhoneNumber(patientPhoneNumber);
+
+        const payload = {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: toNumber,
+            type: "template",
+            template: {
+                name: templateName,
+                language: { code: templateLang },
+                components: [
+                    {
+                        type: "header",
+                        parameters: [
+                            {
+                                type: "document",
+                                document: {
+                                    link: pdfUrl,
+                                    filename: pdfUrl.split("/").pop()
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        type: "body",
+                        parameters: [
+                            { type: "text", text: patientName }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        const headers = {
+            "Content-Type": "application/json",
+            apikey: apiKey,
+        };
+
+        const response = await axios.post(`${baseUrl}/${phoneNumberId}/messages`, payload, { headers });
+
+        if (response.data?.messages?.[0]?.id) {
+            await prisma.estimationDetails.update({
+                where: { estimationId: estimationId },
+                data: {
+                    messageSent: true,
+                    messageSentDateAndTime: new Date()
+                }
+            });
+            return response;
+        } else {
+            console.error("Failed to send WhatsApp message (GoBuzz):", response.data);
+            throw new Error("GoBuzz WhatsApp API failed");
+        }
+    } catch (error) {
+        console.error("GoBuzz WhatsApp API Error:", error);
         throw error;
     }
 }
