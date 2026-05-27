@@ -2097,13 +2097,13 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
 
             await savePdfToDatabase(estimationId, pdfPath);
 
-            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfPublicUrl);
+            // const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfPublicUrl);
 
             res.status(200).json({
                 success: true,
-                message: "PDF generated & sent via WhatsApp successfully.",
+                message: "PDF generated.",
                 filePath: pdfPath,
-                whatsappResponse: whatsappResponse.data
+                // whatsappResponse: whatsappResponse.data
             });
         });
 
