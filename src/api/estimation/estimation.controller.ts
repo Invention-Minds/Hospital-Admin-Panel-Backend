@@ -2191,6 +2191,28 @@ async function uploadMediaToPinbot(filePath: string) {
 }
 ===== end Pinbot uploadMediaToPinbot ===== */
 import axios from "axios";
+import https from "https";
+
+// GoBuzz's API host (api.app.gobuzzmarketing.com) is fronted by Pinbot
+// infrastructure and serves a cert for *.pinbot.ai. Accept that specific
+// mismatch — and only that one — so Node's strict hostname check doesn't
+// block the call. Any other cert still fails.
+const gobuzzHttpsAgent = new https.Agent({
+    checkServerIdentity: (host, cert) => {
+        const altNames = (cert.subjectaltname || "")
+            .split(",")
+            .map((s) => s.trim().toLowerCase());
+        if (
+            altNames.includes("dns:pinbot.ai") ||
+            altNames.includes("dns:*.pinbot.ai")
+        ) {
+            return undefined;
+        }
+        return new Error(
+            `Unexpected certificate for ${host}: ${cert.subjectaltname}`
+        );
+    },
+});
 
 /* ===== Pinbot WhatsApp — replaced by GoBuzz (sendEstimationViaGoBuzz). Kept for reference. =====
 async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, patientName: string, estimationId: string, pdfUrl: string) {
@@ -2288,7 +2310,7 @@ async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: 
             apikey: apiKey,
         };
 
-        const response = await axios.post(`${baseUrl}/${phoneNumberId}/messages`, payload, { headers });
+        const response = await axios.post(`${baseUrl}/${phoneNumberId}/messages`, payload, { headers, httpsAgent: gobuzzHttpsAgent });
 
         if (response.data?.messages?.[0]?.id) {
             await prisma.estimationDetails.update({
