@@ -133,8 +133,18 @@ export default class DoctorRepository {
       where: { id },
     });
   }
-  // Method to add a booked slot to the BookedSlot model
+  // Method to add a booked slot to the BookedSlot model.
+  // Defense in depth: refuses to double-book. Callers must catch 'SLOT_TAKEN' and
+  // map to 409. As of writing, the appointment controllers do their own slot check
+  // inside a transaction and bypass this method via direct prisma calls — this guard
+  // is here so any future caller cannot silently produce duplicates.
   public async addBookedSlot(doctorId: number, date: string, time: string, userId: string) {
+    const existing = await this.prisma.bookedSlot.findFirst({
+      where: { doctorId, date, time, complete: false },
+    });
+    if (existing) {
+      throw new Error('SLOT_TAKEN');
+    }
     console.log('Booked slot added successfully');
     return await this.prisma.bookedSlot.create({
       data: {
@@ -145,7 +155,6 @@ export default class DoctorRepository {
         createdBy: userId,  // Assuming userId is the ID of the user who booked the slot
       },
     });
-
   }
   public async completeBookedSlot(doctorId: number, date: string, time: string) {
     return await this.prisma.bookedSlot.updateMany({

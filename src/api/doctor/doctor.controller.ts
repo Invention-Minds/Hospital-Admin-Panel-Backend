@@ -927,39 +927,66 @@ export const getDoctorAvailability = async (req: Request, res: Response): Promis
     return;
   }
 };
+// In-process mutex keyed by `${doctorId}|${date}|${time}`. Serializes the findFirst+create
+// pair in addBookedSlot so two concurrent reschedule clicks for the same slot can't both
+// pass the "is it free?" check before either commits. The loser sees the winner's row and
+// gets the existing 400. Single-process only — clustered Node would need a DB unique
+// constraint or a distributed lock to be race-free.
+const slotLocks = new Map<string, Promise<void>>();
+export async function withSlotLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = slotLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => { release = resolve; });
+  const chained = previous.then(() => mine);
+  slotLocks.set(key, chained);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    // GC: drop the entry if no one is queued behind me so the map can't grow unbounded.
+    if (slotLocks.get(key) === chained) {
+      slotLocks.delete(key);
+    }
+  }
+}
+
 export const addBookedSlot = async (req: Request, res: Response): Promise<void> => {
   try {
     const { doctorId, date, time, userId } = req.body;
-    const existingBooking = await prisma.bookedSlot.findFirst({
-      where: {
-        doctorId,
-        date,
-        time,
-      },
-    });
-    console.log("Existing Booking:", existingBooking);
-    if (existingBooking) {
-      res.status(400).json({ error: 'Selected slot is already booked' });
-      return;
-    }
 
     if (!doctorId || !date || !time) {
       res.status(400).json({ error: 'Doctor ID, date, and time are required.' });
       return;
     }
 
-    const bookedSlot = await prisma.bookedSlot.create({
-      data: {
-        doctorId,
-        date,
-        time,
-        complete: false,
-        createdBy: userId
-      },
-    });
-    console.log("Booked Slot is working:", bookedSlot);
+    await withSlotLock(`${doctorId}|${date}|${time}`, async () => {
+      const existingBooking = await prisma.bookedSlot.findFirst({
+        where: {
+          doctorId,
+          date,
+          time,
+        },
+      });
+      console.log("Existing Booking:", existingBooking);
+      if (existingBooking) {
+        res.status(400).json({ error: 'Selected slot is already booked' });
+        return;
+      }
 
-    res.status(201).json(bookedSlot);
+      const bookedSlot = await prisma.bookedSlot.create({
+        data: {
+          doctorId,
+          date,
+          time,
+          complete: false,
+          createdBy: userId
+        },
+      });
+      console.log("Booked Slot is working:", bookedSlot);
+
+      res.status(201).json(bookedSlot);
+    });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
