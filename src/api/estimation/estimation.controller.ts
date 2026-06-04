@@ -2092,14 +2092,13 @@ Additional treatments may be suggested by the doctor, depending on the patient�
             const pdfPublicUrl = `${publicBaseUrl}${pdfPath}`;
             console.log(pdfPublicUrl);
 
-            // Pinbot media upload — not needed with GoBuzz (sends the public PDF URL directly)
-            // const mediaId = await uploadMediaToPinbot(tempFilePath);
-
+            // GoBuzz path: upload the local PDF inside sendEstimationViaGoBuzz so Meta gets
+            // the bytes directly (avoids the "media upload error" we saw with document.link).
             await savePdfToDatabase(estimationId, pdfPath);
 
             let whatsappResult: any = null;
             try {
-                const whatsappResponse = await sendEstimationViaGoBuzz(patientPhoneNumber, patientName, estimationId, pdfPublicUrl);
+                const whatsappResponse = await sendEstimationViaGoBuzz(patientPhoneNumber, patientName, estimationId, tempFilePath);
                 whatsappResult = whatsappResponse.data;
             } catch (waError) {
                 console.error("GoBuzz send failed (PDF still generated):", waError);
@@ -2262,9 +2261,55 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
 }
 ===== end Pinbot sendWhatsAppMessage ===== */
 
+// ===== GoBuzz WhatsApp — Upload Media (per GoBuzz API doc page 59) =====
+// Uploads the local PDF to GoBuzz so Meta receives the bytes directly. Returns a media id
+// to use in the subsequent template-send. Avoids the "Meta media upload error" we saw when
+// passing a public document.link (Meta couldn't fetch the URL reliably).
+async function uploadMediaToGoBuzz(filePath: string): Promise<string> {
+    const baseUrl = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
+    const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
+    const apiKey = process.env.GOBUZZ_API_KEY;
+
+    const formData = new FormData();
+    formData.append("sheet", fs.createReadStream(filePath));
+
+    const response = await axios.post(
+        `${baseUrl}/${phoneNumberId}/media`,
+        formData,
+        {
+            headers: {
+                ...formData.getHeaders(),
+                apikey: apiKey,
+            },
+            httpsAgent: gobuzzHttpsAgent,
+        }
+    );
+    console.log("GoBuzz media upload response:", response.data);
+
+    // Response shape isn't documented in the GoBuzz PDF — try the common keys.
+    // If none of these match for your account, the throw below dumps the full response
+    // in the log so we can pin the right field on the first successful upload.
+    const data: any = response.data;
+    const mediaId =
+        data?.response?.id ??       // confirmed GoBuzz shape: { response: { id: "..." } }
+        data?.id ??
+        data?.media_id ??
+        data?.data?.[0]?.MediaId ??
+        data?.data?.[0]?.id ??
+        data?.data?.MediaId ??
+        data?.data?.id ??
+        data?.message?.id ??
+        data?.message?.media_id;
+
+    if (!mediaId) {
+        throw new Error("GoBuzz media upload returned no media id — see log for response shape");
+    }
+    return String(mediaId);
+}
+
 // ===== GoBuzz WhatsApp (v3 single — Send Message Template Media) =====
-// Sends the estimation PDF (public URL) as a document-header template via GoBuzz.
-async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: string, estimationId: string, pdfUrl: string) {
+// Uploads the local PDF to GoBuzz first, then sends the template with document.id.
+async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: string, estimationId: string, pdfFilePath: string) {
     try {
         const baseUrl = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
         const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
@@ -2273,6 +2318,8 @@ async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: 
         const apiKey = process.env.GOBUZZ_API_KEY;
 
         const toNumber = formatPhoneNumber(patientPhoneNumber);
+        const mediaId = await uploadMediaToGoBuzz(pdfFilePath);
+        const documentFilename = (pdfFilePath.split(/[\\/]/).pop()) || `Estimation_${estimationId}.pdf`;
 
         const payload = {
             messaging_product: "whatsapp",
@@ -2289,8 +2336,8 @@ async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: 
                             {
                                 type: "document",
                                 document: {
-                                    link: pdfUrl,
-                                    filename: pdfUrl.split("/").pop()
+                                    id: mediaId,
+                                    filename: documentFilename
                                 }
                             }
                         ]
