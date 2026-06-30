@@ -25,6 +25,55 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
 
+// ===== GoBuzz WhatsApp config + sender =====
+// Mirrors the proven estimation.controller GoBuzz integration. GoBuzz's host
+// (api.app.gobuzzmarketing.com) is fronted by Pinbot and serves a *.pinbot.ai
+// cert, so we accept that specific hostname mismatch — and nothing else.
+const GOBUZZ_API_BASE = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
+const GOBUZZ_PHONE_NUMBER_ID = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
+const GOBUZZ_API_KEY = process.env.GOBUZZ_API_KEY;
+const templateLang = "en";
+
+const gobuzzHttpsAgent = new https.Agent({
+  checkServerIdentity: (host, cert) => {
+    const altNames = (cert.subjectaltname || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase());
+    if (altNames.includes("dns:pinbot.ai") || altNames.includes("dns:*.pinbot.ai")) {
+      return undefined;
+    }
+    return new Error(`Unexpected certificate for ${host}: ${cert.subjectaltname}`);
+  },
+});
+
+// GoBuzz `to` needs a country code; DB numbers may be bare 10-digit.
+export function formatGoBuzzNumber(phoneNumber: string): string {
+  const digits = (phoneNumber || "").replace(/\D/g, "");
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
+}
+
+export async function sendGoBuzzMessage(payload: any) {
+  const endpoint = `${GOBUZZ_API_BASE}/${GOBUZZ_PHONE_NUMBER_ID}/messages`;
+  console.log("[GoBuzz] POST", endpoint);
+  console.log("[GoBuzz] apikey present:", !!GOBUZZ_API_KEY);
+  console.log("[GoBuzz] payload:", JSON.stringify(payload));
+  try {
+    const response = await axios.post(endpoint, payload, {
+      headers: { "Content-Type": "application/json", apikey: GOBUZZ_API_KEY },
+      httpsAgent: gobuzzHttpsAgent,
+    });
+    console.log("[GoBuzz] response status:", response.status);
+    console.log("[GoBuzz] response data:", JSON.stringify(response.data));
+    return response;
+  } catch (error: any) {
+    console.error("[GoBuzz] send FAILED for to:", payload?.to, "template:", payload?.template?.name);
+    console.error("[GoBuzz] error status:", error?.response?.status);
+    console.error("[GoBuzz] error data:", JSON.stringify(error?.response?.data) || error?.message);
+    throw error;
+  }
+}
+
 export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   console.log('req.body:', req.body);
   const { doctorName, time, date, patientPhoneNumber, doctorPhoneNumber, status, requestVia, prefix } = req.body;
@@ -45,68 +94,186 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
   if (status !== 'received') {
   }
   if (status === 'received') {
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // payload = {
+    //   from: fromPhoneNumber, // Sender's WhatsApp number
+    //   to: patientPhoneNumber, // Recipient's WhatsApp number
+    //   type: "template", // Type of the message
+    //   message: {
+    //     templateid: "751383", // Replace with the actual template ID
+    //     placeholders: [patientName, doctorName], // Dynamic placeholders
+    //   },
+    // };
+    // ===== GoBuzz =====
     payload = {
-      from: fromPhoneNumber, // Sender's WhatsApp number
-      to: patientPhoneNumber, // Recipient's WhatsApp number
-      type: "template", // Type of the message
-      message: {
-        templateid: "751383", // Replace with the actual template ID
-        placeholders: [patientName, doctorName], // Dynamic placeholders
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(patientPhoneNumber),
+      type: "template",
+      template: {
+        name: "request_appt",
+        language: { code: templateLang },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: patientName },
+              { type: "text", text: doctorName },
+            ],
+          },
+        ],
       },
     };
 
   }
   // Message for Doctor (only if the status is 'confirmed')
   if (status === 'confirmed' || status === 'cancelled' || status === 'rescheduled') {
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // payload = {
+    //   from: fromPhoneNumber, // Sender's WhatsApp number
+    //   to: doctorPhoneNumber, // Recipient's WhatsApp number
+    //   type: "template", // Type of the message
+    //   message: {
+    //     templateid: "774273", // Replace with the actual template ID
+    //     placeholders: [doctorName, status, patientName, time, formatDateYear(new Date(date))], // Dynamic placeholders
+    //   },
+    // }
+    // ===== GoBuzz (doctor) =====
     payload = {
-      from: fromPhoneNumber, // Sender's WhatsApp number
-      to: doctorPhoneNumber, // Recipient's WhatsApp number
-      type: "template", // Type of the message
-      message: {
-        templateid: "774273", // Replace with the actual template ID
-        placeholders: [doctorName, status, patientName, time, formatDateYear(new Date(date))], // Dynamic placeholders
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(doctorPhoneNumber),
+      type: "template",
+      template: {
+        name: "doctor_appts_status",
+        language: { code: templateLang },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: doctorName },
+              { type: "text", text: status },
+              { type: "text", text: patientName },
+              { type: "text", text: time },
+              { type: "text", text: formatDateYear(new Date(date)) },
+            ],
+          },
+        ],
       },
     }
     let patientPayload = {}
     if (requestVia === 'Walk-In') {
+      // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+      // patientPayload = {
+      //   from: fromPhoneNumber,
+      //   to: patientPhoneNumber,
+      //   type: "template",
+      //   message: {
+      //     templateid: "774273", // Replace with the actual template ID
+      //     placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
+      //   },
+      // };
+      // ===== GoBuzz (patient — walk-in) =====
       patientPayload = {
-        from: fromPhoneNumber,
-        to: patientPhoneNumber,
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(patientPhoneNumber),
         type: "template",
-        message: {
-          templateid: "774273", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
+        template: {
+          name: "doctor_appts_status",
+          language: { code: templateLang },
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: patientName },
+                { type: "text", text: doctorName },
+                { type: "text", text: status },
+                { type: "text", text: time },
+                { type: "text", text: formatDateYear(new Date(date)) },
+              ],
+            },
+          ],
         },
       };
-      const patientResponse = await axios.post(url!, patientPayload, { headers });
+      // const patientResponse = await axios.post(url!, patientPayload, { headers });
+      const patientResponse = await sendGoBuzzMessage(patientPayload);
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
     }
     else if (status === 'cancelled') {
+      // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+      // patientPayload = {
+      //   from: fromPhoneNumber,
+      //   to: patientPhoneNumber,
+      //   type: "template",
+      //   message: {
+      //     templateid: "790519", // Replace with the actual template ID
+      //     placeholders: [patientName, doctorName, time, formatDateYear(new Date(date))], // Dynamic placeholders
+      //   },
+      // };
+      // ===== GoBuzz (patient — cancel) =====
       patientPayload = {
-        from: fromPhoneNumber,
-        to: patientPhoneNumber,
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(patientPhoneNumber),
         type: "template",
-        message: {
-          templateid: "790519", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, time, formatDateYear(new Date(date))], // Dynamic placeholders
+        template: {
+          name: "patient_cancel_message",
+          language: { code: templateLang },
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: patientName },
+                { type: "text", text: doctorName },
+                { type: "text", text: time },
+                { type: "text", text: formatDateYear(new Date(date)) },
+              ],
+            },
+          ],
         },
       };
-      const patientResponse = await axios.post(url!, patientPayload, { headers });
+      // const patientResponse = await axios.post(url!, patientPayload, { headers });
+      const patientResponse = await sendGoBuzzMessage(patientPayload);
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
 
     }
     else {
+      // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+      // patientPayload = {
+      //   from: fromPhoneNumber,
+      //   to: patientPhoneNumber,
+      //   type: "template",
+      //   message: {
+      //     templateid: "751725", // Replace with the actual template ID
+      //     placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
+      //   },
+      // };
+      // ===== GoBuzz (patient — confirm/reschedule) =====
       patientPayload = {
-        from: fromPhoneNumber,
-        to: patientPhoneNumber,
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(patientPhoneNumber),
         type: "template",
-        message: {
-          templateid: "751725", // Replace with the actual template ID
-          placeholders: [patientName, doctorName, status, time, formatDateYear(new Date(date))], // Dynamic placeholders
+        template: {
+          name: "appt_status",
+          language: { code: templateLang },
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: patientName },
+                { type: "text", text: doctorName },
+                { type: "text", text: status },
+                { type: "text", text: time },
+                { type: "text", text: formatDateYear(new Date(date)) },
+              ],
+            },
+          ],
         },
-
       };
-      const patientResponse = await axios.post(url!, patientPayload, { headers });
+      // const patientResponse = await axios.post(url!, patientPayload, { headers });
+      const patientResponse = await sendGoBuzzMessage(patientPayload);
       res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: patientResponse.data });
     }
 
@@ -115,20 +282,39 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
     console.log(payload, 'payload for doctor');
   }
   if (status === 'completed') {
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // payload = {
+    //   from: fromPhoneNumber, // Sender's WhatsApp number
+    //   to: patientPhoneNumber, // Recipient's WhatsApp number
+    //   type: "template", // Type of the message
+    //   message: {
+    //     templateid: "751385", // Replace with the actual template ID
+    //     placeholders: [], // Dynamic placeholders
+    //   },
+    // };
+    // ===== GoBuzz =====
     payload = {
-      from: fromPhoneNumber, // Sender's WhatsApp number
-      to: patientPhoneNumber, // Recipient's WhatsApp number
-      type: "template", // Type of the message
-      message: {
-        templateid: "751385", // Replace with the actual template ID
-        placeholders: [], // Dynamic placeholders
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(patientPhoneNumber),
+      type: "template",
+      template: {
+        name: "thank_you",
+        language: { code: templateLang },
+        components: [
+          {
+            type: "body",
+            parameters: [],
+          },
+        ],
       },
     };
   }
 
 
   try {
-    const response = await axios.post(url!, payload, { headers });
+    // const response = await axios.post(url!, payload, { headers }); // Pinnacle — migrated to GoBuzz
+    const response = await sendGoBuzzMessage(payload);
     res.status(200).json({ message: 'WhatsApp message(s) sent successfully', response: response.data });
   } catch (error) {
     res.status(500).json({
@@ -232,19 +418,43 @@ export const checkAndSendReminders = async () => {
         //         "messages": messages
         //     }
         // };
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const payload = {
+        //   from: fromPhoneNumber, // Sender's WhatsApp number
+        //   to: appointment.phoneNumber, // Recipient's WhatsApp number
+        //   type: "template", // Type of the message
+        //   message: {
+        //     templateid: "751379", // Replace with the actual template ID
+        //     placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
+        //   },
+        // };
+        // ===== GoBuzz (24-hour / tomorrow reminder) =====
         const payload = {
-          from: fromPhoneNumber, // Sender's WhatsApp number
-          to: appointment.phoneNumber, // Recipient's WhatsApp number
-          type: "template", // Type of the message
-          message: {
-            templateid: "751379", // Replace with the actual template ID
-            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(appointment.phoneNumber),
+          type: "template",
+          template: {
+            name: "24_hours",
+            language: { code: templateLang },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: name },
+                  { type: "text", text: appointment.doctorName },
+                  { type: "text", text: appointment.time },
+                  { type: "text", text: formatDateYear(new Date(appointment.date)) },
+                ],
+              },
+            ],
           },
         };
 
 
         try {
-          const response = await axios.post(url!, payload, { headers });
+          // const response = await axios.post(url!, payload, { headers }); // Pinnacle — migrated to GoBuzz
+          const response = await sendGoBuzzMessage(payload);
           if (response.data.code === '200') {
             console.log({
               message: 'WhatsApp message sent successfully',
@@ -415,19 +625,43 @@ export const checkAndSendReminders = async () => {
         //         "messages": messages
         //     }
         // };
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const payload1 = {
+        //   from: fromPhoneNumber, // Sender's WhatsApp number
+        //   to: appointment.phoneNumber, // Recipient's WhatsApp number
+        //   type: "template", // Type of the message
+        //   message: {
+        //     templateid: "751381", // Replace with the actual template ID
+        //     placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
+        //   },
+        // };
+        // ===== GoBuzz (4-hour reminder) =====
         const payload1 = {
-          from: fromPhoneNumber, // Sender's WhatsApp number
-          to: appointment.phoneNumber, // Recipient's WhatsApp number
-          type: "template", // Type of the message
-          message: {
-            templateid: "751381", // Replace with the actual template ID
-            placeholders: [name, appointment.doctorName, appointment.time, formatDateYear(new Date(appointment.date))], // Dynamic placeholders
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(appointment.phoneNumber),
+          type: "template",
+          template: {
+            name: "4_hour",
+            language: { code: templateLang },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: name },
+                  { type: "text", text: appointment.doctorName },
+                  { type: "text", text: appointment.time },
+                  { type: "text", text: formatDateYear(new Date(appointment.date)) },
+                ],
+              },
+            ],
           },
         };
 
 
         try {
-          const response = await axios.post(url!, payload1, { headers });
+          // const response = await axios.post(url!, payload1, { headers }); // Pinnacle — migrated to GoBuzz
+          const response = await sendGoBuzzMessage(payload1);
           if (response.data.code === '200') {
             console.log({
               message: 'WhatsApp message sent successfully',
@@ -2479,7 +2713,7 @@ function parseTimeToMinutes(time: string): number {
   return hoursInMinutes + minutes;
 }
 
-async function updateDoctorAssignments() {
+export async function updateDoctorAssignments() {
   const now = moment().tz("Asia/Kolkata"); // Get current time in IST
   const todayDate = now.format("YYYY-MM-DD"); // Example: '2024-03-09'
   const todayDay = now.format("ddd").toLowerCase(); // Example: 'mon', 'tue'
@@ -2656,10 +2890,19 @@ async function updateDoctorAssignments() {
     //     console.log(`❌ No available doctors for Channel ${channel.name} at this time.`);
     //   }
     // }
+    // Track doctors already placed in a channel during this run so a doctor is
+    // never assigned to more than one channel (prevents cross-channel duplicates).
+    const assignedDoctorIdsThisRun = new Set<number>();
+
     for (const channel of channels) {
       const assignedDoctors = doctors.filter((doctor) => {
         // ❌ Skip invalid doctors
         if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+          return false;
+        }
+
+        // ❌ Skip doctors already assigned to another channel in this run
+        if (assignedDoctorIdsThisRun.has(doctor.id)) {
           return false;
         }
 
@@ -2714,9 +2957,9 @@ async function updateDoctorAssignments() {
           }
         }
 
-        // ✅ Ensure doctor is assigned to the correct room
-        const channelRooms = channel.roomNumber!.split(',').map(room => room.trim());
-        const isDoctorInChannel = channelRooms.includes(doctor.roomNo!);
+        // ✅ Ensure doctor is assigned to the correct room (guard null roomNumber/roomNo)
+        const channelRooms = (channel.roomNumber || '').split(',').map(room => room.trim()).filter(Boolean);
+        const isDoctorInChannel = !!doctor.roomNo && channelRooms.includes(doctor.roomNo);
         console.log(channelRooms, doctor.roomNo)
 
         if (!isDoctorInChannel) {
@@ -2730,6 +2973,9 @@ async function updateDoctorAssignments() {
         // ✅ Doctor is assigned only if they are in the correct room & available at this time
         return isDoctorInChannel && isDoctorAvailableNow;
       });
+
+      // Reserve these doctors so later channels in this run won't take them too.
+      assignedDoctors.forEach((doctor) => assignedDoctorIdsThisRun.add(doctor.id));
 
       // ✅ Remove existing doctor assignments for this channel
       await prisma.doctorAssignment.deleteMany({
@@ -3219,32 +3465,81 @@ export const sendConfirmedWhatsApp = async ({
   const payloads: any[] = [];
 
   // ✅ Patient message
+  // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+  // payloads.push({
+  //   from: fromPhoneNumber,
+  //   to: patientPhoneNumber,
+  //   type: "template",
+  //   message: {
+  //     templateid: "751725",
+  //     placeholders: [fullName, doctorName, 'confirmed', time, formattedDate],
+  //   },
+  // });
+  // ===== GoBuzz (patient — confirm) =====
   payloads.push({
-    from: fromPhoneNumber,
-    to: patientPhoneNumber,
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: formatGoBuzzNumber(patientPhoneNumber),
     type: "template",
-    message: {
-      templateid: "751725",
-      placeholders: [fullName, doctorName, 'confirmed', time, formattedDate],
+    template: {
+      name: "appt_status",
+      language: { code: templateLang },
+      components: [
+        {
+          type: "body",
+          parameters: [
+            { type: "text", text: fullName },
+            { type: "text", text: doctorName },
+            { type: "text", text: 'confirmed' },
+            { type: "text", text: time },
+            { type: "text", text: formattedDate },
+          ],
+        },
+      ],
     },
   });
 
   // ✅ Doctor message
   if (doctorPhoneNumber) {
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // payloads.push({
+    //   from: fromPhoneNumber,
+    //   to: doctorPhoneNumber,
+    //   type: "template",
+    //   message: {
+    //     templateid: "774273",
+    //     placeholders: [doctorName, 'confirmed', fullName, time, formattedDate],
+    //   },
+    // });
+    // ===== GoBuzz (doctor — confirm) =====
     payloads.push({
-      from: fromPhoneNumber,
-      to: doctorPhoneNumber,
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(doctorPhoneNumber),
       type: "template",
-      message: {
-        templateid: "774273",
-        placeholders: [doctorName, 'confirmed', fullName, time, formattedDate],
+      template: {
+        name: "doctor_appts_status",
+        language: { code: templateLang },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: doctorName },
+              { type: "text", text: 'confirmed' },
+              { type: "text", text: fullName },
+              { type: "text", text: time },
+              { type: "text", text: formattedDate },
+            ],
+          },
+        ],
       },
     });
   }
 
   try {
     for (const payload of payloads) {
-      await axios.post(url, payload, { headers });
+      // await axios.post(url, payload, { headers }); // Pinnacle — migrated to GoBuzz
+      await sendGoBuzzMessage(payload);
     }
   } catch (error: any) {
     console.error("WhatsApp sending failed:", error?.response?.data || error.message);
