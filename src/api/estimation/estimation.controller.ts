@@ -272,7 +272,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             staffRemarks,
             patientEmail,
             submittedDateAndTime,
-            multipleSurgeryDoctor
+            multipleSurgeryDoctor,
+            attenderName
         } = updateFields;
 
         const lastEstimation = await prisma.estimationDetails.findFirst({
@@ -343,7 +344,8 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 staffRemarks,
                 patientEmail,
                 submittedDateAndTime: new Date(),
-                multipleSurgeryDoctor
+                multipleSurgeryDoctor,
+                attenderName
             },
         });
 
