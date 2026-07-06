@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `NursingStation` ADD COLUMN `type` VARCHAR(191) NOT NULL DEFAULT 'IPD';

@@ -313,6 +313,52 @@ export const updateBedStatus = async (
   }
 };
 
+// Full bed update — used by the unified Masters admin page to rename a bed
+// (bedNumber) or change its bedType. Status updates remain on /bed/:id/status
+// so the active-admission lifecycle isn't disturbed by a cosmetic rename.
+export const updateBed = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { bedId } = req.params;
+    const { bedNumber, bedType } = req.body;
+    if (!bedNumber?.trim() || !bedType?.trim()) {
+      res.status(400).json({ message: 'bedNumber and bedType are required' });
+      return;
+    }
+    if (!['general', 'ICU', 'HDU', 'isolation'].includes(bedType)) {
+      res.status(400).json({ message: 'bedType must be one of: general, ICU, HDU, isolation' });
+      return;
+    }
+    const existing = await prisma.ipdBed.findUnique({ where: { id: bedId } });
+    if (!existing) {
+      res.status(404).json({ message: 'Bed not found' });
+      return;
+    }
+    // Guard the unique (wardId, bedNumber) — re-numbering shouldn't collide.
+    const clash = await prisma.ipdBed.findFirst({
+      where: { wardId: existing.wardId, bedNumber: bedNumber.trim(), NOT: { id: bedId } },
+    });
+    if (clash) {
+      res.status(409).json({ message: `Bed "${bedNumber}" already exists in this ward` });
+      return;
+    }
+    const bed = await prisma.ipdBed.update({
+      where: { id: bedId },
+      data: { bedNumber: bedNumber.trim(), bedType },
+      include: { ward: true },
+    });
+    res.status(200).json({ message: 'Bed updated', data: bed });
+  } catch (error) {
+    console.error('Error updating bed:', error);
+    res.status(500).json({
+      message: 'Error updating bed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 /**
  * Create beds for a ward
  * Accepts either { beds: [{bedNumber, bedType}, ...] } or { bedCount, bedTypes }

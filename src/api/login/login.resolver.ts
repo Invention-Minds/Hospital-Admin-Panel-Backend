@@ -1,9 +1,29 @@
 import { UserRole } from '@prisma/client';
 import loginRepository from './login.repository';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
+
+// Days a mobile refresh token stays valid (covers a multi-day on/off shift
+// pattern). Override with MOBILE_REFRESH_EXPIRES_DAYS in the environment.
+const MOBILE_REFRESH_EXPIRES_DAYS = Number(process.env.MOBILE_REFRESH_EXPIRES_DAYS) || 30;
+
+/** Issues and persists an opaque mobile refresh token for a user. */
+export const issueMobileRefreshToken = async (userId: number): Promise<string> => {
+  const token = crypto.randomBytes(48).toString('hex');
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + MOBILE_REFRESH_EXPIRES_DAYS);
+  await loginRepository.createMobileRefreshToken(userId, token, expiresAt);
+  return token;
+};
+
+/** Returns the associated user if the refresh token is valid, else null. */
+export const validateMobileRefreshToken = async (token: string) => {
+  const record = await loginRepository.findValidMobileRefreshToken(token);
+  return record?.user ?? null;
+};
 
 export const loginUser = async (password: string, employeeId: string) => {
   const user = await loginRepository.findUserByEmployeeId(employeeId)

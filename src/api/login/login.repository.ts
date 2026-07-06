@@ -93,6 +93,31 @@ class AppointmentRepository {
       where: { id: userId },
     });
   };
+
+  // ---- Mobile refresh tokens ----
+  async createMobileRefreshToken(userId: number, token: string, expiresAt: Date) {
+    return prisma.mobileRefreshToken.create({
+      data: { userId, token, expiresAt },
+    });
+  }
+
+  async findValidMobileRefreshToken(token: string) {
+    return prisma.mobileRefreshToken.findFirst({
+      where: {
+        token,
+        revoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+  }
+
+  async revokeMobileRefreshToken(token: string) {
+    return prisma.mobileRefreshToken.updateMany({
+      where: { token },
+      data: { revoked: true },
+    });
+  }
 // Store a new token for a user session
 // async storeToken(data: any){
 //   return prisma.activeToken.create({

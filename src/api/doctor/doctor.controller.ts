@@ -6,14 +6,19 @@ import moment from 'moment-timezone';
 import formidable from "formidable";
 import fs from "fs";
 import path from "path";
-import { Client } from "basic-ftp";
+import { saveFileToStorage } from '../../service/local-file-store';
 
-const FTP_CONFIG = {
-  host: "srv680.main-hosting.eu",  // Your FTP hostname
-  user: "u948610439",       // Your FTP username
-  password: "Bsrenuk@1993",   // Your FTP password
-  secure: false                    // Set to true if using FTPS
-};
+// --- DEPRECATED: external FTP upload (replaced by local-file-store) ---------
+// Files now live on the API server under PDF_STORAGE_DIR, served via /files.
+// Hardcoded FTP credentials removed for security.
+// import { Client } from "basic-ftp";
+// const FTP_CONFIG = {
+//   host: "srv680.main-hosting.eu",  // Your FTP hostname
+//   user: "u948610439",       // Your FTP username
+//   password: "<moved to rotation — was hardcoded>",
+//   secure: false                    // Set to true if using FTPS
+// };
+// ---------------------------------------------------------------------------
 // 🧼 Helper to sanitize file names
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -366,8 +371,10 @@ export const getDoctorDetails = async (req: Request, res: Response) => {
     const today = new Date();
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
     const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+    const isPast = requestedDate < startOfToday;
 
     const doctors = await prisma.doctor.findMany({
+      where: isPast ? {} : { isActive: true },
       include: {
         availability: {
           where: isToday
@@ -925,39 +932,66 @@ export const getDoctorAvailability = async (req: Request, res: Response): Promis
     return;
   }
 };
+// In-process mutex keyed by `${doctorId}|${date}|${time}`. Serializes the findFirst+create
+// pair in addBookedSlot so two concurrent reschedule clicks for the same slot can't both
+// pass the "is it free?" check before either commits. The loser sees the winner's row and
+// gets the existing 400. Single-process only — clustered Node would need a DB unique
+// constraint or a distributed lock to be race-free.
+const slotLocks = new Map<string, Promise<void>>();
+export async function withSlotLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = slotLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => { release = resolve; });
+  const chained = previous.then(() => mine);
+  slotLocks.set(key, chained);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    // GC: drop the entry if no one is queued behind me so the map can't grow unbounded.
+    if (slotLocks.get(key) === chained) {
+      slotLocks.delete(key);
+    }
+  }
+}
+
 export const addBookedSlot = async (req: Request, res: Response): Promise<void> => {
   try {
     const { doctorId, date, time, userId } = req.body;
-    const existingBooking = await prisma.bookedSlot.findFirst({
-      where: {
-        doctorId,
-        date,
-        time,
-      },
-    });
-    console.log("Existing Booking:", existingBooking);
-    if (existingBooking) {
-      res.status(400).json({ error: 'Selected slot is already booked' });
-      return;
-    }
 
     if (!doctorId || !date || !time) {
       res.status(400).json({ error: 'Doctor ID, date, and time are required.' });
       return;
     }
 
-    const bookedSlot = await prisma.bookedSlot.create({
-      data: {
-        doctorId,
-        date,
-        time,
-        complete: false,
-        createdBy: userId
-      },
-    });
-    console.log("Booked Slot is working:", bookedSlot);
+    await withSlotLock(`${doctorId}|${date}|${time}`, async () => {
+      const existingBooking = await prisma.bookedSlot.findFirst({
+        where: {
+          doctorId,
+          date,
+          time,
+        },
+      });
+      console.log("Existing Booking:", existingBooking);
+      if (existingBooking) {
+        res.status(400).json({ error: 'Selected slot is already booked' });
+        return;
+      }
 
-    res.status(201).json(bookedSlot);
+      const bookedSlot = await prisma.bookedSlot.create({
+        data: {
+          doctorId,
+          date,
+          time,
+          complete: false,
+          createdBy: userId
+        },
+      });
+      console.log("Booked Slot is working:", bookedSlot);
+
+      res.status(201).json(bookedSlot);
+    });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
@@ -1439,24 +1473,75 @@ export const getDoctorsByDepartment = async (req: Request, res: Response): Promi
   }
 };
 
-async function uploadToFTP(localFilePath: string, remoteFilePath: string) {
-  const client = new Client();
-  client.ftp.verbose = false;
-
+export const deactivateDoctor = async (req: Request, res: Response): Promise<void> => {
   try {
-    await client.access(FTP_CONFIG);
-    console.log("✅ Connected to FTP Server");
-
-    await client.ensureDir("/public_html/docminds/doctor_signs");
-    await client.uploadFrom(localFilePath, remoteFilePath);
-
-    console.log(`✅ Uploaded file to: ${remoteFilePath}`);
-    await client.close();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'Invalid doctor ID' });
+      return;
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      const doctor = await tx.doctor.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      if (doctor.userId) {
+        await tx.user.update({
+          where: { id: doctor.userId },
+          data: { isActive: false },
+        });
+      }
+      return doctor;
+    });
+    res.status(200).json(updated);
   } catch (error) {
-    console.error("❌ FTP Upload Error:", error);
-    throw error;
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
-}
+};
+
+export const activateDoctor = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'Invalid doctor ID' });
+      return;
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      const doctor = await tx.doctor.update({
+        where: { id },
+        data: { isActive: true },
+      });
+      if (doctor.userId) {
+        await tx.user.update({
+          where: { id: doctor.userId },
+          data: { isActive: true },
+        });
+      }
+      return doctor;
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+};
+
+// --- DEPRECATED: replaced by saveFileToStorage (local-file-store). Kept for
+// reference / rollback. Re-enable the basic-ftp import + FTP_CONFIG above to use.
+// async function uploadToFTP(localFilePath: string, remoteFilePath: string) {
+//   const client = new Client();
+//   client.ftp.verbose = false;
+//   try {
+//     await client.access(FTP_CONFIG);
+//     console.log("✅ Connected to FTP Server");
+//     await client.ensureDir("/public_html/docminds/doctor_signs");
+//     await client.uploadFrom(localFilePath, remoteFilePath);
+//     console.log(`✅ Uploaded file to: ${remoteFilePath}`);
+//     await client.close();
+//   } catch (error) {
+//     console.error("❌ FTP Upload Error:", error);
+//     throw error;
+//   }
+// }
 
 // 🚀 Controller to upload doctor's signature
 export const uploadDoctorSignature = async (req: Request, res: Response) => {
@@ -1492,16 +1577,17 @@ export const uploadDoctorSignature = async (req: Request, res: Response) => {
       const tempFilePath = file.filepath;
       const ext = path.extname(file.originalFilename || ".png");
       const fileName = sanitizeFileName(`doctor_${doctorId}_${Date.now()}${ext}`);
-      const remoteFilePath = `/public_html/docminds/doctor_signs/${fileName}`;
 
-      // 1️⃣ Upload to FTP
-      await uploadToFTP(tempFilePath, remoteFilePath);
+      // --- DEPRECATED FTP upload (kept for reference) ---
+      // const remoteFilePath = `/public_html/docminds/doctor_signs/${fileName}`;
+      // await uploadToFTP(tempFilePath, remoteFilePath);
+      // const fileUrl = `https://docminds.inventionminds.com/doctor_signs/${fileName}`;
+      // fs.unlinkSync(tempFilePath);
 
-      // 2️⃣ Generate public URL
-      const fileUrl = `https://docminds.inventionminds.com/doctor_signs/${fileName}`;
-
-      // 3️⃣ Remove temp file
-      fs.unlinkSync(tempFilePath);
+      // 1️⃣ Store on the API server; serve via /files. saveFileToStorage copies
+      //    the temp file then removes it.
+      const stored = saveFileToStorage(tempFilePath, 'doctor_signs', fileName);
+      const fileUrl = stored.relativeUrl;
 
       // 4️⃣ Update doctor record
       const updatedDoctor = await prisma.doctor.update({

@@ -8,14 +8,33 @@ import {
   acknowledgeAlertById,
 } from './critical-value-sse';
 import { authenticateToken } from '../../middleware/middleware';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
 /**
- * SSE Stream for critical value alerts
+ * SSE Stream for critical value alerts (live patient PHI).
+ *
+ * EventSource cannot send an Authorization header, so the JWT is passed as a
+ * `?token=` query param and verified here. Identity comes from the token, not
+ * a client-supplied `userId` (which previously let anyone subscribe).
  */
 router.get('/stream', (req: Request, res: Response) => {
-  const userId = (req.query.userId as string) || 'anonymous';
+  const token = (req.query.token as string) || '';
+  if (!token) {
+    res.status(401).json({ error: 'token query param required' });
+    return;
+  }
+  let userId: string;
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string, {
+      algorithms: ['HS256'],
+    }) as { id?: number; username?: string };
+    userId = decoded.username || (decoded.id != null ? String(decoded.id) : 'unknown');
+  } catch {
+    res.status(403).json({ error: 'invalid token' });
+    return;
+  }
   console.log(`📡 New SSE connection from user: ${userId}`);
   subscribeToCriticalValues(userId, res);
 });
@@ -23,7 +42,7 @@ router.get('/stream', (req: Request, res: Response) => {
 /**
  * Active SSE users
  */
-router.get('/active-users', (_req: Request, res: Response) => {
+router.get('/active-users', authenticateToken, (_req: Request, res: Response) => {
   const activeUsers = getActiveUsers();
   res.status(200).json({
     message: 'Active users subscribed to critical value stream',
@@ -80,7 +99,7 @@ router.post('/broadcast', authenticateToken, async (req: Request, res: Response)
 /**
  * Get all critical alerts (history) — supports ?fromDate=&toDate=&limit=&prn=
  */
-router.get('/alerts', (req: Request, res: Response) => {
+router.get('/alerts', authenticateToken, (req: Request, res: Response) => {
   const { fromDate, toDate, limit, prn } = req.query;
   let alerts = getAlertBuffer();
   const ack = getAlertAcknowledgments();
@@ -110,7 +129,7 @@ router.get('/alerts', (req: Request, res: Response) => {
 /**
  * Get alerts for a specific patient
  */
-router.get('/alerts/:prn', (req: Request, res: Response) => {
+router.get('/alerts/:prn', authenticateToken, (req: Request, res: Response) => {
   const { prn } = req.params;
   const alerts = getAlertBuffer().filter((a) => a.prn === prn);
   const ack = getAlertAcknowledgments();
@@ -157,7 +176,7 @@ router.post(
 /**
  * Critical value statistics
  */
-router.get('/stats', (req: Request, res: Response) => {
+router.get('/stats', authenticateToken, (req: Request, res: Response) => {
   const { fromDate, toDate } = req.query;
   let alerts = getAlertBuffer();
   const ack = getAlertAcknowledgments();
@@ -195,7 +214,7 @@ router.get('/stats', (req: Request, res: Response) => {
 /**
  * Get pending (unacknowledged) critical values
  */
-router.get('/pending', (_req: Request, res: Response) => {
+router.get('/pending', authenticateToken, (_req: Request, res: Response) => {
   const alerts = getAlertBuffer();
   const ack = getAlertAcknowledgments();
   const pending = alerts.filter((a) => !ack.has(a.id));

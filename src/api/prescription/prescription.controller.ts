@@ -2,6 +2,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { syncPrescriptionToHmis } from './prescription-sync';
+import { checkPaymentGate } from '../../service/payment-gate';
+import { auditLog } from '../../service/app-audit';
 
 const generatePrescriptionId = async (): Promise<string> => {
   const latest = await prisma.prescription.findFirst({
@@ -16,7 +18,16 @@ const generatePrescriptionId = async (): Promise<string> => {
 
 export const createPrescription = async (req: Request, res: Response) => {
   try {
-    const { prescribedBy, prn, patientName, tablets, prescribedDate, prescribedById, prescribedByKMC } = req.body;
+    const { prescribedBy, prn, patientName, tablets, prescribedDate, prescribedById, prescribedByKMC, appointmentId } = req.body;
+
+    // Phase 2.5 / WF-1 — block prescription save until the OPD fee is paid.
+    // Gate is a no-op if appointmentId isn't on the body (soft rollout); the
+    // miss is audited so we can find legacy callers.
+    const gate = await checkPaymentGate(req, { appointmentId, action: 'prescription' });
+    if (!gate.ok) {
+      res.status(402).json({ error: gate.reason, paymentStatus: gate.paymentStatus });
+      return;
+    }
 
     const prescriptionId = await generatePrescriptionId();
 
@@ -43,6 +54,14 @@ export const createPrescription = async (req: Request, res: Response) => {
       include: {
         tablets: true,
       },
+    });
+
+    await auditLog(req, {
+      module: 'prescription',
+      action: 'CREATE',
+      entityType: 'Prescription',
+      entityId: newPrescription.id,
+      payload: { prescriptionId, prn, tabletCount: tablets?.length ?? 0, appointmentId },
     });
 
     res.status(201).json({ message: 'Prescription created', data: newPrescription });
@@ -131,6 +150,43 @@ export const getAllTablets = async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching tablets:', error);
     res.status(500).json({ message: 'Failed to fetch tablets' });
+  }
+};
+
+// Update a tablet — used by the unified Masters admin page. Re-checks brand
+// uniqueness against OTHER rows so a rename doesn't collide.
+export const updateTablet = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'id must be a number' });
+      return;
+    }
+    const { genericName, brandName, type, description } = req.body;
+    if (!genericName?.trim() || !brandName?.trim() || !type?.trim()) {
+      res.status(400).json({ error: 'genericName, brandName and type are required' });
+      return;
+    }
+    const clash = await prisma.tabletMaster.findFirst({
+      where: { brandName: brandName.trim(), NOT: { id } },
+    });
+    if (clash) {
+      res.status(409).json({ error: `Another tablet already uses brand name "${brandName}"` });
+      return;
+    }
+    const updated = await prisma.tabletMaster.update({
+      where: { id },
+      data: {
+        genericName: genericName.trim(),
+        brandName: brandName.trim(),
+        type: type.trim(),
+        description: description ?? null,
+      },
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    console.error('Error updating tablet:', error);
+    res.status(500).json({ message: 'Failed to update tablet' });
   }
 };
 

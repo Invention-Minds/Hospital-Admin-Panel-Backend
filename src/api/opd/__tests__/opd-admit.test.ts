@@ -68,7 +68,9 @@ const buildReq = (overrides: Record<string, unknown> = {}): Request =>
 
 const appointmentFixture = {
   id: 42,
-  patient: { prn: 1001 },
+  // Per Sprint 4a Phase 1c going-forward rule, PRN lives on Appointment.prnNumber,
+  // not on the (now-deprecated) Patient join. convertOpdToIpd reads it directly.
+  prnNumber: 1001,
   doctor: { name: 'Dr. Ravi', departmentName: 'General Medicine' },
 };
 
@@ -102,6 +104,7 @@ beforeEach(() => {
     response: null,
     status: 'success',
     retryCount: 0,
+    quarantinedAt: null,
     createdAt: new Date(),
   });
 });

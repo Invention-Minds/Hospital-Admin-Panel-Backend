@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { PrismaClient } from '@prisma/client';
+import { getRecipientPhones } from '../../service/notification-recipients';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 const prisma = new PrismaClient();
 import axios from "axios";
 
@@ -27,25 +29,34 @@ async function sendWhatsAppNotification(
     phoneNumber: string,
     count: any,
 ) {
-    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-    const url = process.env.WHATSAPP_API_URL;
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    // const url = process.env.WHATSAPP_API_URL;
+    // const payload = {
+    //     from: fromPhoneNumber,
+    //     to: phoneNumber,
+    //     type: "template",
+    //     message: { templateid: "881059", placeholders: [count] },
+    // };
+    // const headers = { "Content-Type": "application/json", apikey: process.env.WHATSAPP_AUTH_TOKEN! };
+    // const response = await axios.post(url!, payload, { headers });
+    // return response.data;
 
+    // ===== GoBuzz =====
     const payload = {
-        from: fromPhoneNumber,
-        to: phoneNumber,
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(phoneNumber),
         type: "template",
-        message: {
-            templateid: "881059",
-            placeholders: [count],
+        template: {
+            name: "radiology_queue",
+            language: { code: "en" },
+            components: [
+                { type: "body", parameters: [{ type: "text", text: String(count) }] },
+            ],
         },
     };
-
-    const headers = {
-        "Content-Type": "application/json",
-        apikey: process.env.WHATSAPP_AUTH_TOKEN!,
-    };
-
-    const response = await axios.post(url!, payload, { headers });
+    const response = await sendGoBuzzMessage(payload);
     return response.data;
 }
 
@@ -193,8 +204,9 @@ export async function completeCheckIn(req: Request, res: Response) {
         const thresholds = [20, 25, 30, 35];
         if (thresholds.includes(count)) {
             // const alreadySent = await wasThresholdSentRecently(count);
-            // const phoneNumbers = ['919342287945', '917708059010', '916382348092'];
-            const phoneNumbers =['919620306613', '916364833988', '919880544866'];
+            // Old hardcoded recipients (kept for reference / seeding into DB):
+            // const phoneNumbers = ['919620306613', '916364833988', '919880544866'];
+            const phoneNumbers = await getRecipientPhones('radiology_queue'); // DB-managed recipients
 
             await Promise.all(
                 phoneNumbers.map(num => sendWhatsAppNotification(num, count))

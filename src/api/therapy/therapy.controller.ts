@@ -4,20 +4,16 @@ import { addMinutes, parse, format } from "date-fns";
 import { loadTherapyTv, loadTherapyTvForTherapist } from "../appointments/appointment.controller";
 import { sendWhatsAppTemplate, buildPlaceholders, TEMPLATE } from "../whatsapp/whatsapp.controller";
 import { sendSMS } from "../sms/sms.controller";
+import {
+  toMinutes,
+  slotEndMin,
+  isWithinWorkingHours,
+  hasSlotConflict,
+  splitDuration,
+} from "./therapy-scheduling.util";
+import { rollForwardAfterCheckIn, hasPlannedDayClash } from "./therapy-course.service";
 
 const prisma = new PrismaClient();
-
-const OPEN_MIN = 6 * 60;     // 06:00
-const CLOSE_MIN = 18 * 60;   // 18:00
-const BUFFER_MIN = 5;
-
-const toMinutes = (t: string): number => {
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-};
-
-const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
-  aStart < bEnd && bStart < aEnd;
 
 
 /**
@@ -96,10 +92,10 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
       return;
     }
     const startMin = toMinutes(time);
-    const endMin = startMin + dur + BUFFER_MIN;
+    const endMin = slotEndMin(startMin, dur);
 
     //Working hours check
-    if (startMin < OPEN_MIN || endMin > CLOSE_MIN) {
+    if (!isWithinWorkingHours(startMin, endMin)) {
       res.status(400).json({
         message: "Appointment must be between 06:00 and 18:00 (including 10 min buffer)."
       });
@@ -140,39 +136,32 @@ export const createTherapyAppointment = async (req: Request, res: Response) => {
     //   });
     //   return
     // }
-    const conflict = candidates.some(appt => {
-      const aStart = toMinutes(appt.time);
-      const aDur = Number(appt.totalDurationMinutes || 0);
-      const aEnd = aStart + aDur + BUFFER_MIN;
-
-      if (!overlaps(startMin, endMin, aStart, aEnd)) return false;
-
-      // Room conflict
-      if (appt.roomNumber === roomNumber) return true;
-
-      // Therapist conflict
-      const booked = appt.therapists.map(t => t.therapistId);
-      return booked.some(id => tIds.includes(id));
+    const conflict = hasSlotConflict(candidates, {
+      startMin,
+      endMin,
+      roomNumber,
+      therapistIds: tIds,
     });
 
     if (conflict) {
-      res.status(400).json({ message: "Room or therapist already booked in this time range." });
+      res.status(409).json({ blocked: true, message: "Room or therapist already booked in this time range." });
       return;
     }
 
-    let therapyMinutes = 0;
-    let cleaningMinutes = 0;
-    let bathingMinutes = 0;
-
-    if (hasBathing) {
-      therapyMinutes = Math.round(totalDurationMinutes * 0.70);
-      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes = Math.round(totalDurationMinutes * 0.15);
-    } else {
-      therapyMinutes = Math.round(totalDurationMinutes * 0.85);
-      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes = 0;
+    // Soft clash: a tentative (planned) course session on the same slot — warn,
+    // but allow the operator to proceed with force=true.
+    if (req.body.force !== true) {
+      const plannedClash = await hasPlannedDayClash(date, startMin, endMin, roomNumber, tIds);
+      if (plannedClash) {
+        res.status(409).json({
+          warning: true,
+          message: "A tentative course session is already planned for this therapist/room at this time. Proceed anyway?",
+        });
+        return;
+      }
     }
+
+    const { therapyMinutes, cleaningMinutes, bathingMinutes } = splitDuration(dur, hasBathing);
 
     // Create appointment
     const appointment = await prisma.therapyAppointment.create({
@@ -384,9 +373,9 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
     }
 
     const startMin = toMinutes(time);
-    const endMin = startMin + dur + BUFFER_MIN;
+    const endMin = slotEndMin(startMin, dur);
 
-    if (startMin < OPEN_MIN || endMin > CLOSE_MIN) {
+    if (!isWithinWorkingHours(startMin, endMin)) {
       res.status(400).json({
         message: "Appointment must be between 06:00 and 18:00 (including 10 min buffer)."
       });
@@ -414,17 +403,11 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
       }
     });
 
-    const conflict = candidates.some(appt => {
-      const aStart = toMinutes(appt.time);
-      const aDur = Number(appt.totalDurationMinutes || 0);
-      const aEnd = aStart + aDur + BUFFER_MIN;
-
-      if (!overlaps(startMin, endMin, aStart, aEnd)) return false;
-
-      if (appt.roomNumber === roomNumber) return true;
-
-      const booked = appt.therapists.map(t => t.therapistId);
-      return booked.some(id => tIds.includes(id));
+    const conflict = hasSlotConflict(candidates, {
+      startMin,
+      endMin,
+      roomNumber,
+      therapistIds: tIds,
     });
 
     if (conflict) {
@@ -447,19 +430,7 @@ export const updateTherapyAppointment = async (req: Request, res: Response) => {
     //   });
     //   return;
     // }
-    let therapyMinutes = 0;
-    let cleaningMinutes = 0;
-    let bathingMinutes = 0;
-
-    if (hasBathing) {
-      therapyMinutes = Math.round(totalDurationMinutes * 0.70);
-      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes = Math.round(totalDurationMinutes * 0.15);
-    } else {
-      therapyMinutes = Math.round(totalDurationMinutes * 0.85);
-      cleaningMinutes = Math.round(totalDurationMinutes * 0.15);
-      bathingMinutes = 0;
-    }
+    const { therapyMinutes, cleaningMinutes, bathingMinutes } = splitDuration(dur, hasBathing);
 
     const updated = await prisma.therapyAppointment.update({
       where: { id: Number(id) },
@@ -856,8 +827,16 @@ export const checkInTherapyAppointment = async (req: Request, res: Response) => 
 
     loadTherapyTv(1);
 
+    // Hybrid course roll-forward: claim the next planned day's slot once this
+    // day is checked in. Best-effort — a clash is surfaced, not fatal.
+    let nextDay = null;
+    try {
+      nextDay = await rollForwardAfterCheckIn(appointment);
+    } catch (e) {
+      console.error("Course roll-forward failed:", e);
+    }
 
-    res.json({ message: "Patient checked in successfully", appointment });
+    res.json({ message: "Patient checked in successfully", appointment, nextDay });
   } catch (error) {
     res.status(500).json({ error: "Failed to check in patient" });
   }

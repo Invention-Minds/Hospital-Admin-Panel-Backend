@@ -17,6 +17,27 @@ const generateEmergencyPRN = async (): Promise<string> => {
   return `JMRH-ER-${year}-${String(nextNumber).padStart(4, "0")}`;
 };
 
+// Map the intake disposition selection to a case-lifecycle status. Terminal
+// dispositions drive status directly; an admit decision stays "arrived" until
+// the bed is assigned via the convert-to-IPD flow (which sets "admitted-ipd").
+const dispositionToStatus = (disposition?: string | null): string => {
+  switch (disposition) {
+    case "discharge":
+      return "discharged";
+    case "dama":
+      return "DAMA";
+    case "transferred":
+      return "referred";
+    case "expired":
+      return "expired";
+    case "ot":
+      return "shifted-ot";
+    default:
+      // admit-ward | admit-icu | none → case is still in the department
+      return "arrived";
+  }
+};
+
 /**
  * Create new Emergency case
  * Auto-generates PRN and pushes to HMIS
@@ -27,10 +48,12 @@ export const createEmergency = async (
 ): Promise<void> => {
   try {
     const {
+      patientPrn,
       patientName,
       phoneNumber,
       age,
       gender,
+      allergies,
       triageCategory,
       presentingComplaint,
       abcdeAssessment,
@@ -41,6 +64,30 @@ export const createEmergency = async (
       vitalsSpO2,
       vitalsTemp,
       proceduresDone,
+      // Phase 6 — intake form fields (mirror UHJ/EMR/F-01)
+      modeOfArrival,
+      broughtBy,
+      historyGivenBy,
+      referralFrom,
+      referredTo,
+      identificationMark,
+      policeInformationGiven,
+      reasonsForMlc,
+      painScore,
+      airway,
+      breathing,
+      circulation,
+      mentalStatus,
+      pupilsRight,
+      pupilsLeft,
+      secondarySurvey,
+      workingDiagnosis,
+      conditionAtDisposition,
+      disposition,
+      handOffDoctorName,
+      receivingDoctorName,
+      handOffNurseName,
+      receivingNurseName,
     } = req.body;
 
     // Validate required fields
@@ -64,10 +111,12 @@ export const createEmergency = async (
     const emergency = await prisma.emergency.create({
       data: {
         prn,
+        patientPrn: patientPrn ? String(patientPrn) : null,
         patientName,
         phoneNumber,
         age,
         gender,
+        allergies: allergies ?? null,
         triageCategory,
         presentingComplaint,
         abcdeAssessment,
@@ -78,7 +127,31 @@ export const createEmergency = async (
         vitalsSpO2,
         vitalsTemp,
         proceduresDone,
-        status: "arrived",
+        // Phase 6 — intake form fields (all optional)
+        modeOfArrival: modeOfArrival ?? null,
+        broughtBy: broughtBy ?? null,
+        historyGivenBy: historyGivenBy ?? null,
+        referralFrom: referralFrom ?? null,
+        referredTo: referredTo ?? null,
+        identificationMark: identificationMark ?? null,
+        policeInformationGiven: policeInformationGiven ?? false,
+        reasonsForMlc: reasonsForMlc ?? null,
+        painScore: painScore ?? null,
+        airway: airway ?? null,
+        breathing: breathing ?? null,
+        circulation: circulation ?? null,
+        mentalStatus: mentalStatus ?? null,
+        pupilsRight: pupilsRight ?? null,
+        pupilsLeft: pupilsLeft ?? null,
+        secondarySurvey: secondarySurvey ?? null,
+        workingDiagnosis: workingDiagnosis ?? null,
+        conditionAtDisposition: conditionAtDisposition ?? null,
+        disposition: disposition ?? null,
+        handOffDoctorName: handOffDoctorName ?? null,
+        receivingDoctorName: receivingDoctorName ?? null,
+        handOffNurseName: handOffNurseName ?? null,
+        receivingNurseName: receivingNurseName ?? null,
+        status: dispositionToStatus(disposition),
         docmindsCreated: true,
         createdBy: req.user?.username || "system",
       },
@@ -165,11 +238,15 @@ export const getEmergencyList = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { status, triageCategory, page = 1, limit = 10 } = req.query;
+    const { status, triageCategory, withoutMlc, page = 1, limit = 10 } = req.query;
 
     const where: any = {};
     if (status) where.status = status;
     if (triageCategory) where.triageCategory = triageCategory;
+    // MLC register picker: only show emergencies that don't already have an
+    // MLC case (since MlcCase.emergencyId is @unique, a second registration
+    // would 400 anyway).
+    if (withoutMlc === 'true' || withoutMlc === '1') where.mlcCase = { is: null };
 
     const emergencies = await prisma.emergency.findMany({
       where,
@@ -219,13 +296,36 @@ export const updateEmergencyStatus = async (
         "stabilized",
         "referred",
         "admitted-ipd",
+        "shifted-ot",
         "LAMA",
         "DAMA",
         "discharged",
+        "expired",
       ].includes(status)
     ) {
       res.status(400).json({ message: "Invalid status" });
       return;
+    }
+
+    // Status gate — require the matching AMA form before marking the case
+    // LAMA / DAMA so the medico-legal record always backs the disposition.
+    if (status === "LAMA") {
+      const lama = await prisma.lamaRecord.findUnique({
+        where: { emergencyId: parseInt(id) },
+      });
+      if (!lama) {
+        res.status(409).json({ error: "Complete the LAMA form before marking the case LAMA." });
+        return;
+      }
+    }
+    if (status === "DAMA") {
+      const dama = await prisma.damaRecord.findUnique({
+        where: { emergencyId: parseInt(id) },
+      });
+      if (!dama) {
+        res.status(409).json({ error: "Complete the DAMA form before marking the case DAMA." });
+        return;
+      }
     }
 
     const emergency = await prisma.emergency.update({
@@ -422,7 +522,9 @@ export const getEmergencyQueue = async (
   try {
     const pending = await prisma.emergency.findMany({
       where: {
-        status: { in: ["arrived", "stabilized", "referred"] },
+        // Active ER queue = cases still in the department. "referred" cases have
+        // been handed off / left, so they don't belong in the live queue.
+        status: { in: ["arrived", "stabilized"] },
       },
       orderBy: [
         { triageCategory: "asc" }, // red first alphabetically, we sort below

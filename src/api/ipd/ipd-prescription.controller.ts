@@ -8,6 +8,9 @@ import {
 } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
 import { getClinicalActor } from '../../middleware/audit-guard';
+import { evaluatePregnancyAlerts } from './pregnancy-alerts';
+import { probeStock } from '../../service/pharmacy-stock-probe';
+import { resolveTargetRole } from '../../service/role-alias';
 
 /**
  * Typed payload shapes sent to HMIS for IPD pharmacy events.
@@ -193,6 +196,7 @@ export const continuePrescription = async (
       frequency,
       duration,
       route = 'oral',
+      site,
       instructions,
       quantity,
       prescribedBy,
@@ -217,6 +221,32 @@ export const continuePrescription = async (
       return;
     }
 
+    // Phase 7 — pregnancy / lactation guard (same gate as createNewPrescription).
+    const pregnancyAlerts = await evaluatePregnancyAlerts(admissionId, [genericName]);
+    const pregnancyAcknowledged = req.body?.pregnancyAcknowledged === true;
+    if (pregnancyAlerts.length > 0 && !pregnancyAcknowledged) {
+      res.status(409).json({
+        message: 'Pregnancy / lactation alert — prescriber acknowledgement required',
+        pregnancyAlerts,
+      });
+      return;
+    }
+    if (pregnancyAlerts.length > 0 && pregnancyAcknowledged) {
+      await createHmisAuditLog({
+        direction: 'push',
+        module: 'pharmacy',
+        action: 'pregnancy_override',
+        payload: JSON.stringify({
+          admissionId,
+          drug: genericName,
+          alerts: pregnancyAlerts,
+          prescriber: prescribedBy,
+          path: 'carry-over',
+        }),
+        status: 'success',
+      });
+    }
+
     // Create IPD prescription (carryover) — NABH MRD.1 coexistence stamping.
     const ipdPrescription = await prisma.ipdPrescription.create({
       data: {
@@ -231,6 +261,7 @@ export const continuePrescription = async (
         frequency,
         duration,
         route,
+        site: site || null,
         instructions,
         quantity,
         isCarryOver: true,
@@ -281,7 +312,7 @@ export const modifyPrescription = async (
     if (actorId === null) return;
 
     const { prescriptionId } = req.params;
-    const { dose, frequency, duration, route, instructions } = req.body;
+    const { dose, frequency, duration, route, instructions, site } = req.body;
 
     const prescription = await prisma.ipdPrescription.update({
       where: { id: prescriptionId },
@@ -291,6 +322,7 @@ export const modifyPrescription = async (
         ...(duration && { duration }),
         ...(route && { route }),
         ...(instructions && { instructions }),
+        ...(site !== undefined && { site: site || null }),
         updatedBy: req.user!.username,
         updatedById: actorId,
       },
@@ -391,18 +423,26 @@ export const createNewPrescription = async (
 
     const { admissionId } = req.params;
     const {
-      prescribedBy,
+      prescribedBy: prescribedByBody,
       genericName,
       brandName,
       dose,
       frequency,
       duration,
       route = 'oral',
+      site,
       instructions,
       quantity,
     } = req.body;
 
-    // Validate required fields
+    // Fall back to the authenticated user when the frontend doesn't pass an
+    // explicit prescriber name (the new IPD pharmacy modal lets the backend
+    // stamp it from req.user). MAR administer uses the same pattern.
+    const prescribedBy =
+      (typeof prescribedByBody === 'string' && prescribedByBody.trim().length > 0)
+        ? prescribedByBody.trim()
+        : (req.user?.username ?? '');
+
     if (!prescribedBy || !genericName || !dose || !frequency || !duration) {
       res.status(400).json({
         message:
@@ -421,6 +461,51 @@ export const createNewPrescription = async (
       return;
     }
 
+    // Phase 7 — teratogenic-drug + lactation guard. We pull pregnancy /
+    // lactation flags off IpdInitialAssessment and refuse the save (409)
+    // until the prescriber has explicitly acknowledged the risk. The ack
+    // arrives as `pregnancyAcknowledged: true` in a re-submit. Overrides
+    // are audit-logged so an auditor can trace who waived which alert.
+    const pregnancyAlerts = await evaluatePregnancyAlerts(admissionId, [genericName]);
+    const pregnancyAcknowledged = req.body?.pregnancyAcknowledged === true;
+    if (pregnancyAlerts.length > 0 && !pregnancyAcknowledged) {
+      res.status(409).json({
+        message: 'Pregnancy / lactation alert — prescriber acknowledgement required',
+        pregnancyAlerts,
+      });
+      return;
+    }
+    if (pregnancyAlerts.length > 0 && pregnancyAcknowledged) {
+      await createHmisAuditLog({
+        direction: 'push',
+        module: 'pharmacy',
+        action: 'pregnancy_override',
+        payload: JSON.stringify({
+          admissionId,
+          drug: genericName,
+          alerts: pregnancyAlerts,
+          prescriber: prescribedBy,
+        }),
+        status: 'success',
+      });
+    }
+
+    // Phase P — Stock probe + STAT flag.
+    // Probe HMIS for current stock of this generic. If low/OOS the doctor must
+    // re-submit with stockAcknowledged=true (mirrors the pregnancyAcknowledged
+    // pattern above). Skipped for STAT to avoid blocking emergency orders.
+    const prescriptionType = (req.body?.prescriptionType as string | undefined)?.toUpperCase();
+    const isStat = prescriptionType === 'STAT';
+    const stockAcknowledged = req.body?.stockAcknowledged === true;
+    const probe = await probeStock({ generic: genericName, dose, route });
+    if (!isStat && probe.warning && !stockAcknowledged) {
+      res.status(409).json({
+        message: 'Stock warning — prescriber acknowledgement required',
+        stockProbe: probe,
+      });
+      return;
+    }
+
     // Create new IPD prescription
     const prescription = await prisma.ipdPrescription.create({
       data: {
@@ -434,11 +519,18 @@ export const createNewPrescription = async (
         frequency,
         duration,
         route,
+        site: site || null,
         instructions,
         quantity,
         isCarryOver: false,
         status: 'active',
         adminStatus: 'pending',
+        prescriptionType: prescriptionType || null,
+        // Phase P — pharmacy handshake fields.
+        sentToPharmacyAt: new Date(),
+        isStatBypass: isStat,
+        stockProbeJson: JSON.stringify(probe),
+        stockProbeAt: new Date(probe.fetchedAt),
         createdBy: req.user!.username,
         createdById: actorId,
       },
@@ -457,9 +549,32 @@ export const createNewPrescription = async (
       status: 'success',
     });
 
+    // Phase P — Pharmacy queue notification. STAT pages on-call pharmacist
+    // (critical=true), regular drops on the coordinator queue.
+    void (async () => {
+      const targetRole = await resolveTargetRole(isStat ? 'pharmacy_on_call' : 'pharmacy_coordinator');
+      try {
+        await prisma.notification.create({
+          data: {
+            type: isStat ? 'pharmacy_stat_rx' : 'pharmacy_new_rx',
+            title: isStat ? `STAT prescription · ${genericName}` : `New prescription · ${genericName}`,
+            message: `${prescribedBy} prescribed ${dose} ${frequency} for admission ${admission.admissionNo}.${probe.warning ? ' ' + probe.warning : ''}`,
+            status: 'unread',
+            targetRole: targetRole ?? undefined,
+            isCritical: isStat,
+            entityId: 0,
+            entityType: `IpdPrescription:${prescription.id}`,
+          },
+        });
+      } catch (err) {
+        console.warn('[ipd-rx:pharmacy-notify] failed:', (err as Error).message);
+      }
+    })();
+
     res.status(201).json({
       message: 'New IPD prescription created',
       data: prescription,
+      stockProbe: probe,
     });
   } catch (error) {
     console.error('Error creating new prescription:', error);
@@ -514,7 +629,32 @@ export const administerMedication = async (
     if (actorId === null) return;
 
     const { prescriptionId } = req.params;
-    const { quantity, route, remarks } = req.body;
+    const {
+      quantity,
+      route,
+      remarks,
+      verifiedTwoIdentifiers,
+      fiveRightsChecked,
+    } = req.body as {
+      quantity?: number;
+      route?: string;
+      remarks?: string;
+      verifiedTwoIdentifiers?: boolean;
+      fiveRightsChecked?: boolean;
+    };
+
+    // Phase 4 (WF-3) — NABH MOM.4 / IPC.6 gating. The nurse cannot mark a
+    // medication administered without both: (a) a two-identifier patient
+    // verification (PRN + name on band), and (b) the five-rights check
+    // (right patient, drug, dose, route, time). The body must explicitly
+    // confirm both flags — defensive default of false on either rejects.
+    if (!verifiedTwoIdentifiers || !fiveRightsChecked) {
+      res.status(400).json({
+        message:
+          'Cannot record administration: both verifiedTwoIdentifiers and fiveRightsChecked must be true.',
+      });
+      return;
+    }
 
     // Get prescription to find admission
     const prescription = await prisma.ipdPrescription.findUnique({
@@ -523,6 +663,22 @@ export const administerMedication = async (
 
     if (!prescription) {
       res.status(404).json({ message: 'Prescription not found' });
+      return;
+    }
+
+    // Phase P — MAR guard. The nurse cannot administer a dose until the
+    // pharmacy → nurse handshake is complete (medication physically in their
+    // hand). STAT scripts bypass the queue but still need a manual collect
+    // event so we have an audit trail of what was given. nurseReturned
+    // rows are blocked too — the script went back to pharmacy.
+    if (!prescription.nurseCollectedAt) {
+      res.status(409).json({
+        message: prescription.nurseReturnedAt
+          ? 'Script was returned to pharmacy; cannot administer.'
+          : prescription.dispensedAt
+            ? 'Medication dispensed by pharmacy but not yet collected at the ward — confirm collection first.'
+            : 'Pharmacy has not dispensed this medication yet.',
+      });
       return;
     }
 
@@ -548,6 +704,8 @@ export const administerMedication = async (
         route: route || prescription.route,
         remarks,
         createdById: actorId,
+        verifiedTwoIdentifiers: true,
+        fiveRightsChecked: true,
       },
     });
 
@@ -932,6 +1090,65 @@ export const getAdmissionPrescriptions = async (
     console.error('Error fetching prescriptions:', error);
     res.status(500).json({
       message: 'Error fetching prescriptions',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Phase 4 (WF-3) — high-risk medication co-signature / witness acknowledgement.
+ *
+ * Used when a med flagged as high-risk (insulin, opioids, anticoagulants) needs
+ * a second-nurse verification. The original administering nurse posts to
+ * `/administer` first; the witness then posts to this endpoint with their
+ * SignatureBlob id to attach a co-signature to the same MAR log row.
+ */
+export const acknowledgeMedicationLog = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
+    const { logId } = req.params;
+    const { acknowledgedBySignatureId, acknowledgedBy } = req.body as {
+      acknowledgedBySignatureId: string;
+      acknowledgedBy?: string;
+    };
+    if (!acknowledgedBySignatureId) {
+      res.status(400).json({ message: 'acknowledgedBySignatureId is required' });
+      return;
+    }
+
+    const log = await prisma.ipdMedicationLog.findUnique({ where: { id: logId } });
+    if (!log) {
+      res.status(404).json({ message: 'Medication log not found' });
+      return;
+    }
+    if (log.acknowledgedBySignatureId) {
+      res.status(409).json({ message: 'This MAR log is already witness-acknowledged' });
+      return;
+    }
+
+    const updated = await prisma.ipdMedicationLog.update({
+      where: { id: logId },
+      data: {
+        acknowledgedBySignatureId,
+        acknowledgedBy: acknowledgedBy ?? req.user?.username ?? null,
+        acknowledgedById: actorId,
+        acknowledgedAt: new Date(),
+      },
+    });
+
+    res.status(200).json({
+      message: 'MAR log witness-acknowledged',
+      data: updated,
+    });
+  } catch (error) {
+    console.error('Error acknowledging MAR log:', error);
+    res.status(500).json({
+      message: 'Error acknowledging MAR log',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

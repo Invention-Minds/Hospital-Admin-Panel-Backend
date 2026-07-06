@@ -39,6 +39,11 @@ const SEED_PRN_MAX = 9999999;
 const SEED_PREFIX = 'SEED-';
 const SEED_EMERGENCY_PRN = 'SEED-ER-001';
 const SEED_ADMISSION_NO = 'SEED-IPD-001';
+// Second admission — owned by PATIENTS[0] (PRN 9900001), the patient who has
+// the seeded critical Potassium result. Required so the encounter lookup in
+// runCriticalLabUnacked tags the auto-incident with encounterType='IPD' and
+// the detail page renders the IPD chip.
+const SEED_LAB_ADMISSION_NO = 'SEED-IPD-002';
 const SEED_WARD_CODES = ['SEED-W-GEN', 'SEED-W-ICU'] as const;
 const SEED_DATE = '2026-04-20';
 
@@ -388,6 +393,45 @@ async function seedIpdAdmission(genWardId: string, genBedId: string): Promise<st
   return admission.id;
 }
 
+/** Active admission for PATIENTS[0] (PRN 9900001) so the critical Potassium
+ * result has a matching IPD encounter — runCriticalLabUnacked will then tag
+ * the auto-incident as IPD instead of UNKNOWN. */
+async function seedLabPatientAdmission(genWardId: string, bedId: string): Promise<string> {
+  // Why update fields too: if a previous seed run created this row with a
+  // different date or status, we want re-runs to converge — the encounter
+  // lookup relies on the pinned admissionDate.
+  const admission = await prisma.ipdAdmission.upsert({
+    where: { admissionNo: SEED_LAB_ADMISSION_NO },
+    update: {
+      admissionDate: new Date('2026-04-10T11:30:00.000Z'),
+      status: 'admitted',
+    },
+    create: {
+      admissionNo: SEED_LAB_ADMISSION_NO,
+      prn: String(PATIENTS[0].prn),
+      // Fixed past date — the cron rule looks up admissions where
+      // admissionDate <= result.reportedAt. The seeded Potassium result keeps
+      // its first-seed timestamp on re-runs, so we pin this well before
+      // SEED_DATE to stay on the "admitted before result" side of that check.
+      admissionDate: new Date('2026-04-10T11:30:00.000Z'),
+      admissionTime: '11:30',
+      admissionType: 'emergency',
+      sourceModule: 'direct',
+      admittingDoctor: SEED_DOCTOR,
+      department: SEED_DEPARTMENT,
+      wardId: genWardId,
+      bedId,
+      roomType: 'general',
+      diagnosis: 'Acute hyperkalemia — admitted for monitoring + IV insulin/dextrose.',
+      status: 'admitted',
+      createdBy: 'seed-script',
+    },
+  });
+  bump('IpdAdmission', 'created');
+  await prisma.ipdBed.update({ where: { id: bedId }, data: { status: 'occupied' } });
+  return admission.id;
+}
+
 async function seedProgressNotes(admissionId: string): Promise<void> {
   const existing = await prisma.ipdProgressNote.count({ where: { admissionId } });
   if (existing > 0) {
@@ -551,6 +595,7 @@ async function main(): Promise<void> {
   const admissionId = await seedIpdAdmission(genWardId, genBeds[0]);
   await seedProgressNotes(admissionId);
   await seedIpdPrescriptions(admissionId);
+  await seedLabPatientAdmission(genWardId, genBeds[1]);
   await seedInvestigationOrderAndCriticalResult();
 
   console.log('\n[seed-sprint-3] done. Summary:');

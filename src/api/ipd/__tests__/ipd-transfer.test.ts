@@ -127,6 +127,7 @@ beforeEach(() => {
     response: null,
     status: 'success',
     retryCount: 0,
+    quarantinedAt: null,
     createdAt: new Date(),
   });
 });

@@ -15,9 +15,14 @@ import {
   getPrescriptionHistory,
   downloadMedicationList,
   syncPrescriptionWithHmis,
+  acknowledgeMedicationLog,
 } from './ipd-prescription.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
+import {
+  pharmacyQueue, pharmacyAck, pharmacyReject, pharmacyDispense,
+  nurseInbox, nurseCollect, nurseReturn,
+} from './pharmacy-handshake.controller';
 
 const router = express.Router();
 
@@ -41,5 +46,18 @@ router.put('/prescription/:prescriptionId/discontinue', authenticateToken, requi
 router.put('/prescription/:prescriptionId/skip', authenticateToken, requireClinicalActor, skipMedication);
 router.post('/prescription/:prescriptionId/administer', authenticateToken, requireClinicalActor, administerMedication);
 router.post('/prescription/:prescriptionId/sync-hmis', authenticateToken, requireClinicalActor, syncPrescriptionWithHmis);
+
+// Phase 4 (WF-3) — witness/co-signature on a MAR log entry.
+router.post('/medication-log/:logId/acknowledge', authenticateToken, requireClinicalActor, acknowledgeMedicationLog);
+
+// ─── Phase P — Pharmacy + nurse handshake ────────────────────────────────
+router.get('/pharmacy/queue', authenticateToken, pharmacyQueue);
+router.post('/pharmacy/:rxId/ack', authenticateToken, pharmacyAck);
+router.post('/pharmacy/:rxId/reject', authenticateToken, pharmacyReject);
+router.post('/pharmacy/:rxId/dispense', authenticateToken, pharmacyDispense);
+
+router.get('/nurse/medication-inbox', authenticateToken, nurseInbox);
+router.post('/nurse/:rxId/collect', authenticateToken, requireClinicalActor, nurseCollect);
+router.post('/nurse/:rxId/return', authenticateToken, requireClinicalActor, nurseReturn);
 
 export default router;

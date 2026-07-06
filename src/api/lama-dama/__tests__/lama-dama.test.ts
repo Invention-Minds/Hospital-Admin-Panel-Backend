@@ -139,6 +139,7 @@ beforeEach(() => {
     response: null,
     status: 'success',
     retryCount: 0,
+    quarantinedAt: null,
     createdAt: new Date(),
   });
 });
@@ -613,7 +614,10 @@ describe('getAllLamaRecords — contract', () => {
     await getAllLamaRecords(req, res);
 
     expect(lamaRecordMock.findMany).toHaveBeenCalledWith({
-      include: { emergency: { select: { prn: true, patientName: true } } },
+      include: {
+        emergency: { select: { prn: true, patientName: true } },
+        admission: { select: { admissionNo: true, prn: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     expect((res.status as jest.Mock)).toHaveBeenCalledWith(200);
@@ -633,7 +637,10 @@ describe('getAllDamaRecords — contract', () => {
     await getAllDamaRecords(req, res);
 
     expect(damaRecordMock.findMany).toHaveBeenCalledWith({
-      include: { emergency: { select: { prn: true, patientName: true } } },
+      include: {
+        emergency: { select: { prn: true, patientName: true } },
+        admission: { select: { admissionNo: true, prn: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     expect((res.status as jest.Mock)).toHaveBeenCalledWith(200);

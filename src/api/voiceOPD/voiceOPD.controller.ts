@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import fs from "fs";
 import { openai } from "../../config/openai"
+import prisma from "../../service/prisma-client";
+import { generateTemplatedOpdDraft, OpdFieldDef } from "../../service/opd-assessment-ai";
 
 export const voiceAssessment = async (req: Request, res: Response) => {
     try {
@@ -24,6 +26,22 @@ export const voiceAssessment = async (req: Request, res: Response) => {
         const rawText = transcript.text;
 
         console.log(rawText)
+
+        // Phase 9.21 — when a doctor template is supplied, structure the
+        // transcript DYNAMICALLY into that template's field keys instead of
+        // the fixed history/examination/investigation/treatmentPlan sections.
+        const noteTemplateId = (req.body?.noteTemplateId as string | undefined)?.trim();
+        if (noteTemplateId) {
+            const template = await prisma.noteTemplate.findUnique({ where: { id: noteTemplateId } });
+            if (template) {
+                let fields: OpdFieldDef[] = [];
+                try { fields = JSON.parse(template.fields); } catch { fields = []; }
+                const draft = await generateTemplatedOpdDraft(rawText, { name: template.name, fields });
+                fs.unlinkSync(audioPath);
+                res.json({ transcript: rawText, templatedValueMap: draft.templatedValueMap });
+                return;
+            }
+        }
 
         // Step 2: Convert transcript into structured sections
         const structured = await openai.chat.completions.create({

@@ -1,6 +1,7 @@
 import prisma from '../../service/prisma-client';
 import { pushIpdAdmission } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
+import { generatePRN } from '../patient/patient-helper';
 
 /**
  * Convert Emergency Case to IPD Admission
@@ -32,17 +33,42 @@ export const convertEmergencyToIpd = async (
       where: { emergencyId },
     });
 
+    // Patient master PRN drives all downstream record linkage. A walk-in /
+    // unregistered emergency has no patientPrn — rather than orphan the IPD
+    // admission (old behaviour) or block it, auto-register a patient from the
+    // ER demographics here (NABH AAC.2 — register at first point of contact)
+    // and link the emergency to it.
+    let linkPrn = emergency.patientPrn?.toString().trim() || '';
+    if (!linkPrn) {
+      const newPrn = await generatePRN();
+      await prisma.patientDetails.create({
+        data: {
+          prn: newPrn,
+          name: emergency.patientName,
+          mobileNo: emergency.phoneNumber ?? undefined,
+          age: emergency.age != null ? String(emergency.age) : undefined,
+          gender: emergency.gender ?? undefined,
+          source: 'emergency',
+        },
+      });
+      linkPrn = String(newPrn);
+      await prisma.emergency.update({
+        where: { id: emergencyId },
+        data: { patientPrn: linkPrn },
+      });
+    }
+
     // Fetch any pending prescriptions from this emergency
     const pendingPrescriptions = await prisma.prescription.findMany({
       where: {
-        prn: emergency.prn?.toString() || '',
+        prn: linkPrn,
       },
     });
 
     // Fetch pending investigations
     const pendingInvestigations = await prisma.investigationOrder.findMany({
       where: {
-        prn: emergency.prn?.toString() || '',
+        prn: linkPrn,
       },
       include: {
         labTests: true,
@@ -51,9 +77,11 @@ export const convertEmergencyToIpd = async (
       },
     });
 
-    // Generate IPD Admission Number
+    // Generate IPD Admission Number. IpdAdmission.id is a UUID so we can't
+    // sort on it — order by admissionNo desc (zero-padded → lexical == numeric).
     const lastAdmission = await prisma.ipdAdmission.findFirst({
-      orderBy: { id: 'desc' },
+      where: { admissionNo: { startsWith: 'JMRH-IPD-' } },
+      orderBy: { admissionNo: 'desc' },
       select: { admissionNo: true },
     });
 
@@ -70,7 +98,7 @@ export const convertEmergencyToIpd = async (
     const ipdAdmission = await prisma.ipdAdmission.create({
       data: {
         admissionNo,
-        prn: emergency.prn?.toString() || '',
+        prn: linkPrn,
         admissionDate: new Date(),
         admissionTime: new Date().toLocaleTimeString(),
         admissionType, // 'emergency'
@@ -83,7 +111,8 @@ export const convertEmergencyToIpd = async (
         wardId,
         bedId,
         roomType: emergency.triageCategory === 'red' ? 'ICU' : 'general',
-        diagnosis: emergency.presentingComplaint || 'Emergency Admission',
+        // Carry the ER working diagnosis when present, else the presenting complaint.
+        diagnosis: emergency.workingDiagnosis || emergency.presentingComplaint || 'Emergency Admission',
         status: 'admitted',
       },
     });
@@ -105,7 +134,7 @@ export const convertEmergencyToIpd = async (
     // Push to HMIS via the audit-wrapped pipeline.
     const hmisPayload = {
       admissionNo,
-      prn: emergency.prn,
+      prn: linkPrn,
       admittingDoctor: admittingDoctorName,
       department: 'Emergency Department',
       diagnosis: emergency.presentingComplaint || 'Emergency Admission',
@@ -123,7 +152,7 @@ export const convertEmergencyToIpd = async (
       action: 'admission_from_emergency',
       payload: {
         admissionNo,
-        prn: emergency.prn,
+        prn: linkPrn,
         referralEmergencyId: emergencyId,
         referralMlcId: mlcCase?.id,
         admissionType,

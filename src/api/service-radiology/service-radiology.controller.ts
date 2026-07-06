@@ -6,6 +6,7 @@ import moment from 'moment-timezone';
 import cron from 'node-cron';
 import { sendServiceWhatsappMessage } from '../whatsapp/whatsapp.controller';
 import { updateEstimation } from '../whatsapp/whatsapp.controller';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import axios from 'axios';
 
 const repository = new ServiceRadiologyRepository();
@@ -65,13 +66,21 @@ export const createService = async (req: Request, res: Response) => {
       const name = `${firstName} ${lastName}`;
       if (appointmentStatus === 'pending') {
         // Prepare the payload
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // payload = { from: fromPhoneNumber, to: phoneNumber, type: "template", message: { templateid: "751393", placeholders: [name, radioServiceName] } };
+        // ===== GoBuzz (package_received) =====
         payload = {
-          from: fromPhoneNumber, // Sender's WhatsApp number
-          to: phoneNumber, // Recipient's WhatsApp number
-          type: "template", // Message type
-          message: {
-            templateid: "751393", // Template ID
-            placeholders: [name, radioServiceName], // Placeholders for the template
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(phoneNumber),
+          type: "template",
+          template: {
+            name: "package_received",
+            language: { code: "en" },
+            components: [{ type: "body", parameters: [
+              { type: "text", text: String(name) },
+              { type: "text", text: String(radioServiceName) },
+            ] }],
           },
         };
       }
@@ -82,7 +91,7 @@ export const createService = async (req: Request, res: Response) => {
       };
 
       // Send the POST request
-      const response = await axios.post(url!, payload, { headers });
+      const response = await sendGoBuzzMessage(payload);
 
       // Log the response
       console.log('WhatsApp message sent successfully:', response.data);
@@ -138,16 +147,28 @@ export const createNewService = async (req: Request, res: Response): Promise<voi
               apikey: process.env.WHATSAPP_AUTH_TOKEN,
             };
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+            // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+            // const patientPayload = { from: fromPhoneNumber, to: phoneNumber, type: "template", message: { templateid: "765787", placeholders: [prefix + firstName + ' ' + lastName, radiologyName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime] } };
+            // await axios.post(url!, patientPayload, { headers });
+            // ===== GoBuzz (radiology_service) =====
             const patientPayload = {
-              from: fromPhoneNumber,
-              to: phoneNumber, // Using email instead of phoneNumber since it's not available
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: formatGoBuzzNumber(phoneNumber),
               type: "template",
-              message: {
-                templateid: "765787", // Template ID
-                placeholders: [prefix + firstName + ' ' + lastName, radiologyName, appointmentStatus, formatDateYear(new Date(appointmentDate)), appointmentTime], // Placeholders for the template
+              template: {
+                name: "radiology_service",
+                language: { code: "en" },
+                components: [{ type: "body", parameters: [
+                  { type: "text", text: String(prefix + firstName + ' ' + lastName) },
+                  { type: "text", text: String(radiologyName) },
+                  { type: "text", text: String(appointmentStatus) },
+                  { type: "text", text: formatDateYear(new Date(appointmentDate)) },
+                  { type: "text", text: String(appointmentTime) },
+                ] }],
               },
             };
-            await axios.post(url!, patientPayload, { headers });
+            await sendGoBuzzMessage(patientPayload);
           } catch (error) {
             console.error("❌ Error sending WhatsApp notification:", error);
           }
@@ -510,18 +531,23 @@ export const markComplete = async (req: Request, res: Response): Promise<void> =
         };
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const whatsappPayload = { from: fromPhoneNumber, to: appointment.phoneNumber, type: 'template', message: { templateid: '751385', placeholders: [] } };
+        // ===== GoBuzz (thank_you) =====
         const whatsappPayload = {
-          from: fromPhoneNumber,
-          to: appointment.phoneNumber, // Patient's phone number
-          type: 'template',
-          message: {
-            templateid: '751385', // Replace with your actual template ID
-            placeholders: [], // Add dynamic placeholders here if needed
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(appointment.phoneNumber),
+          type: "template",
+          template: {
+            name: "thank_you",
+            language: { code: "en" },
+            components: [{ type: "body", parameters: [] }],
           },
         };
 
         try {
-          await axios.post(url!, whatsappPayload, { headers });
+          await sendGoBuzzMessage(whatsappPayload);
           console.log('WhatsApp message sent successfully to', appointment.phoneNumber);
 
           // If WhatsApp message is successful, send SMS

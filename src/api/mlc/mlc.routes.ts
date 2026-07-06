@@ -8,6 +8,7 @@ import {
   submitReport,
   getPendingReports,
   getMlcCaseList,
+  getMyMlcCases,
   getMlcCaseByNumber,
   getMlcCaseByEmergency,
   getMlcCasesByDate,
@@ -20,6 +21,9 @@ import {
   getMlcCaseHistory,
   downloadMlcDocumentation,
   generateMlcReportPdf,
+  listInjuries,
+  addInjury,
+  deleteInjury,
 } from "./mlc.controller";
 import { authenticateToken } from "../../middleware/middleware";
 import { requireClinicalActor } from "../../middleware/audit-guard";
@@ -33,6 +37,7 @@ router.get("/by-emergency", authenticateToken, getMlcCaseByEmergency);
 router.get("/by-date", authenticateToken, getMlcCasesByDate);
 router.get("/stats", authenticateToken, getMlcStats);
 router.get("/pending-reports", authenticateToken, getPendingReports);
+router.get("/mine", authenticateToken, getMyMlcCases);
 
 // Register new MLC case (clinical write; NABH MRD.1 guard)
 router.post("/register", authenticateToken, requireClinicalActor, registerMlcCase);
@@ -69,6 +74,16 @@ router.post(
   requireClinicalActor,
   upload.single("file"),
   uploadSubmissionProof
+);
+
+// NABH MRD.2 — per-injury detail (reads open to authenticated; writes gated by clinical actor)
+router.get("/:id/injuries", authenticateToken, listInjuries);
+router.post("/:id/injuries", authenticateToken, requireClinicalActor, addInjury);
+router.delete(
+  "/:id/injuries/:injuryId",
+  authenticateToken,
+  requireClinicalActor,
+  deleteInjury
 );
 
 // Reports & history

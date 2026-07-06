@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
-import { loginUser, createUser, resetPassword, changePassword, loginDoctor } from './login.resolver';
+import { loginUser, createUser, resetPassword, changePassword, loginDoctor, issueMobileRefreshToken, validateMobileRefreshToken } from './login.resolver';
 import { UserRole } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import loginRepository from './login.repository';
 import { deleteUserById } from './login.resolver';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
+import { isOpdStationNurse, isIpdScopedNurse } from '../_shared/nursing-roles';
 const prisma = new PrismaClient();
 
 
@@ -42,7 +43,7 @@ const generateToken = (user: any) => {
 export const userLogin = async (req: Request, res: Response) => {
   try {
     console.log(req.body);
-    const { password, employeeId, phoneNumber } = req.body;
+    const { password, employeeId, phoneNumber, client } = req.body;
     let doctors;
     let user;
     let therapists;
@@ -138,12 +139,55 @@ export const userLogin = async (req: Request, res: Response) => {
         throw createTokenError; // Rethrow to handle in the main catch block
       }
       console.log("tokenGeneratedAt", generatedDate, generatedTime);
-      res.status(200).json({ token, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, therapistId: therapists?.id } }); // Send token and user data
+
+      // Mobile clients get a long-lived refresh token so a 1-hour access token
+      // doesn't log them out mid-shift. Web logins are unaffected (no `client`).
+      let refreshToken: string | undefined;
+      if (client === 'mobile') {
+        refreshToken = await issueMobileRefreshToken(user.id);
+      }
+
+      let departmentName: string | null = null;
+      if (user.role === 'doctor') {
+        const doc = await prisma.doctor.findFirst({ where: { userId: user.id }, select: { departmentName: true } });
+        departmentName = doc?.departmentName ?? null;
+      }
+
+      // NS — sidebar capability flags: OPD-station nurses see the OPD
+      // appointments view; IPD/ward-scoped nurses see the clinical menus.
+      const [isOpdNurse, isIpdNurse] = await Promise.all([
+        isOpdStationNurse(user.id),
+        isIpdScopedNurse(user.id),
+      ]);
+
+      res.status(200).json({ token, refreshToken, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, therapistId: therapists?.id, departmentName, isOpdNurse, isIpdNurse } }); // Send token and user data
 
 
     } else {
       res.status(401).json({ error: 'Invalid username or password' });
     }
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Exchanges a valid mobile refresh token for a fresh access token.
+export const mobileRefresh = async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      res.status(400).json({ error: 'Refresh token is required' });
+      return;
+    }
+
+    const user = await validateMobileRefreshToken(refreshToken);
+    if (!user) {
+      res.status(401).json({ error: 'Invalid or expired refresh token' });
+      return;
+    }
+
+    const accessToken = generateToken(user);
+    res.status(200).json({ accessToken });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }

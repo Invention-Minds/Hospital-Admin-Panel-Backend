@@ -6,6 +6,10 @@ import { syncWithHmis } from "../hmis-sync/hmis-sync-wrapper";
 import bucket from "../../config/googeCloudStorage";
 import PDFDocument from "pdfkit";
 import { getClinicalActor, stripAuditFields } from "../../middleware/audit-guard";
+import {
+  applyJmrhLetterhead,
+  drawJmrhFooter,
+} from "../_shared/pdf-letterhead";
 
 /**
  * Typed payloads sent to HMIS for MLC lifecycle events.
@@ -20,6 +24,19 @@ export interface MlcRegisterHmisPayload {
   fir_Date: string | null;
   investigatingOfficer: string | null;
   status: string;
+  // NABH MRD.2 — additive incident/identification detail.
+  incidentDateTime: string | null;
+  incidentPlace: string | null;
+  allegedCause: string | null;
+  weaponType: string | null;
+  broughtBy: string | null;
+  broughtByDetail: string | null;
+  informantName: string | null;
+  informantRelation: string | null;
+  identificationMark1: string | null;
+  identificationMark2: string | null;
+  examiningDoctorRegNo: string | null;
+  referredTo: string | null;
 }
 
 export const buildMlcRegisterPayload = (mlc: {
@@ -31,6 +48,18 @@ export const buildMlcRegisterPayload = (mlc: {
   fir_Date: Date | null;
   investigatingOfficer: string | null;
   status: string;
+  incidentDateTime?: Date | null;
+  incidentPlace?: string | null;
+  allegedCause?: string | null;
+  weaponType?: string | null;
+  broughtBy?: string | null;
+  broughtByDetail?: string | null;
+  informantName?: string | null;
+  informantRelation?: string | null;
+  identificationMark1?: string | null;
+  identificationMark2?: string | null;
+  examiningDoctorRegNo?: string | null;
+  referredTo?: string | null;
 }): MlcRegisterHmisPayload => ({
   mlcNo: mlc.mlcNo,
   emergencyId: mlc.emergencyId,
@@ -40,6 +69,18 @@ export const buildMlcRegisterPayload = (mlc: {
   fir_Date: mlc.fir_Date ? mlc.fir_Date.toISOString() : null,
   investigatingOfficer: mlc.investigatingOfficer,
   status: mlc.status,
+  incidentDateTime: mlc.incidentDateTime ? mlc.incidentDateTime.toISOString() : null,
+  incidentPlace: mlc.incidentPlace ?? null,
+  allegedCause: mlc.allegedCause ?? null,
+  weaponType: mlc.weaponType ?? null,
+  broughtBy: mlc.broughtBy ?? null,
+  broughtByDetail: mlc.broughtByDetail ?? null,
+  informantName: mlc.informantName ?? null,
+  informantRelation: mlc.informantRelation ?? null,
+  identificationMark1: mlc.identificationMark1 ?? null,
+  identificationMark2: mlc.identificationMark2 ?? null,
+  examiningDoctorRegNo: mlc.examiningDoctorRegNo ?? null,
+  referredTo: mlc.referredTo ?? null,
 });
 
 export type MlcUpdateEvent =
@@ -55,6 +96,11 @@ export interface MlcExaminationSection {
   injuries: string;
   photographsTaken: boolean;
   photoUrls: string | null;
+  // NABH MRD.2 — additive examination-consent / opinion detail.
+  consentForExamination: boolean | null;
+  consentForExamTime: string | null;
+  injuryOpinion: string | null;
+  examiningDoctorRegNo: string | null;
 }
 
 export interface MlcSamplesSection {
@@ -67,6 +113,10 @@ export interface MlcReportSection {
   reportSubmittedTo: string | null;
   submissionDate: string | null;
   submissionProof: string | null;
+  // NABH MRD.2 — additive police-intimation detail.
+  policeIntimationTime: string | null;
+  policeIntimationMode: string | null;
+  policeIntimationBy: string | null;
 }
 
 export interface MlcUpdateHmisPayload {
@@ -92,6 +142,10 @@ export const buildMlcExaminationPayload = (
     injuries: string;
     photographsTaken: boolean;
     photoUrls: string | null;
+    consentForExamination?: boolean | null;
+    consentForExamTime?: Date | null;
+    injuryOpinion?: string | null;
+    examiningDoctorRegNo?: string | null;
   },
   updatedBy: string
 ): MlcUpdateHmisPayload => ({
@@ -110,6 +164,12 @@ export const buildMlcExaminationPayload = (
     injuries: mlc.injuries,
     photographsTaken: mlc.photographsTaken,
     photoUrls: mlc.photoUrls,
+    consentForExamination: mlc.consentForExamination ?? null,
+    consentForExamTime: mlc.consentForExamTime
+      ? mlc.consentForExamTime.toISOString()
+      : null,
+    injuryOpinion: mlc.injuryOpinion ?? null,
+    examiningDoctorRegNo: mlc.examiningDoctorRegNo ?? null,
   },
 });
 
@@ -143,6 +203,9 @@ export const buildMlcReportPayload = (
     reportSubmittedTo: string | null;
     submissionDate: Date | null;
     submissionProof: string | null;
+    policeIntimationTime?: Date | null;
+    policeIntimationMode?: string | null;
+    policeIntimationBy?: string | null;
   },
   updatedBy: string
 ): MlcUpdateHmisPayload => ({
@@ -156,6 +219,11 @@ export const buildMlcReportPayload = (
     reportSubmittedTo: mlc.reportSubmittedTo,
     submissionDate: mlc.submissionDate ? mlc.submissionDate.toISOString() : null,
     submissionProof: mlc.submissionProof,
+    policeIntimationTime: mlc.policeIntimationTime
+      ? mlc.policeIntimationTime.toISOString()
+      : null,
+    policeIntimationMode: mlc.policeIntimationMode ?? null,
+    policeIntimationBy: mlc.policeIntimationBy ?? null,
   },
 });
 
@@ -217,8 +285,27 @@ export const registerMlcCase = async (
     const actorId = getClinicalActor(req, res);
     if (actorId === null) return;
 
-    const { emergencyId, caseType, policeStationName, fir_No, fir_Date } =
-      req.body;
+    const {
+      emergencyId,
+      caseType,
+      policeStationName,
+      fir_No,
+      fir_Date,
+      // NABH MRD.2 — additive incident/identification detail.
+      investigatingOfficer,
+      incidentDateTime,
+      incidentPlace,
+      allegedCause,
+      weaponType,
+      broughtBy,
+      broughtByDetail,
+      informantName,
+      informantRelation,
+      identificationMark1,
+      identificationMark2,
+      examiningDoctorRegNo,
+      referredTo,
+    } = req.body;
 
     if (!emergencyId || !caseType) {
       res
@@ -263,6 +350,20 @@ export const registerMlcCase = async (
         policeStationName,
         fir_No,
         fir_Date: fir_Date ? new Date(fir_Date) : null,
+        // NABH MRD.2 — additive optional incident/identification detail.
+        investigatingOfficer: investigatingOfficer ?? null,
+        incidentDateTime: incidentDateTime ? new Date(incidentDateTime) : null,
+        incidentPlace: incidentPlace ?? null,
+        allegedCause: allegedCause ?? null,
+        weaponType: weaponType ?? null,
+        broughtBy: broughtBy ?? null,
+        broughtByDetail: broughtByDetail ?? null,
+        informantName: informantName ?? null,
+        informantRelation: informantRelation ?? null,
+        identificationMark1: identificationMark1 ?? null,
+        identificationMark2: identificationMark2 ?? null,
+        examiningDoctorRegNo: examiningDoctorRegNo ?? null,
+        referredTo: referredTo ?? null,
         patientConsent: false, // To be updated after patient examination
         firstExaminationDone: false, // To be updated after examination
         injuries: "", // To be filled during examination
@@ -327,6 +428,8 @@ export const getMlcCase = async (
             presentingComplaint: true,
           },
         },
+        // NABH MRD.2 — per-injury detail rows.
+        injuries_detail: { orderBy: { createdAt: "asc" } },
       },
     });
 
@@ -348,6 +451,34 @@ export const getMlcCase = async (
 /**
  * Get all MLC cases with filters
  */
+/**
+ * GET /api/mlc/mine
+ * MLC cases belonging to the logged-in doctor — i.e. cases whose linked
+ * emergency was referred/assigned to them (same doctor link as the Emergency
+ * worklist). 403-free: returns an empty list if the user isn't a doctor.
+ */
+export const getMyMlcCases = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = typeof req.user?.id === "number" ? req.user.id : null;
+    if (userId == null) { res.status(200).json({ data: [] }); return; }
+    const doctor = await prisma.doctor.findFirst({ where: { userId }, select: { id: true } });
+    if (!doctor) { res.status(200).json({ data: [] }); return; }
+
+    const rows = await prisma.mlcCase.findMany({
+      where: { emergency: { referrals: { some: { referredToDoctorId: doctor.id } } } },
+      include: { emergency: { select: { prn: true, patientName: true, age: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    res.status(200).json({ data: rows });
+  } catch (error) {
+    console.error("[mlc] getMyMlcCases failed:", error);
+    res.status(500).json({ error: "Failed to load MLC cases" });
+  }
+};
+
 export const getMlcCaseList = async (
   req: Request,
   res: Response
@@ -411,6 +542,11 @@ export const recordExamination = async (
       injuries,
       photographsTaken,
       photoUrls,
+      // NABH MRD.2 — additive examination-consent / opinion detail.
+      consentForExamination,
+      consentForExamTime,
+      injuryOpinion,
+      examiningDoctorRegNo,
     } = req.body;
 
     const mlcCase = await prisma.mlcCase.update({
@@ -423,6 +559,16 @@ export const recordExamination = async (
         injuries,
         photographsTaken,
         photoUrls: photoUrls ? JSON.stringify(photoUrls) : null,
+        // NABH MRD.2 — additive optional examination detail.
+        consentForExamination:
+          consentForExamination === undefined
+            ? undefined
+            : Boolean(consentForExamination),
+        consentForExamTime: consentForExamTime
+          ? new Date(consentForExamTime)
+          : undefined,
+        injuryOpinion: injuryOpinion ?? undefined,
+        examiningDoctorRegNo: examiningDoctorRegNo ?? undefined,
         status: "examination-done",
         updatedBy: req.user!.username,
         updatedById: actorId,
@@ -515,7 +661,15 @@ export const submitReport = async (
     if (actorId === null) return;
 
     const { id } = req.params;
-    const { finalReport, reportSubmittedTo, submissionProof } = req.body;
+    const {
+      finalReport,
+      reportSubmittedTo,
+      submissionProof,
+      // NABH MRD.2 — additive police-intimation detail.
+      policeIntimationTime,
+      policeIntimationMode,
+      policeIntimationBy,
+    } = req.body;
 
     if (!finalReport) {
       res
@@ -531,6 +685,12 @@ export const submitReport = async (
         reportSubmittedTo,
         submissionDate: new Date(),
         submissionProof,
+        // NABH MRD.2 — additive optional police-intimation detail.
+        policeIntimationTime: policeIntimationTime
+          ? new Date(policeIntimationTime)
+          : undefined,
+        policeIntimationMode: policeIntimationMode ?? undefined,
+        policeIntimationBy: policeIntimationBy ?? undefined,
         status: "report-submitted",
         updatedBy: req.user!.username,
         updatedById: actorId,
@@ -666,6 +826,15 @@ export const updateMlcCase = async (
     delete body.emergencyId;
 
     if (body.fir_Date) body.fir_Date = new Date(body.fir_Date as string | Date);
+    // NABH MRD.2 — coerce additive date-string fields to Date.
+    if (body.incidentDateTime)
+      body.incidentDateTime = new Date(body.incidentDateTime as string | Date);
+    if (body.consentForExamTime)
+      body.consentForExamTime = new Date(body.consentForExamTime as string | Date);
+    if (body.policeIntimationTime)
+      body.policeIntimationTime = new Date(body.policeIntimationTime as string | Date);
+    if (body.consentForExamination !== undefined)
+      body.consentForExamination = Boolean(body.consentForExamination);
     if (body.photoUrls && Array.isArray(body.photoUrls)) {
       body.photoUrls = JSON.stringify(body.photoUrls);
     }
@@ -989,6 +1158,8 @@ export const generateMlcReportPdf = async (
     const doc = new PDFDocument({ margin: 50, bufferPages: true });
     doc.pipe(res);
 
+    applyJmrhLetterhead(doc);
+
     doc.fontSize(16).font("Helvetica-Bold").text("MEDICO-LEGAL CASE REPORT", { align: "center" });
     doc.moveDown(0.5);
     doc.fontSize(10).font("Helvetica").fillColor("#666")
@@ -1055,6 +1226,8 @@ export const generateMlcReportPdf = async (
       .text(`Generated: ${new Date().toISOString()}`, { align: "center" })
       .fillColor("black");
 
+    drawJmrhFooter(doc, new Date());
+
     doc.end();
   } catch (error) {
     console.error("Error generating MLC PDF:", error);
@@ -1097,6 +1270,99 @@ export const getPendingReports = async (
     });
   } catch (error) {
     console.error("Error retrieving pending reports:", error);
+    res.status(500).json({ message: "Internal server error", error });
+  }
+};
+
+/**
+ * NABH MRD.2 — list per-injury detail rows for a case.
+ */
+export const listInjuries = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const injuries = await prisma.mlcInjury.findMany({
+      where: { mlcCaseId: parseInt(id) },
+      orderBy: { createdAt: "asc" },
+    });
+
+    res.status(200).json({ message: "Injuries retrieved", data: injuries });
+  } catch (error) {
+    console.error("Error retrieving MLC injuries:", error);
+    res.status(500).json({ message: "Internal server error", error });
+  }
+};
+
+/**
+ * NABH MRD.2 — add a per-injury detail row to a case. `site` is required.
+ */
+export const addInjury = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
+    const { id } = req.params;
+    const {
+      site,
+      injuryType,
+      size,
+      ageOfInjury,
+      weaponLikely,
+      simpleOrGrievous,
+      notes,
+    } = req.body;
+
+    if (!site) {
+      res.status(400).json({ message: "Missing required field: site" });
+      return;
+    }
+
+    const injury = await prisma.mlcInjury.create({
+      data: {
+        mlcCaseId: parseInt(id),
+        site,
+        injuryType: injuryType ?? null,
+        size: size ?? null,
+        ageOfInjury: ageOfInjury ?? null,
+        weaponLikely: weaponLikely ?? null,
+        simpleOrGrievous: simpleOrGrievous ?? null,
+        notes: notes ?? null,
+      },
+    });
+
+    res.status(201).json({ message: "Injury added", data: injury });
+  } catch (error) {
+    console.error("Error adding MLC injury:", error);
+    res.status(500).json({ message: "Internal server error", error });
+  }
+};
+
+/**
+ * NABH MRD.2 — delete a per-injury detail row from a case.
+ */
+export const deleteInjury = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+
+    const { injuryId } = req.params;
+
+    await prisma.mlcInjury.delete({
+      where: { id: parseInt(injuryId) },
+    });
+
+    res.status(200).json({ message: "Injury deleted" });
+  } catch (error) {
+    console.error("Error deleting MLC injury:", error);
     res.status(500).json({ message: "Internal server error", error });
   }
 };

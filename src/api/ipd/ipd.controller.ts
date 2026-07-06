@@ -10,6 +10,7 @@ import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
 import { generateAndStreamDischargePDF } from './discharge-pdf-generator';
 import { createFollowUpAppointment, FollowUpResult } from './follow-up-automation';
 import { getClinicalActor } from '../../middleware/audit-guard';
+import { getNurseAllowedWardIds } from '../_shared/nursing-roles';
 
 /** Sprint 4a Phase 1c — concise human-readable summary for the discharge response. */
 const summarizeFollowUp = (r: FollowUpResult): string => {
@@ -167,48 +168,81 @@ export const createIpdAdmission = async (
       return;
     }
 
-    // Generate admission number
-    const lastAdmission = await prisma.ipdAdmission.findFirst({
-      orderBy: { id: 'desc' },
-      select: { admissionNo: true },
-    });
+    // Generate admission number — JMRH-IPD-<4-digit>. Filter by prefix so
+    // seed rows (e.g. SEED-IPD-001) don't poison the counter. Order by the
+    // admissionNo string itself: zero-padded 4-digit suffixes sort correctly
+    // lexicographically (so JMRH-IPD-0010 > JMRH-IPD-0009).
+    const computeNextAdmissionNo = async (): Promise<string> => {
+      const last = await prisma.ipdAdmission.findFirst({
+        where: { admissionNo: { startsWith: 'JMRH-IPD-' } },
+        orderBy: { admissionNo: 'desc' },
+        select: { admissionNo: true },
+      });
+      let nextNumber = 1;
+      if (last?.admissionNo) {
+        const match = last.admissionNo.match(/JMRH-IPD-(\d+)$/);
+        if (match) {
+          nextNumber = parseInt(match[1], 10) + 1;
+        }
+      }
+      return `JMRH-IPD-${String(nextNumber).padStart(4, '0')}`;
+    };
 
-    let nextNumber = 1;
-    if (lastAdmission?.admissionNo) {
-      const match = lastAdmission.admissionNo.match(/IPD-(\d+)$/);
-      if (match) {
-        nextNumber = parseInt(match[1]) + 1;
+    // Create admission with a small retry loop to survive concurrent submits
+    // (two requests racing both read the same "last" + try the same next).
+    let admission: Awaited<ReturnType<typeof prisma.ipdAdmission.create>> | null = null;
+    let admissionNo = '';
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      admissionNo = await computeNextAdmissionNo();
+      try {
+        admission = await prisma.ipdAdmission.create({
+          data: {
+            admissionNo,
+            prn,
+            admissionDate: new Date(),
+            admissionTime: new Date().toLocaleTimeString(),
+            admissionType: admissionType || 'routine',
+            sourceModule: sourceModule || 'direct',
+            referralOpdId,
+            referralEmergencyId,
+            referralMlcId,
+            referringDoctor,
+            admittingDoctor,
+            department: department || 'General',
+            wardId,
+            bedId,
+            roomType,
+            diagnosis,
+            status: 'admitted',
+            createdBy: req.user?.username || 'system',
+          },
+          include: {
+            bed: true,
+            ward: true,
+          },
+        });
+        break; // success — exit retry loop
+      } catch (err: unknown) {
+        // P2002 = unique-constraint violation. Concurrent submits race the
+        // findFirst + insert: both read the same "last" and try the same
+        // next number; the second one fails. Recompute and retry.
+        if (
+          err && typeof err === 'object' && 'code' in err &&
+          (err as { code?: string }).code === 'P2002' &&
+          attempt < 4
+        ) {
+          continue;
+        }
+        throw err;
       }
     }
-    const admissionNo = `JMRH-IPD-${String(nextNumber).padStart(4, '0')}`;
 
-    // Create admission
-    const admission = await prisma.ipdAdmission.create({
-      data: {
-        admissionNo,
-        prn,
-        admissionDate: new Date(),
-        admissionTime: new Date().toLocaleTimeString(),
-        admissionType: admissionType || 'routine',
-        sourceModule: sourceModule || 'direct',
-        referralOpdId,
-        referralEmergencyId,
-        referralMlcId,
-        referringDoctor,
-        admittingDoctor,
-        department: department || 'General',
-        wardId,
-        bedId,
-        roomType,
-        diagnosis,
-        status: 'admitted',
-        createdBy: req.user?.username || 'system',
-      },
-      include: {
-        bed: true,
-        ward: true,
-      },
-    });
+    if (!admission) {
+      res.status(500).json({
+        message: 'Could not allocate a unique admission number after 5 attempts',
+      });
+      return;
+    }
 
     // Mark bed as occupied
     await prisma.ipdBed.update({
@@ -304,10 +338,33 @@ export const getIpdAdmissions = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { status = 'admitted', wardId, page = 1, limit = 10 } = req.query;
+    const { status = 'admitted', wardId, inIcu, page = 1, limit = 10 } = req.query;
 
     const where: any = { status };
     if (wardId) where.wardId = wardId;
+    // Phase 9.6 — filter to admissions currently in ICU (icuAdmittedAt set + not yet stepped down).
+    if (inIcu === '1' || inIcu === 'true') {
+      where.icuAdmittedAt = { not: null };
+      where.icuDischargedAt = null;
+    }
+
+    // NS-3 — ward scoping. A bedside nurse sees only admissions in the wards
+    // covered by their station(s) / home ward / today's shift. super_admin and
+    // the Nursing Superintendent are unrestricted (allowedWardIds === null).
+    const allowedWardIds = await getNurseAllowedWardIds(req.user?.id);
+    if (allowedWardIds) {
+      if (allowedWardIds.length === 0) {
+        // Scoped nurse with no ward mapping yet → sees nothing until assigned.
+        where.wardId = { in: [] as string[] };
+      } else if (wardId) {
+        // A specific ward was requested — honour it only if it's in scope.
+        where.wardId = allowedWardIds.includes(wardId as string)
+          ? (wardId as string)
+          : { in: [] as string[] };
+      } else {
+        where.wardId = { in: allowedWardIds };
+      }
+    }
 
     const admissions = await prisma.ipdAdmission.findMany({
       where,
@@ -318,6 +375,9 @@ export const getIpdAdmissions = async (
           take: 1,
           orderBy: { date: 'desc' },
         },
+        // Phase 9.15 — discharge details only matter for the discharges list;
+        // keep the active-admissions payload lean by including it only then.
+        ...(status === 'discharged' ? { discharge: true } : {}),
       },
       orderBy: { admissionDate: 'desc' },
       skip: (parseInt(page as string) - 1) * parseInt(limit as string),
@@ -418,13 +478,29 @@ export const addProgressNote = async (
       vitalsTemp,
       vitalsSpO2,
       vitalsRR,
+      // Phase 9.13 — optional re-order of the vitals monitoring frequency.
+      vitalsMonitoringFrequency,
     } = req.body;
+
+    const VALID_MONITORING_FREQUENCIES = ['continuous', '1h', '2h', '4h', '6h', '8h', '12h', 'bd'];
 
     // Validate required fields
     if (!doctorName || !subjective || !objective || !assessment || !plan) {
       res.status(400).json({
         message:
           'Missing required fields: doctorName, subjective, objective, assessment, plan',
+      });
+      return;
+    }
+
+    // Phase 9.13 — validate the optional monitoring-frequency re-order up
+    // front, before anything is written.
+    if (
+      vitalsMonitoringFrequency !== undefined && vitalsMonitoringFrequency !== null &&
+      !VALID_MONITORING_FREQUENCIES.includes(vitalsMonitoringFrequency)
+    ) {
+      res.status(400).json({
+        message: `vitalsMonitoringFrequency must be one of: ${VALID_MONITORING_FREQUENCIES.join(', ')}`,
       });
       return;
     }
@@ -459,6 +535,20 @@ export const addProgressNote = async (
         createdById: actorId,
       },
     });
+
+    // Phase 9.13 — if the doctor re-ordered the vitals monitoring frequency
+    // on this note, persist it on the admission (drives the Treatment
+    // Dashboard "vitals overdue" check).
+    if (vitalsMonitoringFrequency !== undefined && vitalsMonitoringFrequency !== null) {
+      await prisma.ipdAdmission.update({
+        where: { id: admissionId },
+        data: {
+          vitalsMonitoringFrequency,
+          vitalsMonitoringSetBy: req.user?.username ?? null,
+          vitalsMonitoringSetAt: new Date(),
+        },
+      });
+    }
 
     res.status(201).json({
       message: 'Progress note added successfully',
@@ -598,11 +688,15 @@ export const createDischarge = async (
       },
     });
 
-    // Mark bed as available (NABH ACC.5, plan workflow step 8)
-    await prisma.ipdBed.update({
-      where: { id: admission.bedId },
-      data: { status: 'available' },
-    });
+    // Mark bed as available (NABH ACC.5, plan workflow step 8). bedId is
+    // nullable post-Phase-3 (PROPOSED admissions have no bed); only flip
+    // when one was actually assigned.
+    if (admission.bedId) {
+      await prisma.ipdBed.update({
+        where: { id: admission.bedId },
+        data: { status: 'available' },
+      });
+    }
 
     // Push to HMIS ADT via the audit-wrapped pipeline (inline-await per Sprint 2 latency policy).
     // Wrapper writes success AND failure audit logs; swallowErrors defaults to true because
@@ -748,8 +842,9 @@ export const transferPatient = async (
       return;
     }
 
-    const fromBedId = admission.bedId;
-    const fromWardId = admission.wardId;
+    // Once status='admitted', bed and ward are guaranteed assigned.
+    const fromBedId = admission.bedId as string;
+    const fromWardId = admission.wardId as string;
 
     // Atomic bed flips + admission update. Either all three commit or none do —
     // prevents orphan state where admission points at the new bed but beds are in wrong status.

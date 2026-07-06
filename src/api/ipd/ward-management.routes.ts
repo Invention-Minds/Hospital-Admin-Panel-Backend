@@ -8,6 +8,7 @@ import {
   getBedById,
   getAvailableBeds,
   updateBedStatus,
+  updateBed,
   createBedsForWard,
   getBedCensus,
   getBedCensusReport,
@@ -36,6 +37,7 @@ router.get('/beds', getAllBeds);
 router.get('/beds/available', getAvailableBeds);
 router.get('/bed/:bedId', getBedById);
 router.put('/bed/:bedId/status', updateBedStatus);
+router.put('/bed/:bedId', authenticateToken, updateBed);
 router.post('/ward/:wardId/beds', createBedsForWard);
 
 // Bed reservation & maintenance

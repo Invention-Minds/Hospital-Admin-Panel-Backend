@@ -10,14 +10,18 @@ import {
 import { syncWithHmis } from "../hmis-sync/hmis-sync-wrapper";
 import bucket from "../../config/googeCloudStorage";
 import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
 import { getClinicalActor, stripAuditFields } from "../../middleware/audit-guard";
+import { raiseByRule } from "../incident/rule-catalogue";
 
 /**
  * Typed payloads sent to HMIS for LAMA / DAMA lifecycle events.
  * Exported so tests can assert exact shapes without re-deriving them.
  */
 export interface LamaCreateHmisPayload {
-  emergencyId: number;
+  emergencyId: number | null;
+  admissionId: string | null;
   lamaTime: string;
   doctorAdvice: string;
   riskExplained: boolean;
@@ -29,7 +33,8 @@ export interface LamaCreateHmisPayload {
 }
 
 export const buildLamaCreatePayload = (lama: {
-  emergencyId: number;
+  emergencyId: number | null;
+  admissionId?: string | null;
   lamaTime: Date;
   doctorAdvice: string;
   riskExplained: boolean;
@@ -40,6 +45,7 @@ export const buildLamaCreatePayload = (lama: {
   createdBy: string | null;
 }): LamaCreateHmisPayload => ({
   emergencyId: lama.emergencyId,
+  admissionId: lama.admissionId ?? null,
   lamaTime: lama.lamaTime.toISOString(),
   doctorAdvice: lama.doctorAdvice,
   riskExplained: lama.riskExplained,
@@ -90,7 +96,8 @@ export const buildLamaUpdatePayload = (
 });
 
 export interface DamaCreateHmisPayload {
-  emergencyId: number;
+  emergencyId: number | null;
+  admissionId: string | null;
   dischargeTime: string;
   doctorRecommendation: string;
   patientDeclinesAdvice: boolean;
@@ -102,7 +109,8 @@ export interface DamaCreateHmisPayload {
 }
 
 export const buildDamaCreatePayload = (dama: {
-  emergencyId: number;
+  emergencyId: number | null;
+  admissionId?: string | null;
   dischargeTime: Date;
   doctorRecommendation: string;
   patientDeclinesAdvice: boolean;
@@ -113,6 +121,7 @@ export const buildDamaCreatePayload = (dama: {
   createdBy: string | null;
 }): DamaCreateHmisPayload => ({
   emergencyId: dama.emergencyId,
+  admissionId: dama.admissionId ?? null,
   dischargeTime: dama.dischargeTime.toISOString(),
   doctorRecommendation: dama.doctorRecommendation,
   patientDeclinesAdvice: dama.patientDeclinesAdvice,
@@ -229,6 +238,7 @@ export const createLamaRecord = async (
 
     const {
       emergencyId,
+      admissionId,
       doctorAdvice,
       riskExplained,
       patientSignature,
@@ -237,42 +247,70 @@ export const createLamaRecord = async (
       reasonForLama,
     } = req.body;
 
-    if (!emergencyId || !doctorAdvice || !reasonForLama) {
+    // Exactly one source link must be provided (emergency OR IPD admission).
+    if ((emergencyId && admissionId) || (!emergencyId && !admissionId)) {
       res.status(400).json({
-        message:
-          "Missing required fields: emergencyId, doctorAdvice, reasonForLama",
+        message: "Provide exactly one of emergencyId / admissionId",
       });
       return;
     }
 
-    // Verify emergency exists
-    const emergency = await prisma.emergency.findUnique({
-      where: { id: parseInt(emergencyId) },
-    });
-
-    if (!emergency) {
-      res.status(404).json({ message: "Emergency case not found" });
+    if (!doctorAdvice || !reasonForLama) {
+      res.status(400).json({
+        message: "Missing required fields: doctorAdvice, reasonForLama",
+      });
       return;
     }
 
-    // Check if LAMA already exists
-    const existingLama = await prisma.lamaRecord.findUnique({
-      where: { emergencyId: parseInt(emergencyId) },
-    });
+    // Resolve the linked source (emergency or admission) and pre-check duplicates.
+    let emergency:
+      | { patientName: string | null; patientPrn: string | null }
+      | null = null;
+    let admission: { prn: string | null } | null = null;
 
-    if (existingLama) {
-      res
-        .status(400)
-        .json({
-          message: "LAMA record already exists for this emergency",
-        });
-      return;
+    if (emergencyId) {
+      emergency = await prisma.emergency.findUnique({
+        where: { id: parseInt(emergencyId) },
+        select: { patientName: true, patientPrn: true },
+      });
+      if (!emergency) {
+        res.status(404).json({ message: "Emergency case not found" });
+        return;
+      }
+      const existingLama = await prisma.lamaRecord.findUnique({
+        where: { emergencyId: parseInt(emergencyId) },
+      });
+      if (existingLama) {
+        res
+          .status(400)
+          .json({ message: "LAMA record already exists for this emergency" });
+        return;
+      }
+    } else {
+      admission = await prisma.ipdAdmission.findUnique({
+        where: { id: admissionId },
+        select: { prn: true },
+      });
+      if (!admission) {
+        res.status(404).json({ message: "IPD admission not found" });
+        return;
+      }
+      const existingLama = await prisma.lamaRecord.findFirst({
+        where: { admissionId },
+      });
+      if (existingLama) {
+        res
+          .status(400)
+          .json({ message: "LAMA record already exists for this admission" });
+        return;
+      }
     }
 
     // Create LAMA record — NABH MRD.1 coexistence stamping.
     const lamaRecord = await prisma.lamaRecord.create({
       data: {
-        emergencyId: parseInt(emergencyId),
+        emergencyId: emergencyId ? parseInt(emergencyId) : null,
+        admissionId: admissionId ?? null,
         lamaTime: new Date(),
         doctorAdvice,
         riskExplained,
@@ -285,11 +323,24 @@ export const createLamaRecord = async (
       },
     });
 
-    // Update emergency status
-    await prisma.emergency.update({
-      where: { id: parseInt(emergencyId) },
-      data: { status: "LAMA" },
-    });
+    // Phase 9.24 — auto-incident: LAMA raised without a patient signature.
+    if (!patientSignature) {
+      raiseByRule('LAMA_DAMA_WITHOUT_SIGNATURE', {
+        emergencyId: emergencyId ? parseInt(emergencyId) : null,
+        admissionId: admissionId ?? null,
+        patientName: emergency?.patientName ?? null,
+        patientPrn: emergency?.patientPrn ?? admission?.prn ?? null,
+        extras: { type: 'LAMA', lamaId: lamaRecord.id },
+      }).catch(() => { /* hooks are best-effort */ });
+    }
+
+    // Update source status (emergency cases flip to LAMA; IPD status is owned by the IPD module).
+    if (emergencyId) {
+      await prisma.emergency.update({
+        where: { id: parseInt(emergencyId) },
+        data: { status: "LAMA" },
+      });
+    }
 
     // Push to HMIS via the audit-wrapped pipeline (inline-await per Sprint 2 latency policy).
     const hmisOutcome = await syncWithHmis({
@@ -336,6 +387,7 @@ export const createDamaRecord = async (
 
     const {
       emergencyId,
+      admissionId,
       doctorRecommendation,
       patientDeclinesAdvice,
       patientSignature,
@@ -344,41 +396,70 @@ export const createDamaRecord = async (
       followUpAdvice,
     } = req.body;
 
-    if (!emergencyId || !doctorRecommendation) {
+    // Exactly one source link must be provided (emergency OR IPD admission).
+    if ((emergencyId && admissionId) || (!emergencyId && !admissionId)) {
       res.status(400).json({
-        message: "Missing required fields: emergencyId, doctorRecommendation",
+        message: "Provide exactly one of emergencyId / admissionId",
       });
       return;
     }
 
-    // Verify emergency exists
-    const emergency = await prisma.emergency.findUnique({
-      where: { id: parseInt(emergencyId) },
-    });
-
-    if (!emergency) {
-      res.status(404).json({ message: "Emergency case not found" });
+    if (!doctorRecommendation) {
+      res.status(400).json({
+        message: "Missing required fields: doctorRecommendation",
+      });
       return;
     }
 
-    // Check if DAMA already exists
-    const existingDama = await prisma.damaRecord.findUnique({
-      where: { emergencyId: parseInt(emergencyId) },
-    });
+    // Resolve the linked source (emergency or admission) and pre-check duplicates.
+    let emergency:
+      | { patientName: string | null; patientPrn: string | null }
+      | null = null;
+    let admission: { prn: string | null } | null = null;
 
-    if (existingDama) {
-      res
-        .status(400)
-        .json({
-          message: "DAMA record already exists for this emergency",
-        });
-      return;
+    if (emergencyId) {
+      emergency = await prisma.emergency.findUnique({
+        where: { id: parseInt(emergencyId) },
+        select: { patientName: true, patientPrn: true },
+      });
+      if (!emergency) {
+        res.status(404).json({ message: "Emergency case not found" });
+        return;
+      }
+      const existingDama = await prisma.damaRecord.findUnique({
+        where: { emergencyId: parseInt(emergencyId) },
+      });
+      if (existingDama) {
+        res
+          .status(400)
+          .json({ message: "DAMA record already exists for this emergency" });
+        return;
+      }
+    } else {
+      admission = await prisma.ipdAdmission.findUnique({
+        where: { id: admissionId },
+        select: { prn: true },
+      });
+      if (!admission) {
+        res.status(404).json({ message: "IPD admission not found" });
+        return;
+      }
+      const existingDama = await prisma.damaRecord.findFirst({
+        where: { admissionId },
+      });
+      if (existingDama) {
+        res
+          .status(400)
+          .json({ message: "DAMA record already exists for this admission" });
+        return;
+      }
     }
 
     // Create DAMA record — NABH MRD.1 coexistence stamping.
     const damaRecord = await prisma.damaRecord.create({
       data: {
-        emergencyId: parseInt(emergencyId),
+        emergencyId: emergencyId ? parseInt(emergencyId) : null,
+        admissionId: admissionId ?? null,
         dischargeTime: new Date(),
         doctorRecommendation,
         patientDeclinesAdvice,
@@ -391,11 +472,24 @@ export const createDamaRecord = async (
       },
     });
 
-    // Update emergency status
-    await prisma.emergency.update({
-      where: { id: parseInt(emergencyId) },
-      data: { status: "DAMA" },
-    });
+    // Phase 9.24 — auto-incident: DAMA raised without a patient signature.
+    if (!patientSignature) {
+      raiseByRule('LAMA_DAMA_WITHOUT_SIGNATURE', {
+        emergencyId: emergencyId ? parseInt(emergencyId) : null,
+        admissionId: admissionId ?? null,
+        patientName: emergency?.patientName ?? null,
+        patientPrn: emergency?.patientPrn ?? admission?.prn ?? null,
+        extras: { type: 'DAMA', damaId: damaRecord.id },
+      }).catch(() => { /* hooks are best-effort */ });
+    }
+
+    // Update source status (emergency cases flip to DAMA; IPD status is owned by the IPD module).
+    if (emergencyId) {
+      await prisma.emergency.update({
+        where: { id: parseInt(emergencyId) },
+        data: { status: "DAMA" },
+      });
+    }
 
     // Push to HMIS via the audit-wrapped pipeline (inline-await per Sprint 2 latency policy).
     const hmisOutcome = await syncWithHmis({
@@ -587,7 +681,10 @@ export const getAllLamaRecords = async (
 ): Promise<void> => {
   try {
     const records = await prisma.lamaRecord.findMany({
-      include: { emergency: { select: { prn: true, patientName: true } } },
+      include: {
+        emergency: { select: { prn: true, patientName: true } },
+        admission: { select: { admissionNo: true, prn: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({ message: "LAMA records retrieved", data: records });
@@ -606,7 +703,10 @@ export const getAllDamaRecords = async (
 ): Promise<void> => {
   try {
     const records = await prisma.damaRecord.findMany({
-      include: { emergency: { select: { prn: true, patientName: true } } },
+      include: {
+        emergency: { select: { prn: true, patientName: true } },
+        admission: { select: { admissionNo: true, prn: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({ message: "DAMA records retrieved", data: records });
@@ -932,11 +1032,11 @@ const downloadDocumentation = async (
       type === "lama"
         ? await prisma.lamaRecord.findUnique({
             where: { id: parseInt(id) },
-            include: { emergency: true },
+            include: { emergency: true, admission: true },
           })
         : await prisma.damaRecord.findUnique({
             where: { id: parseInt(id) },
-            include: { emergency: true },
+            include: { emergency: true, admission: true },
           });
 
     if (!record) {
@@ -975,11 +1075,11 @@ const generateReportPdf = async (
       type === "lama"
         ? await prisma.lamaRecord.findUnique({
             where: { id: parseInt(id) },
-            include: { emergency: true },
+            include: { emergency: true, admission: true },
           })
         : await prisma.damaRecord.findUnique({
             where: { id: parseInt(id) },
-            include: { emergency: true },
+            include: { emergency: true, admission: true },
           });
 
     if (!record) {
@@ -993,72 +1093,226 @@ const generateReportPdf = async (
       `attachment; filename="${type.toUpperCase()}-Report-${id}.pdf"`
     );
 
-    const doc = new PDFDocument({ margin: 50, bufferPages: true });
+    const doc = new PDFDocument({ size: "A4", margin: 50, bufferPages: true });
     doc.pipe(res);
 
+    const generatedAt = new Date();
+    const HOSPITAL_NAME = "Jayadev Memorial Rashtrotthana Hospital & Research Centre";
+    const TEAL = "#0098A3";
+    const LEFT = doc.page.margins.left; // 50
+    const RIGHT = doc.page.width - doc.page.margins.right; // page width - 50
+    const CONTENT_WIDTH = RIGHT - LEFT;
+
+    // Branded letterhead. The hospital's PDF template (used elsewhere for the
+    // estimation form) carries the header band + footer band + watermark, so we
+    // use it as a full-page background. If the asset is unavailable at runtime,
+    // fall back to a clean text letterhead so generation never fails.
+    const backgroundImagePath = path.join(
+      __dirname,
+      "../../assets/JMRH Estimation Form.png"
+    );
+    const hasLetterhead = fs.existsSync(backgroundImagePath);
+
+    const drawLetterhead = (): void => {
+      if (hasLetterhead) {
+        doc.image(backgroundImagePath, 0, 0, { width: 595, height: 842 });
+        doc.y = 120; // start body below the template header band
+      } else {
+        doc.save();
+        doc.fontSize(15).font("Helvetica-Bold").fillColor("black")
+          .text(HOSPITAL_NAME, LEFT, 50, { width: CONTENT_WIDTH, align: "center" });
+        const ruleY = doc.y + 4;
+        doc.moveTo(LEFT, ruleY).lineTo(RIGHT, ruleY).lineWidth(1).strokeColor("#999").stroke();
+        doc.restore();
+      }
+    };
+
+    // Re-paint the letterhead on every new page so multi-page reports stay branded.
+    doc.on("pageAdded", drawLetterhead);
+    drawLetterhead();
+
+    // Title + subtitle below the header band (template header occupies the top
+    // ~110pt; text fallback uses a smaller top offset).
+    const titleTop = hasLetterhead ? 120 : 95;
     const title =
       type === "lama"
         ? "LEAVE AGAINST MEDICAL ADVICE (LAMA)"
         : "DISCHARGE AGAINST MEDICAL ADVICE (DAMA)";
 
-    doc.fontSize(16).font("Helvetica-Bold").text(title, { align: "center" });
-    doc.moveDown(0.5);
+    doc.fontSize(16).font("Helvetica-Bold").fillColor(TEAL)
+      .text(title, LEFT, titleTop, { width: CONTENT_WIDTH, align: "center" });
+    doc.moveDown(0.4);
     doc.fontSize(10).font("Helvetica").fillColor("#666")
-      .text("CONFIDENTIAL — NABH ACC.6 Compliant Documentation", { align: "center" })
+      .text("CONFIDENTIAL — NABH ACC.6 Compliant Documentation", LEFT, doc.y, {
+        width: CONTENT_WIDTH,
+        align: "center",
+      })
       .fillColor("black");
-    doc.moveDown(1);
+    doc.moveDown(1.2);
 
-    if (record.emergency) {
-      doc.fontSize(11).font("Helvetica-Bold").text("Patient Information:");
-      doc.font("Helvetica").fontSize(10);
-      doc.text(`PRN: ${record.emergency.prn}`);
-      doc.text(`Name: ${record.emergency.patientName}`);
-      if (record.emergency.phoneNumber) doc.text(`Phone: ${record.emergency.phoneNumber}`);
-      doc.moveDown(0.5);
+    // Section heading helper — consistent teal label with a thin underline.
+    const sectionHeading = (heading: string): void => {
+      doc.fontSize(12).font("Helvetica-Bold").fillColor(TEAL)
+        .text(heading, LEFT, doc.y, { width: CONTENT_WIDTH });
+      const y = doc.y + 2;
+      doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.5).strokeColor("#cccccc").stroke();
+      doc.fillColor("black");
+      doc.moveDown(0.6);
+    };
+
+    // Labelled "Label: value" line with consistent label styling.
+    const fieldRow = (label: string, value: string): void => {
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333")
+        .text(`${label}: `, LEFT, doc.y, { continued: true })
+        .font("Helvetica").fillColor("black")
+        .text(value || "—");
+    };
+
+    // Patient block — emergency-sourced records show the ER PRN/name/phone;
+    // IPD-sourced records fall back to the admission's PRN + admission no.
+    if (record.emergency || record.admission) {
+      sectionHeading("Patient Information");
+      // Two-column labelled block: PRN | Name (or Admission No) on one row.
+      const colGap = 20;
+      const colWidth = (CONTENT_WIDTH - colGap) / 2;
+      const rowY = doc.y;
+      const labelledCell = (label: string, value: string, x: number, w: number): void => {
+        doc.fontSize(10).font("Helvetica-Bold").fillColor("#333")
+          .text(`${label}: `, x, rowY, { continued: true, width: w })
+          .font("Helvetica").fillColor("black")
+          .text(value || "—");
+      };
+      if (record.emergency) {
+        labelledCell("PRN", String(record.emergency.prn ?? ""), LEFT, colWidth);
+        labelledCell("Name", record.emergency.patientName ?? "", LEFT + colWidth + colGap, colWidth);
+        doc.moveDown(0.4);
+        if (record.emergency.phoneNumber) fieldRow("Phone", record.emergency.phoneNumber);
+      } else if (record.admission) {
+        labelledCell("PRN", String(record.admission.prn ?? ""), LEFT, colWidth);
+        labelledCell("Admission No", record.admission.admissionNo ?? "", LEFT + colWidth + colGap, colWidth);
+      }
+      doc.moveDown(1);
     }
 
     if (type === "lama") {
       const lama = record as any;
-      doc.font("Helvetica-Bold").text("LAMA Time:");
-      doc.font("Helvetica").text(new Date(lama.lamaTime).toLocaleString());
+      sectionHeading("LAMA Details");
+      fieldRow("LAMA Time", new Date(lama.lamaTime).toLocaleString());
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").text("Doctor's Advice:");
-      doc.font("Helvetica").text(lama.doctorAdvice);
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333").text("Doctor's Advice:");
+      doc.font("Helvetica").fillColor("black").text(lama.doctorAdvice || "—");
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").text(`Risk Explained: ${lama.riskExplained ? "Yes" : "No"}`);
+      fieldRow("Risk Explained", lama.riskExplained ? "Yes" : "No");
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").text("Reason for LAMA:");
-      doc.font("Helvetica").text(lama.reasonForLama);
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333").text("Reason for LAMA:");
+      doc.font("Helvetica").fillColor("black").text(lama.reasonForLama || "—");
     } else {
       const dama = record as any;
-      doc.font("Helvetica-Bold").text("Discharge Time:");
-      doc.font("Helvetica").text(new Date(dama.dischargeTime).toLocaleString());
+      sectionHeading("DAMA Details");
+      fieldRow("Discharge Time", new Date(dama.dischargeTime).toLocaleString());
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").text("Doctor's Recommendation:");
-      doc.font("Helvetica").text(dama.doctorRecommendation);
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333").text("Doctor's Recommendation:");
+      doc.font("Helvetica").fillColor("black").text(dama.doctorRecommendation || "—");
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").text(`Patient Declines Advice: ${dama.patientDeclinesAdvice ? "Yes" : "No"}`);
+      fieldRow("Patient Declines Advice", dama.patientDeclinesAdvice ? "Yes" : "No");
       if (dama.followUpAdvice) {
         doc.moveDown(0.3);
-        doc.font("Helvetica-Bold").text("Follow-up Advice:");
-        doc.font("Helvetica").text(dama.followUpAdvice);
+        doc.fontSize(10).font("Helvetica-Bold").fillColor("#333").text("Follow-up Advice:");
+        doc.font("Helvetica").fillColor("black").text(dama.followUpAdvice);
       }
     }
 
-    doc.moveDown(1);
-    doc.font("Helvetica-Bold").text("Signatures:");
-    doc.font("Helvetica");
+    // Signatures — patientSignature / witnessSignature now hold a SignatureBlob
+    // id (e-sign pad). Resolve it and embed the captured image. Falls back
+    // gracefully for legacy values (an old GCS URL stored directly) or none.
+    // Layout: label line, then the image at a fixed box, then advance the cursor
+    // past the image so the signer name + timestamp render BELOW it (no overlap).
+    const SIG_FIT: [number, number] = [180, 60];
+    const renderSignature = async (sigRef: string | null, label: string): Promise<void> => {
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333")
+        .text(`${label}:`, LEFT, doc.y);
+      doc.fillColor("black");
+      doc.moveDown(0.2);
+      if (!sigRef) { doc.font("Helvetica").fontSize(10).text("Not signed"); return; }
+      try {
+        const blob = await prisma.signatureBlob.findUnique({
+          where: { id: sigRef },
+          select: { blobUrl: true, signerName: true, capturedAt: true },
+        });
+        if (blob?.blobUrl?.startsWith("data:image")) {
+          const b64 = blob.blobUrl.split(",")[1] ?? "";
+          const imgTop = doc.y;
+          doc.image(Buffer.from(b64, "base64"), LEFT, imgTop, { fit: SIG_FIT });
+          // Advance the cursor past the image height before writing the caption.
+          doc.y = imgTop + SIG_FIT[1] + 4;
+          const stamp = blob.capturedAt
+            ? `  ·  ${new Date(blob.capturedAt).toLocaleString()}`
+            : "";
+          doc.font("Helvetica").fontSize(9).fillColor("#555")
+            .text(`${blob.signerName ?? ""}${stamp}`.trim() || "Signed", LEFT, doc.y)
+            .fillColor("black");
+          return;
+        }
+        if (blob?.blobUrl) {
+          doc.font("Helvetica").fontSize(10).text(`Signed (image at ${blob.blobUrl})`);
+          return;
+        }
+        // Not a SignatureBlob id (legacy free-text / GCS URL).
+        doc.font("Helvetica").fontSize(10).text("Signed");
+      } catch {
+        doc.font("Helvetica").fontSize(10).text("Signed");
+      }
+    };
+
+    doc.moveDown(1.2);
+    sectionHeading("Signatures");
     const rec = record as any;
-    doc.text(`Patient signed: ${rec.patientSignature ? "Yes" : "No"}`);
+    await renderSignature(rec.patientSignature, "Patient signature");
+    doc.moveDown(1);
     if (rec.witnessName) {
-      doc.text(`Witness: ${rec.witnessName}`);
-      doc.text(`Witness signed: ${rec.witnessSignature ? "Yes" : "No"}`);
+      doc.fontSize(10).font("Helvetica-Bold").fillColor("#333")
+        .text("Witness: ", LEFT, doc.y, { continued: true })
+        .font("Helvetica").fillColor("black").text(rec.witnessName);
+      doc.moveDown(0.3);
+      await renderSignature(rec.witnessSignature, "Witness signature");
     }
 
-    doc.moveDown(2);
-    doc.fontSize(8).fillColor("#888")
-      .text(`Generated: ${new Date().toISOString()}`, { align: "center" })
-      .fillColor("black");
+    // Footer on every page — thin rule, hospital name (left), page X of N
+    // (right), and generated timestamp. Drawn here via bufferPages so the
+    // total page count (N) is known.
+    // Stop re-painting the letterhead before drawing footers: writing in the
+    // bottom-margin zone must NOT trigger new (blank, branded) pages.
+    doc.removeAllListeners("pageAdded");
+    const range = doc.bufferedPageRange();
+    const footerStamp = `Generated: ${generatedAt.toLocaleString()}`;
+    for (let i = 0; i < range.count; i++) {
+      doc.switchToPage(range.start + i);
+      // Zero the bottom margin while drawing so footer text positioned below the
+      // normal content area doesn't auto-add a page. Restore afterwards.
+      const savedBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
+      const footerY = doc.page.height - 40;
+      doc.lineWidth(0.5).strokeColor("#cccccc")
+        .moveTo(LEFT, footerY).lineTo(RIGHT, footerY).stroke();
+      doc.fontSize(8).font("Helvetica").fillColor("#888");
+      doc.text(HOSPITAL_NAME, LEFT, footerY + 5, {
+        width: CONTENT_WIDTH * 0.65,
+        align: "left",
+        lineBreak: false,
+      });
+      doc.text(`Page ${i + 1} of ${range.count}`, RIGHT - 120, footerY + 5, {
+        width: 120,
+        align: "right",
+        lineBreak: false,
+      });
+      doc.text(footerStamp, LEFT, footerY + 16, {
+        width: CONTENT_WIDTH,
+        align: "left",
+        lineBreak: false,
+      });
+      doc.fillColor("black");
+      doc.page.margins.bottom = savedBottom;
+    }
 
     doc.end();
   } catch (error) {

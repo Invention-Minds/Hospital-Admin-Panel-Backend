@@ -3,16 +3,20 @@ import { Request, Response } from 'express';
 import formidable from "formidable";
 const fs = require("fs");
 const path = require("path");
-import { Client } from "basic-ftp";
 import { loadTv } from '../appointments/appointment.controller';
-const FTP_CONFIG = {
-    host: "srv680.main-hosting.eu",  // Your FTP hostname
-    user: "u948610439",       // Your FTP username
-    password: "Bsrenuk@1993",   // Your FTP password
-    secure: false                    // Set to true if using FTPS
-};
+import { saveFileToStorage } from '../../service/local-file-store';
 
-// const { uploadToFTP } = require("../utils/uploadToFTP");
+// --- DEPRECATED: external FTP upload (replaced by local-file-store) ---------
+// Kept for reference. Files now live on the API server under PDF_STORAGE_DIR
+// and are served via /files. Hardcoded FTP creds removed for security.
+// import { Client } from "basic-ftp";
+// const FTP_CONFIG = {
+//     host: "srv680.main-hosting.eu",  // Your FTP hostname
+//     user: "u948610439",       // Your FTP username
+//     password: "<moved to rotation — was hardcoded>",
+//     secure: false                    // Set to true if using FTPS
+// };
+// ---------------------------------------------------------------------------
 
 const prisma = new PrismaClient();
 
@@ -170,11 +174,16 @@ export const uploadMediaAd = async (req: any, res: any) => {
                 const tempFilePath = file.filepath;
                 const fileName = file.originalFilename;
 
-                const remoteFilePath = `/public_html/docminds/ads_image/${fileName}`;
-                await uploadToFTP(tempFilePath, remoteFilePath);
-                uploadedUrls.push(`https://docminds.inventionminds.com/ads_image/${fileName}`);
+                // --- DEPRECATED FTP upload (kept for reference) ---
+                // const remoteFilePath = `/public_html/docminds/ads_image/${fileName}`;
+                // await uploadToFTP(tempFilePath, remoteFilePath);
+                // uploadedUrls.push(`https://docminds.inventionminds.com/ads_image/${fileName}`);
+                // fs.unlinkSync(tempFilePath); // Clean up temp file
 
-                fs.unlinkSync(tempFilePath); // Clean up temp file
+                // Store on the API server; serve via /files (saveFileToStorage
+                // copies the temp file then removes it).
+                const stored = saveFileToStorage(tempFilePath, 'ads_image', fileName || `ad_${Date.now()}`);
+                uploadedUrls.push(stored.relativeUrl);
             }
 
             // ✅ Check if an ad of this type exists
@@ -260,33 +269,24 @@ export const uploadMediaAd = async (req: any, res: any) => {
     }
 };
 
-async function uploadToFTP(localFilePath: string, remoteFileName: string): Promise<any> {
-    const client = new Client();
-    client.ftp.verbose = true;
-
-    try {
-        await client.access(FTP_CONFIG);
-
-        console.log("Connected to FTP Server!");
-
-        // Ensure the directory exists
-        // Ensure the "pdfs" directory exists
-        // await client.ensureDir("/docminds/pdfs");
-        await client.ensureDir("/docminds/ads_image");
-
-        // Upload the file
-        await client.uploadFrom(localFilePath, remoteFileName);
-        console.log(`Uploaded: ${remoteFileName}`);
-
-        await client.close();
-
-        // ✅ Return the correct public file URL
-
-    } catch (error) {
-        console.error("FTP Upload Error:", error);
-        throw new Error("FTP upload failed");
-    }
-}
+// --- DEPRECATED: replaced by saveFileToStorage (local-file-store). Kept for
+// reference / rollback. Re-enable the basic-ftp import + FTP_CONFIG above to use.
+// async function uploadToFTP(localFilePath: string, remoteFileName: string): Promise<any> {
+//     const client = new Client();
+//     client.ftp.verbose = true;
+//
+//     try {
+//         await client.access(FTP_CONFIG);
+//         console.log("Connected to FTP Server!");
+//         await client.ensureDir("/docminds/ads_image");
+//         await client.uploadFrom(localFilePath, remoteFileName);
+//         console.log(`Uploaded: ${remoteFileName}`);
+//         await client.close();
+//     } catch (error) {
+//         console.error("FTP Upload Error:", error);
+//         throw new Error("FTP upload failed");
+//     }
+// }
 
 
 export const updateAdStatus = async (req: Request, res: Response) => {

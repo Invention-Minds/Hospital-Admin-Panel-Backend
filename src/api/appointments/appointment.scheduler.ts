@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import AppointmentRepository from './appointment.repository';
-import { sendWhatsAppMessage } from '../whatsapp/whatsapp.controller';
+import { sendWhatsAppMessage, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import axios from 'axios';
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -150,17 +150,27 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
         //     "messages": messages
         //   }
         // };
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const payload = {
+        //   from: fromPhoneNumber,
+        //   to: appointment.phoneNumber,
+        //   type: "template",
+        //   message: { templateid: "751385", placeholders: [] },
+        // };
+        // ===== GoBuzz (thank_you) =====
         const payload = {
-          from: fromPhoneNumber, // Sender's WhatsApp number
-          to: appointment.phoneNumber, // Recipient's WhatsApp number
-          type: "template", // Type of the message
-          message: {
-            templateid: "751385", // Replace with the actual template ID
-            placeholders: [], // Dynamic placeholders
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(appointment.phoneNumber),
+          type: "template",
+          template: {
+            name: "thank_you",
+            language: { code: "en" },
+            components: [{ type: "body", parameters: [] }],
           },
         };
         try {
-          await axios.post(url!, payload, { headers });
+          await sendGoBuzzMessage(payload);
           let success = 'true'
           if (success === 'true') {
             const apiKey = process.env.SMS_API_KEY;

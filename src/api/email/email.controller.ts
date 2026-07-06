@@ -396,7 +396,7 @@ export const sendPackageMail = async (req: Request, res: Response): Promise<void
     const { packageName, firstName, lastName, phoneNumber, appointmentDate, email } = req.body;
 
     // const to = ['patientservices@rashtrotthanahospital.com', 'frontoffice@rashtrotthanahospital.com']
-    const to = ['keerthanasaminathan0805@gmail.com', 'patientservices@rashtrotthanahospital.com', 'frontoffice@rashtrotthanahospital.com']
+    const to = ['patientservices@rashtrotthanahospital.com', 'frontoffice@rashtrotthanahospital.com']
     const emailContenttoFrontOffice = {
       subject: 'New Appointment Request from Website - Health Check-up Page',
       text: `

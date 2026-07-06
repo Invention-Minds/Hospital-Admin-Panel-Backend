@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { getRecipientPhones } from '../../service/notification-recipients';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import fs from "fs";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
@@ -7,6 +9,7 @@ import path from "path";
 import { ServiceRepository } from '../services/services.repository';
 import { notifyPendingAppointments } from '../appointments/appointment.controller';
 import { loadOtTV } from '../appointments/appointment.controller';
+import { proposeFromEstimation } from '../conversion/estimation-to-ipd';
 
 const prisma = new PrismaClient();
 const repository = new ServiceRepository();
@@ -140,24 +143,28 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         const url = process.env.WHATSAPP_API_URL_BULK;
         console.log(estimationId)
-        const payload = {
-            from: fromPhoneNumber,
-            to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
-            // to: ["919342287945"],
-            // to:['919342003000'],
-            type: "template",
-            message: {
-                templateid: "739377", // Use your actual template ID // Extracts PDF name
-                placeholders: [doctorName, patientName]
-            }
-        };
-
-        const headers = {
-            "Content-Type": "application/json",
-            apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-        };
-
-        const response = await axios.post(url!, payload, { headers });
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const payload = { from: fromPhoneNumber, to: [...], type: "template", message: { templateid: "739377", placeholders: [doctorName, patientName] } };
+        // await axios.post(url!, payload, { headers });
+        // ===== GoBuzz (estimation_raise) — single-recipient, loop over DB recipients =====
+        const estRaiseRecipients = await getRecipientPhones('estimation_alert');
+        for (const recipient of estRaiseRecipients) {
+            const payload = {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: formatGoBuzzNumber(recipient),
+                type: "template",
+                template: {
+                    name: "estimation_raise",
+                    language: { code: "en" },
+                    components: [{ type: "body", parameters: [
+                        { type: "text", text: String(doctorName) },
+                        { type: "text", text: String(patientName) },
+                    ] }],
+                },
+            };
+            try { await sendGoBuzzMessage(payload); } catch (e) { console.error("[GoBuzz estimation_raise] failed", e); }
+        }
         const newNotification = await prisma.notification.create({
             data: {
 
@@ -175,33 +182,30 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
                 const url = process.env.WHATSAPP_API_URL_BULK;
                 console.log(estimationId)
-                const payload = {
-                    from: fromPhoneNumber,
-                    to: ["919844171700", "916364833989", "918904943659", "917760158457", "918147818482"], // Recipient's WhatsApp number
-                    // to: ["919342287945"],
-                    // to:['919342003000'],
-                    type: "template",
-                    message: {
-                        templateid: "739341", // Use your actual template ID // Extracts PDF name
-                        placeholders: [doctorName, patientName, prnNumber]
-                    }
-                };
-
-                const headers = {
-                    "Content-Type": "application/json",
-                    apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-                };
-
-                const response = await axios.post(url!, payload, { headers });
-
-                if (response.data.code === "200") {
-                    console.log("✅ WhatsApp message sent successfully:", response.data);
-                    response;
-                    return
-                } else {
-                    console.error("❌ Failed to send WhatsApp message:", response.data);
-                    throw new Error("WhatsApp API failed");
+                // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+                // const payload = { from: fromPhoneNumber, to: [...], type: "template", message: { templateid: "739341", placeholders: [doctorName, patientName, prnNumber] } };
+                // await axios.post(url!, payload, { headers });
+                // ===== GoBuzz (immediate) — single-recipient, loop over DB recipients =====
+                const immediateRecipients = await getRecipientPhones('estimation_alert');
+                for (const recipient of immediateRecipients) {
+                    const payload = {
+                        messaging_product: "whatsapp",
+                        recipient_type: "individual",
+                        to: formatGoBuzzNumber(recipient),
+                        type: "template",
+                        template: {
+                            name: "immediate",
+                            language: { code: "en" },
+                            components: [{ type: "body", parameters: [
+                                { type: "text", text: String(doctorName) },
+                                { type: "text", text: String(patientName) },
+                                { type: "text", text: String(prnNumber) },
+                            ] }],
+                        },
+                    };
+                    try { await sendGoBuzzMessage(payload); } catch (e) { console.error("[GoBuzz immediate] failed", e); }
                 }
+                return;
             } catch (error) {
                 console.error("❌ WhatsApp API Error:", error);
                 throw error;
@@ -247,6 +251,7 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             totalEstimationAmount,
             patientPhoneNumber,
             signatureOf,
+            attenderName,
             employeeName,
             approverName,
             patientSign,
@@ -318,6 +323,7 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 discountPercentage,
                 totalEstimationAmount,
                 signatureOf,
+                attenderName,
                 employeeName,
                 approverName,
                 patientSign,
@@ -493,22 +499,24 @@ export const updateEstimationDetails = async (req: Request, res: Response) => {
                 const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
                 const url = process.env.WHATSAPP_API_URL;
                 console.log(existingEstimation.patientName)
+                // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+                // const payload = { from: fromPhoneNumber, to: existingEstimation.patientPhoneNumber, type: "template", message: { templateid: "796857", placeholders: [existingEstimation.patientName] } };
+                // await axios.post(url!, payload, { headers });
+                // ===== GoBuzz (estimation_rejected) =====
                 const payload = {
-                    from: fromPhoneNumber,
-                    to: existingEstimation.patientPhoneNumber, // Recipient's WhatsApp number
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: formatGoBuzzNumber(existingEstimation.patientPhoneNumber),
                     type: "template",
-                    message: {
-                        templateid: "796857",  // Ensure this template ID is valid for Admins
-                        placeholders: [existingEstimation.patientName],
+                    template: {
+                        name: "estimation_rejected",
+                        language: { code: "en" },
+                        components: [{ type: "body", parameters: [
+                            { type: "text", text: String(existingEstimation.patientName) },
+                        ] }],
                     },
                 };
-
-                const headers = {
-                    "Content-Type": "application/json",
-                    apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-                };
-
-                const response = await axios.post(url!, payload, { headers });
+                await sendGoBuzzMessage(payload);
 
 
             } catch (error) {
@@ -652,22 +660,24 @@ export const markComplete = async (req: Request, res: Response) => {
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
             const url = process.env.WHATSAPP_API_URL;
             console.log(existingEstimation.patientName)
+            // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+            // const payload = { from: fromPhoneNumber, to: existingEstimation.patientPhoneNumber, type: "template", message: { templateid: "726905", placeholders: [existingEstimation.patientName] } };
+            // await axios.post(url!, payload, { headers });
+            // ===== GoBuzz (estimation_template) =====
             const payload = {
-                from: fromPhoneNumber,
-                to: existingEstimation.patientPhoneNumber, // Recipient's WhatsApp number
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: formatGoBuzzNumber(existingEstimation.patientPhoneNumber),
                 type: "template",
-                message: {
-                    templateid: "726905",  // Ensure this template ID is valid for Admins
-                    placeholders: [existingEstimation.patientName],
+                template: {
+                    name: "estimation_template",
+                    language: { code: "en" },
+                    components: [{ type: "body", parameters: [
+                        { type: "text", text: String(existingEstimation.patientName) },
+                    ] }],
                 },
             };
-
-            const headers = {
-                "Content-Type": "application/json",
-                apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-            };
-
-            const response = await axios.post(url!, payload, { headers });
+            await sendGoBuzzMessage(payload);
 
 
         } catch (error) {
@@ -712,22 +722,24 @@ export const updateFeedback = async (req: Request, res: Response) => {
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
             const url = process.env.WHATSAPP_API_URL;
             console.log(existingEstimation.patientName)
+            // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+            // const payload = { from: fromPhoneNumber, to: existingEstimation.patientPhoneNumber, type: "template", message: { templateid: "726909", placeholders: [existingEstimation.patientName] } };
+            // await axios.post(url!, payload, { headers });
+            // ===== GoBuzz (estimation_cancel) =====
             const payload = {
-                from: fromPhoneNumber,
-                to: existingEstimation.patientPhoneNumber, // Recipient's WhatsApp number
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: formatGoBuzzNumber(existingEstimation.patientPhoneNumber),
                 type: "template",
-                message: {
-                    templateid: "726909",  // Ensure this template ID is valid for Admins
-                    placeholders: [existingEstimation.patientName],
+                template: {
+                    name: "estimation_cancel",
+                    language: { code: "en" },
+                    components: [{ type: "body", parameters: [
+                        { type: "text", text: String(existingEstimation.patientName) },
+                    ] }],
                 },
             };
-
-            const headers = {
-                "Content-Type": "application/json",
-                apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-            };
-
-            const response = await axios.post(url!, payload, { headers });
+            await sendGoBuzzMessage(payload);
 
         } catch (error) {
             console.error("❌ WhatsApp API Error:", error);
@@ -2092,18 +2104,23 @@ Additional treatments may be suggested by the doctor, depending on the patient�
             const pdfPublicUrl = `${publicBaseUrl}${pdfPath}`;
             console.log(pdfPublicUrl);
 
-            const mediaId = await uploadMediaToPinbot(tempFilePath);
-            console.log(mediaId)
-
+            // GoBuzz path: upload the local PDF inside sendEstimationViaGoBuzz so Meta gets
+            // the bytes directly (avoids the "media upload error" we saw with document.link).
             await savePdfToDatabase(estimationId, pdfPath);
 
-            const whatsappResponse = await sendWhatsAppMessage(patientPhoneNumber, mediaId, patientName, estimationId, pdfPublicUrl);
+            let whatsappResult: any = null;
+            try {
+                const whatsappResponse = await sendEstimationViaGoBuzz(patientPhoneNumber, patientName, estimationId, tempFilePath);
+                whatsappResult = whatsappResponse.data;
+            } catch (waError) {
+                console.error("GoBuzz send failed (PDF still generated):", waError);
+            }
 
             res.status(200).json({
                 success: true,
-                message: "PDF generated & sent via WhatsApp successfully.",
+                message: "PDF generated.",
                 filePath: pdfPath,
-                whatsappResponse: whatsappResponse.data
+                whatsappResponse: whatsappResult
             });
         });
 
@@ -2156,6 +2173,7 @@ async function savePdfToDatabase(estimationId: string, pdfUrl: string) {
 }
 import FormData from "form-data";
 
+/* ===== Pinbot WhatsApp — replaced by GoBuzz (sendEstimationViaGoBuzz). Kept for reference. =====
 async function uploadMediaToPinbot(filePath: string) {
     try {
         const formData = new FormData();
@@ -2182,8 +2200,32 @@ async function uploadMediaToPinbot(filePath: string) {
         throw error;
     }
 }
+===== end Pinbot uploadMediaToPinbot ===== */
 import axios from "axios";
+import https from "https";
 
+// GoBuzz's API host (api.app.gobuzzmarketing.com) is fronted by Pinbot
+// infrastructure and serves a cert for *.pinbot.ai. Accept that specific
+// mismatch — and only that one — so Node's strict hostname check doesn't
+// block the call. Any other cert still fails.
+const gobuzzHttpsAgent = new https.Agent({
+    checkServerIdentity: (host, cert) => {
+        const altNames = (cert.subjectaltname || "")
+            .split(",")
+            .map((s) => s.trim().toLowerCase());
+        if (
+            altNames.includes("dns:pinbot.ai") ||
+            altNames.includes("dns:*.pinbot.ai")
+        ) {
+            return undefined;
+        }
+        return new Error(
+            `Unexpected certificate for ${host}: ${cert.subjectaltname}`
+        );
+    },
+});
+
+/* ===== Pinbot WhatsApp — replaced by GoBuzz (sendEstimationViaGoBuzz). Kept for reference. =====
 async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, patientName: string, estimationId: string, pdfUrl: string) {
     try {
         console.log(mediaId)
@@ -2198,14 +2240,14 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
                 templateid: "715873",
                 id: mediaId,
                 caption: "Here is your estimation document.",
-                filename: pdfUrl.split("/").pop(), 
+                filename: pdfUrl.split("/").pop(),
                 placeholders: [patientName]
             }
         };
 
         const headers = {
             "Content-Type": "application/json",
-            apikey: process.env.WHATSAPP_AUTH_TOKEN, 
+            apikey: process.env.WHATSAPP_AUTH_TOKEN,
         };
 
         const response = await axios.post(url!, payload, { headers });
@@ -2216,7 +2258,7 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
                 data: {
                     messageSent: true,
                     messageSentDateAndTime: new Date()
-                } 
+                }
 
             });
             return response;
@@ -2226,6 +2268,124 @@ async function sendWhatsAppMessage(patientPhoneNumber: string, mediaId: string, 
         }
     } catch (error) {
         console.error("WhatsApp API Error:", error);
+        throw error;
+    }
+}
+===== end Pinbot sendWhatsAppMessage ===== */
+
+// ===== GoBuzz WhatsApp — Upload Media (per GoBuzz API doc page 59) =====
+// Uploads the local PDF to GoBuzz so Meta receives the bytes directly. Returns a media id
+// to use in the subsequent template-send. Avoids the "Meta media upload error" we saw when
+// passing a public document.link (Meta couldn't fetch the URL reliably).
+async function uploadMediaToGoBuzz(filePath: string): Promise<string> {
+    const baseUrl = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
+    const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
+    const apiKey = process.env.GOBUZZ_API_KEY;
+
+    const formData = new FormData();
+    formData.append("sheet", fs.createReadStream(filePath));
+
+    const response = await axios.post(
+        `${baseUrl}/${phoneNumberId}/media`,
+        formData,
+        {
+            headers: {
+                ...formData.getHeaders(),
+                apikey: apiKey,
+            },
+            httpsAgent: gobuzzHttpsAgent,
+        }
+    );
+    console.log("GoBuzz media upload response:", response.data);
+
+    // Response shape isn't documented in the GoBuzz PDF — try the common keys.
+    // If none of these match for your account, the throw below dumps the full response
+    // in the log so we can pin the right field on the first successful upload.
+    const data: any = response.data;
+    const mediaId =
+        data?.response?.id ??       // confirmed GoBuzz shape: { response: { id: "..." } }
+        data?.id ??
+        data?.media_id ??
+        data?.data?.[0]?.MediaId ??
+        data?.data?.[0]?.id ??
+        data?.data?.MediaId ??
+        data?.data?.id ??
+        data?.message?.id ??
+        data?.message?.media_id;
+
+    if (!mediaId) {
+        throw new Error("GoBuzz media upload returned no media id — see log for response shape");
+    }
+    return String(mediaId);
+}
+
+// ===== GoBuzz WhatsApp (v3 single — Send Message Template Media) =====
+// Uploads the local PDF to GoBuzz first, then sends the template with document.id.
+async function sendEstimationViaGoBuzz(patientPhoneNumber: string, patientName: string, estimationId: string, pdfFilePath: string) {
+    try {
+        const baseUrl = process.env.GOBUZZ_API_BASE || "https://api.app.gobuzzmarketing.com/v3";
+        const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || "1051938688012992";
+        const templateName = process.env.GOBUZZ_ESTIMATION_TEMPLATE_NAME;
+        const templateLang = process.env.GOBUZZ_ESTIMATION_TEMPLATE_LANG || "en";
+        const apiKey = process.env.GOBUZZ_API_KEY;
+
+        const toNumber = formatPhoneNumber(patientPhoneNumber);
+        const mediaId = await uploadMediaToGoBuzz(pdfFilePath);
+        const documentFilename = (pdfFilePath.split(/[\\/]/).pop()) || `Estimation_${estimationId}.pdf`;
+
+        const payload = {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: toNumber,
+            type: "template",
+            template: {
+                name: templateName,
+                language: { code: templateLang },
+                components: [
+                    {
+                        type: "header",
+                        parameters: [
+                            {
+                                type: "document",
+                                document: {
+                                    id: mediaId,
+                                    filename: documentFilename
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        type: "body",
+                        parameters: [
+                            { type: "text", text: patientName }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        const headers = {
+            "Content-Type": "application/json",
+            apikey: apiKey,
+        };
+
+        const response = await axios.post(`${baseUrl}/${phoneNumberId}/messages`, payload, { headers, httpsAgent: gobuzzHttpsAgent });
+
+        if (response.data?.messages?.[0]?.id) {
+            await prisma.estimationDetails.update({
+                where: { estimationId: estimationId },
+                data: {
+                    messageSent: true,
+                    messageSentDateAndTime: new Date()
+                }
+            });
+            return response;
+        } else {
+            console.error("Failed to send WhatsApp message (GoBuzz):", response.data);
+            throw new Error("GoBuzz WhatsApp API failed");
+        }
+    } catch (error) {
+        console.error("GoBuzz WhatsApp API Error:", error);
         throw error;
     }
 }
@@ -2705,5 +2865,77 @@ export const createOTDetails = async (req: Request, res: Response) => {
     } catch (error: any) {
         console.error(error);
         res.status(500).json({ message: 'Failed to create OTDetails', error: error.message });
+    }
+};
+
+/**
+ * Refer a confirmed estimation for IPD admission (NABH WF-2 — no ward picked
+ * here; NS assigns the bed downstream). Creates a PROPOSED admission + bed
+ * request via proposeFromEstimation. Idempotent per estimation.
+ */
+export const referEstimationForAdmission = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { estimationId } = req.params;
+        const { diagnosis, urgency, preferredBedType, preferredWardId, admissionType } = req.body as {
+            diagnosis?: string;
+            urgency?: 'routine' | 'urgent' | 'emergency';
+            preferredBedType?: string;
+            preferredWardId?: string;
+            admissionType?: string;
+        };
+        if (!estimationId) {
+            res.status(400).json({ error: 'estimationId is required' });
+            return;
+        }
+        if (!diagnosis || diagnosis.trim().length < 3) {
+            res.status(400).json({ error: 'diagnosis (min 3 chars) is required' });
+            return;
+        }
+        const result = await proposeFromEstimation({
+            estimationId,
+            diagnosis: diagnosis.trim(),
+            urgency: urgency || 'routine',
+            preferredBedType,
+            preferredWardId,
+            admissionType,
+            actorUsername: req.user?.username ?? null,
+            actorId: typeof req.user?.id === 'number' ? req.user.id : null,
+        });
+        res.status(result.alreadyExisted ? 200 : 201).json({
+            message: result.alreadyExisted
+                ? 'This estimation is already referred for admission.'
+                : 'Bed request raised. Nursing station will accept and notify.',
+            data: result,
+        });
+    } catch (error: any) {
+        console.error('[estimation] refer-for-admission failed:', error);
+        res.status(500).json({ message: error?.message || 'Failed to refer for admission' });
+    }
+};
+
+/**
+ * Linkage status for an estimation — does it already have an OT requisition
+ * and/or an IPD admission? Drives the "Referred ✓ / Requisition raised ✓"
+ * button state on the estimation screens.
+ */
+export const getEstimationLinks = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { estimationId } = req.params;
+        const [requisition, admission] = await Promise.all([
+            prisma.otRequisition.findFirst({
+                where: { estimationId, status: { not: 'cancelled' } },
+                orderBy: { createdAt: 'desc' },
+                select: { id: true, requisitionNo: true, status: true },
+            }),
+            prisma.ipdAdmission.findFirst({
+                where: { referralEstimationId: estimationId, status: { not: 'cancelled' } },
+                orderBy: { createdAt: 'desc' },
+                select: { id: true, admissionNo: true, status: true },
+            }),
+        ]);
+        res.status(200).json({ data: { requisition, admission } });
+    } catch (error: any) {
+        console.error('[estimation] links lookup failed:', error);
+        res.status(500).json({ message: 'Failed to load estimation links' });
     }
 };

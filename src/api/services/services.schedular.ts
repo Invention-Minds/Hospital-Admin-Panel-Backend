@@ -3,6 +3,7 @@ import { ServiceRepository } from './services.repository';
 import { Request, Response } from 'express';
 import axios from 'axios';
 import { PrismaClient } from '@prisma/client';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 
 const prisma = new PrismaClient();
 
@@ -49,17 +50,27 @@ export const scheduleServiceCompletion = async (req: Request, res: Response): Pr
             };
             const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
   
+            // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+            // const payload = {
+            //   from: fromPhoneNumber,
+            //   to: service.phoneNumber,
+            //   type: "template",
+            //   message: { templateid: "751385", placeholders: [] },
+            // };
+            // ===== GoBuzz (thank_you) =====
             const payload = {
-              from: fromPhoneNumber, // Sender's WhatsApp number
-              to: service.phoneNumber, // Recipient's WhatsApp number
-              type: "template", // Type of the message
-              message: {
-                templateid: "751385", // Replace with the actual template ID
-                placeholders: [], // Dynamic placeholders
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: formatGoBuzzNumber(service.phoneNumber),
+              type: "template",
+              template: {
+                name: "thank_you",
+                language: { code: "en" },
+                components: [{ type: "body", parameters: [] }],
               },
             };
             try {
-              await axios.post(url!, payload, { headers });
+              await sendGoBuzzMessage(payload);
               let success = 'true'
               if (success === 'true') {
                 const apiKey = process.env.SMS_API_KEY;

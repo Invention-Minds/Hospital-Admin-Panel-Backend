@@ -65,7 +65,7 @@ beforeEach(() => {
   mockedPrisma.ipdWard.findMany.mockResolvedValue([]);
   mockedAudit.mockResolvedValue({
     id: 1, direction: 'push', module: 'bed-census', action: 'noop',
-    payload: '{}', response: null, status: 'success', retryCount: 0, createdAt: new Date(),
+    payload: '{}', response: null, status: 'success', retryCount: 0, quarantinedAt: null, createdAt: new Date(),
   });
 });
 

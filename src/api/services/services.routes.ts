@@ -12,6 +12,8 @@ import {
   getAvailableSlots,
   updateServiceStatus,
   getPackages,
+  createPackage,
+  updatePackage,
   lockService,
   unlockService,
   callRepeatedAppointments,
@@ -36,6 +38,8 @@ const router = Router();
 router.post('/', createService); // Create a new service
 router.get('/', getServices);  
 router.get('/packages', getPackages);
+router.post('/packages', authenticateToken, createPackage);
+router.put('/packages/:id', authenticateToken, updatePackage);
 router.get('/confirmed-appts', authenticateToken, confirmedAppointments);
 router.get('/cancelled-appts', authenticateToken, cancelledAppointments);
 

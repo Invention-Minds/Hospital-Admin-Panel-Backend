@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
 import prisma from '../../service/prisma-client';
+import { applyJmrhLetterhead, drawJmrhFooter } from '../_shared/pdf-letterhead';
 
 /**
  * Discharge PDF Generator Service
@@ -58,8 +59,14 @@ export const generateDischargePDF = async (
 
       doc.pipe(stream);
 
+      // Branded letterhead — content starts below the header band (y=120).
+      applyJmrhLetterhead(doc);
+
       // Generate PDF content
       generatePDFContent(doc, data);
+
+      // Per-page branded footer (page X of N + timestamp).
+      drawJmrhFooter(doc, new Date());
 
       // Finalize PDF
       doc.end();
@@ -147,7 +154,7 @@ function generatePDFContent(doc: InstanceType<typeof PDFDocument>, data: Dischar
   doc
     .fontSize(9)
     .font('Helvetica')
-    .text('Jeevan Mala Rajendra Hospital (JMRH)')
+    .text('Jayadev Memorial Rashtrotthana Hospital & Research Centre')
     .text(`Admission No: ${data.admission.admissionNo}`)
     .text(`PRN/UHID: ${data.admission.prn}`)
     .text(`Admission Date: ${formatDate(data.admission.admissionDate)}`)
@@ -187,25 +194,33 @@ function generatePDFContent(doc: InstanceType<typeof PDFDocument>, data: Dischar
   doc.moveDown(0.5);
   addHorizontalLine(doc, 30);
 
-  // Clinical Information
-  doc.fontSize(10).font('Helvetica-Bold').text('Clinical Summary:');
-  doc
-    .fontSize(9)
-    .font('Helvetica')
-    .text(`Diagnosis: ${data.discharge.finalDiagnosis}`)
-    .text(`Condition at Discharge: ${data.discharge.conditionAtDischarge}`);
+  // Clinical Information — use the templated snapshot when one exists, otherwise
+  // fall back to the legacy free-text columns. The snapshot shape is
+  //   { _schema: FieldDef[], _values: { [key]: any } }
+  // taken at sign-time so future template edits never affect this PDF.
+  const snapshot = parseTemplateSnapshot(data.discharge.templatedValues);
+  if (snapshot && snapshot.schema.length > 0) {
+    renderTemplatedFields(doc, snapshot);
+  } else {
+    doc.fontSize(10).font('Helvetica-Bold').text('Clinical Summary:');
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .text(`Diagnosis: ${data.discharge.finalDiagnosis}`)
+      .text(`Condition at Discharge: ${data.discharge.conditionAtDischarge}`);
 
-  if (data.discharge.proceduresDone) {
-    doc.text(`Procedures Done: ${data.discharge.proceduresDone}`);
+    if (data.discharge.proceduresDone) {
+      doc.text(`Procedures Done: ${data.discharge.proceduresDone}`);
+    }
+
+    doc.moveDown(0.3);
+    doc
+      .fontSize(9)
+      .font('Helvetica-Bold')
+      .text('Hospital Course:')
+      .font('Helvetica')
+      .text(data.discharge.dischargeSummary, { align: 'left' });
   }
-
-  doc.moveDown(0.3);
-  doc
-    .fontSize(9)
-    .font('Helvetica-Bold')
-    .text('Hospital Course:')
-    .font('Helvetica')
-    .text(data.discharge.dischargeSummary, { align: 'left' });
 
   doc.moveDown(0.5);
   addHorizontalLine(doc, 30);
@@ -395,7 +410,9 @@ export const generateAndStreamDischargePDF = async (
     });
 
     doc.pipe(res);
+    applyJmrhLetterhead(doc);
     generatePDFContent(doc, data);
+    drawJmrhFooter(doc, new Date());
     doc.end();
 
     console.log(`✅ Discharge PDF generated for admission ${admissionId}`);
@@ -407,3 +424,110 @@ export const generateAndStreamDischargePDF = async (
     });
   }
 };
+
+// ============================================================================
+// Templated rendering — walks the snapshot stored in IpdDischarge.templatedValues
+// (`{ _schema: [...field defs], _values: {key:val} }`). Groups by `group` if
+// present, otherwise renders all fields in declared order.
+// ============================================================================
+
+interface TemplateFieldDef {
+  key: string;
+  label: string;
+  type: string;
+  options?: string[];
+  group?: string;
+  order?: number;
+}
+
+interface TemplateSnapshot {
+  schema: TemplateFieldDef[];
+  values: Record<string, unknown>;
+}
+
+function parseTemplateSnapshot(raw: unknown): TemplateSnapshot | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const schemaRaw = (parsed as { _schema?: unknown })._schema;
+    const valuesRaw = (parsed as { _values?: unknown })._values;
+    if (!Array.isArray(schemaRaw)) return null;
+    return {
+      schema: schemaRaw as TemplateFieldDef[],
+      values: (valuesRaw && typeof valuesRaw === 'object'
+        ? (valuesRaw as Record<string, unknown>)
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatFieldValue(field: TemplateFieldDef, raw: unknown): string {
+  if (raw === null || raw === undefined || raw === '') return '—';
+  switch (field.type) {
+    case 'multiselect':
+      return Array.isArray(raw) ? (raw as string[]).join(', ') : String(raw);
+    case 'checkbox':
+      return raw ? 'Yes' : 'No';
+    case 'date':
+      try { return new Date(String(raw)).toLocaleDateString(); }
+      catch { return String(raw); }
+    case 'datetime':
+      try { return new Date(String(raw)).toLocaleString(); }
+      catch { return String(raw); }
+    case 'handwritten':
+      // raw is expected to be a base64 data URL of the canvas. PDF rendering
+      // of inline images is intentionally deferred — print the placeholder
+      // for now so layout stays predictable. (Embed via doc.image in a later
+      // patch once we standardise the data-URL format.)
+      return typeof raw === 'string' && raw.startsWith('data:image')
+        ? '[Hand-written note attached]'
+        : String(raw);
+    default:
+      return String(raw);
+  }
+}
+
+function renderTemplatedFields(
+  doc: InstanceType<typeof PDFDocument>,
+  snap: TemplateSnapshot,
+): void {
+  // Sort by (group ?? '') then `order ?? 0` then declaration order.
+  const indexed = snap.schema.map((f, idx) => ({ ...f, _idx: idx }));
+  indexed.sort((a, b) => {
+    const ga = a.group ?? '';
+    const gb = b.group ?? '';
+    if (ga !== gb) return ga.localeCompare(gb);
+    const oa = a.order ?? 0;
+    const ob = b.order ?? 0;
+    if (oa !== ob) return oa - ob;
+    return a._idx - b._idx;
+  });
+
+  // Bucket by group while preserving sorted order.
+  const byGroup = new Map<string, TemplateFieldDef[]>();
+  for (const f of indexed) {
+    const g = f.group ?? '';
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g)!.push(f);
+  }
+
+  for (const [group, fields] of byGroup) {
+    if (group) {
+      doc.fontSize(10).font('Helvetica-Bold').text(group);
+      doc.moveDown(0.2);
+    }
+    for (const f of fields) {
+      const value = formatFieldValue(f, snap.values[f.key]);
+      doc
+        .fontSize(9)
+        .font('Helvetica-Bold')
+        .text(`${f.label}: `, { continued: true })
+        .font('Helvetica')
+        .text(value);
+    }
+    doc.moveDown(0.4);
+  }
+}

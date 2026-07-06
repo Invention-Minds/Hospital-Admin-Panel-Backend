@@ -26,18 +26,41 @@ import {
   getWebhookLogs,
   retryWebhookDelivery,
 } from "./hmis-sync.controller";
+// Phase 9 — sync hardening
+import {
+  listDeadLetters,
+  getDeadLetter,
+  resolveDeadLetter,
+  runDeadLetterMover,
+  listConflicts,
+  getConflict,
+  createConflict,
+  resolveConflict,
+} from "./hmis-hardening.controller";
+import { authenticateToken } from "../../middleware/middleware";
+import { verifyWebhookSecret } from "../../middleware/webhook-secret";
 
 const router = express.Router();
 
 // ============================================================================
-// Webhook receivers (no auth — HMIS posts here)
+// Webhook receivers — authenticated by shared secret (X-Webhook-Secret),
+// NOT JWT (the HMIS is an external system, not a logged-in user).
 // ============================================================================
-router.post("/webhooks/payment-confirmed", paymentConfirmedWebhook);
-router.post("/webhooks/lab-result-ready", labResultReadyWebhook);
-router.post("/webhooks/radiology-result-ready", radiologyResultReadyWebhook);
-router.post("/webhooks/pharmacy-dispensed", pharmacyDispensedWebhook);
-router.post("/webhooks/bed-status-update", bedStatusUpdateWebhook);
-router.post("/webhooks/discharge-confirmed", dischargeConfirmedWebhook);
+const webhookAuth = verifyWebhookSecret("HMIS_WEBHOOK_SECRET");
+router.post("/webhooks/payment-confirmed", webhookAuth, paymentConfirmedWebhook);
+router.post("/webhooks/lab-result-ready", webhookAuth, labResultReadyWebhook);
+router.post("/webhooks/radiology-result-ready", webhookAuth, radiologyResultReadyWebhook);
+router.post("/webhooks/pharmacy-dispensed", webhookAuth, pharmacyDispensedWebhook);
+router.post("/webhooks/bed-status-update", webhookAuth, bedStatusUpdateWebhook);
+router.post("/webhooks/discharge-confirmed", webhookAuth, dischargeConfirmedWebhook);
+
+// Public health probe (uptime monitors) — must stay unauthenticated.
+router.get("/health", getHmisHealth);
+
+// ============================================================================
+// Everything below is staff/admin tooling — JWT required.
+// ============================================================================
+router.use(authenticateToken);
 
 // ============================================================================
 // Audit & Sync Management
@@ -52,9 +75,8 @@ router.post("/audit-logs/clear", clearAuditLogs);
 router.get("/status", getSyncStatus);
 router.get("/status/download", downloadSyncReport);
 
-// Stats & health
+// Stats & health (/health is registered above as a public probe)
 router.get("/stats", getSyncStats);
-router.get("/health", getHmisHealth);
 router.get("/failed-syncs-count", getFailedSyncsCount);
 
 // Manual sync triggers
@@ -73,5 +95,18 @@ router.post("/sync/:logId/retry", retrySyncLog);
 // Webhook management
 router.get("/webhook-logs", getWebhookLogs);
 router.post("/webhooks/:webhookId/retry", retryWebhookDelivery);
+
+// ============================================================================
+// Phase 9 — Sync hardening
+// ============================================================================
+router.get("/dead-letter", listDeadLetters);
+router.get("/dead-letter/:id", getDeadLetter);
+router.post("/dead-letter/:id/resolve", resolveDeadLetter);
+router.post("/dead-letter/run-mover", runDeadLetterMover);
+
+router.get("/conflicts", listConflicts);
+router.get("/conflicts/:id", getConflict);
+router.post("/conflicts", createConflict);
+router.post("/conflicts/:id/resolve", resolveConflict);
 
 export default router;

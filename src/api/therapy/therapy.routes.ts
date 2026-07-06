@@ -26,6 +26,23 @@ import {
   getTodayCheckedInTherapiesByTherapist,
   getTodayConfirmedTherapies,
 } from "./therapy.controller";
+import {
+  getTherapistAvailability,
+  addTherapistUnavailableDates,
+  getTherapistUnavailableDates,
+  markTherapistDatesAvailable,
+  addTherapistUnavailableSlots,
+  getTherapistUnavailableSlots,
+} from "./therapist-availability.controller";
+import {
+  createTherapyCourse,
+  getTherapyCourses,
+  getTherapyCourseById,
+  previewCourseReschedule,
+  applyCourseReschedule,
+  cancelTherapyCourse,
+  getPlannedDaysByDate,
+} from "./therapy-course.controller";
 import { authenticateToken } from "../../middleware/middleware";
 
 const router = Router();
@@ -35,6 +52,23 @@ router.get("/", getAllTherapyAppointments);
 router.patch("/checkin/:id", checkInTherapyAppointment);
 router.get("/ayurveda-doctors", getAyurvedaDoctors);
 router.get("/schedule/:date", getTherapyScheduleByDate);
+
+// Therapist availability (blocks-only model)
+router.get("/availability", getTherapistAvailability);
+router.post("/unavailable-dates", addTherapistUnavailableDates);
+router.get("/unavailable-dates", getTherapistUnavailableDates);
+router.post("/unavailable-slots", addTherapistUnavailableSlots);
+router.patch("/therapist/:therapistId/mark-available", markTherapistDatesAvailable);
+router.get("/therapist/:therapistId/unavailable-slots", getTherapistUnavailableSlots);
+
+// Multi-day therapy courses
+router.get("/planned-days", getPlannedDaysByDate);
+router.post("/courses", createTherapyCourse);
+router.get("/courses", getTherapyCourses);
+router.post("/courses/:id/reschedule-preview", previewCourseReschedule);
+router.post("/courses/:id/reschedule", applyCourseReschedule);
+router.patch("/courses/:id/cancel", cancelTherapyCourse);
+router.get("/courses/:id", getTherapyCourseById);
 router.get('/confirmed',getConfirmedAppointments);
 router.get('/cancelled',getCancelledAppointments);
 router.get('/completed', getCompletedAppointments);

@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
+import { getRecipientPhones } from '../../service/notification-recipients';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
+import { withSlotLock } from '../doctor/doctor.controller';
 import AppointmentRepository from './appointment.repository';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
@@ -75,6 +78,19 @@ export const adminAlertSent = (doctorId: any): void => {
   clients.forEach(client => {
     client.write(`event: adminAlertSent\n`);
     client.write(`data: ${JSON.stringify(doctorId)}\n\n`);
+  });
+}
+
+// Broadcast when a doctor is marked/unmarked as "came" today so TVs re-fetch.
+export const notifyDoctorAttendance = (payload: {
+  doctorId: number;
+  present: boolean;
+  date: string;
+}): void => {
+  console.log('Notifying clients of doctor attendance:', payload);
+  clients.forEach(client => {
+    client.write(`event: doctorAttendance\n`);
+    client.write(`data: ${JSON.stringify(payload)}\n\n`);
   });
 }
 
@@ -177,30 +193,14 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     let date = new Date(req.body.date).toISOString().split('T')[0];
     console.log(date, 'selected slot is not available')
 
-    // Ensure the status field matches Prisma enum
-    const bookedSlots = await doctorRepository.getBookedSlots(doctorId, date);
-    const nonCompleteBookedSlots = bookedSlots.filter(slot => !slot.complete);
-    console.log(nonCompleteBookedSlots, 'selected slot is not available oncomplete')
-    const isSlotAvailable = !nonCompleteBookedSlots.some(slot => slot.time === time);
-    console.log(isSlotAvailable, 'selected slot is not available on slot')
-    if (!isSlotAvailable) {
-      res.status(400).json({ error: 'Selected slot is not available' });
-      return;
-    }
-    // Check availability before proceeding
-    const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase(); // Get the day, e.g., 'mon', 'tue', etc.
+    // Doctor availability — pure read, no contention, OK outside the transaction.
+    const day = new Date(req.body.date).toLocaleString('en-us', { weekday: 'short' }).toLowerCase();
     console.log(day, 'selected slot is not available request')
-    // Check if the doctor is a Visiting Consultant
     if (doctorType === 'Visiting Consultant') {
       console.log('Skipping availability check for Visiting Consultant.');
-      // Allow the process to continue without checking availability
     } else {
-      // Check availability only for regular doctors
       const doctorAvailability = await doctorRepository.getDoctorAvailability(doctorId, day, date);
-
-
       console.log(doctorAvailability, 'selected slot is not available request');
-
       if (!doctorAvailability) {
         res.status(400).json({ error: 'Doctor is not available on the selected day.' });
         return;
@@ -212,43 +212,86 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       console.log(availableStartTime, availableEndTime, 'selected slot is not available request')
     }
 
-
-    // Check if the requested time falls within the available slots
-    const requestedTime = time.split('-');
-
     // Sprint 4b.2 — attribution from JWT, not body. Route stays public (anonymous
     // website booking allowed); when there's no JWT, userId is null — same
     // behaviour as before, just body.userId is ignored.
-    // const userId = req.user?.id ?? null;
-    // Create the appointment with Prisma
-    const newAppointment = await resolver.createAppointment({
-      patientName,
-      phoneNumber,
-      doctorName,
-      doctorId,
-      department,
-      date, // Ensure the date is in the proper format
-      time,
-      status,
-      email,
-      requestVia,
-      smsSent,
-      emailSent,
-      messageSent,
-      userId,
-      prnNumber,
-      age,
-      gender,
-      serviceId,
-      patientType,
-      prefix
-    });
-    console.log("New Appointment:", newAppointment);
-    if (newAppointment.status === 'pending') {
 
+    // Atomic: slot check + appointment create + BookedSlot create live inside one
+    // transaction so a concurrent create/update cannot slip a duplicate past the check.
+    // (Race-free fix still needs @@unique([doctorId,date,time]) on BookedSlot — DB
+    // change deferred per ops constraint; this narrows the window to near-zero.)
+    let newAppointment: any;
+    try {
+      // withSlotLock serializes same-slot create/reschedule across this whole controller
+      // AND the standalone POST /doctors/booked-slots. Inside the lock, the tx still
+      // enforces atomicity of the multi-row writes. See doctor.controller.ts withSlotLock.
+      newAppointment = await withSlotLock(`${doctorId}|${date}|${time}`, async () => await prisma.$transaction(async (tx) => {
+        const conflictingSlot = await tx.bookedSlot.findFirst({
+          where: { doctorId, date, time, complete: false }
+        });
+        if (conflictingSlot) {
+          throw new Error('SLOT_TAKEN');
+        }
+        const conflictingAppt = await tx.appointment.findFirst({
+          where: { doctorId, date, time, status: 'confirmed' }
+        });
+        if (conflictingAppt) {
+          throw new Error('SLOT_TAKEN');
+        }
+
+        const created = await tx.appointment.create({
+          data: {
+            patientName,
+            phoneNumber,
+            doctorName,
+            doctorId,
+            department,
+            date,
+            time,
+            status,
+            email,
+            requestVia,
+            smsSent,
+            emailSent,
+            messageSent,
+            userId,
+            prnNumber,
+            age,
+            gender,
+            serviceId,
+            patientType,
+            prefix
+          }
+        });
+
+        if (created.status === 'confirmed') {
+          await tx.bookedSlot.create({
+            data: {
+              doctorId,
+              date,
+              time,
+              complete: false,
+              createdBy: String(userId ?? ''),
+            }
+          });
+        }
+
+        return created;
+      }));
+    } catch (txErr) {
+      const msg = txErr instanceof Error ? txErr.message : 'An error occurred';
+      if (msg === 'SLOT_TAKEN') {
+        res.status(409).json({ error: 'Selected slot is already booked' });
+        return;
+      }
+      throw txErr;
+    }
+
+    console.log("New Appointment:", newAppointment);
+
+    if (newAppointment.status === 'pending') {
       const newNotification = await prisma.notification.create({
         data: {
-
           type: 'appointment_request',
           title: 'New Appointment Request',
           message: `Appointment received for ${newAppointment.doctorName} on ${newAppointment.date} at ${newAppointment.time}.`,
@@ -261,48 +304,40 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       console.log("New Notification:", newNotification);
       notifyPendingAppointments(newNotification);
       res.status(201).json(newAppointment);
-
+      return;
     }
 
-    // if (newAppointment.status === 'confirmed') {
-    //   await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
-    //   res.status(201).json(newAppointment);
-    // }
     if (newAppointment.status === 'confirmed') {
-  await doctorRepository.addBookedSlot(doctorId, date, time, String(userId ?? ''));
+      try {
+        const doctor = await doctorRepository.getDoctorById(doctorId);
+        await sendConfirmedWhatsApp({
+          patientName,
+          doctorName,
+          date,
+          time,
+          patientPhoneNumber: phoneNumber,
+          doctorPhoneNumber: doctor?.phone_number,
+          prefix
+        });
+        await sendConfirmedSMS({
+          patientName,
+          doctorName,
+          date,
+          time,
+          patientPhoneNumber: phoneNumber,
+          doctorPhoneNumber: doctor?.phone_number,
+          prefix
+        });
+      } catch (err) {
+        console.error('WhatsApp/SMS failed but appointment created', err);
+        // ❗ DO NOT break flow
+      }
+      res.status(201).json(newAppointment);
+      return;
+    }
 
-  try {
-    // 🔹 get doctor phone (if needed)
-    const doctor = await doctorRepository.getDoctorById(doctorId);
-
-    await sendConfirmedWhatsApp({
-      patientName,
-      doctorName,
-      date,
-      time,
-      patientPhoneNumber: phoneNumber,
-      doctorPhoneNumber: doctor?.phone_number,
-      prefix
-    });
-
-    await sendConfirmedSMS({
-      patientName,
-      doctorName,
-      date,
-      time,
-      patientPhoneNumber: phoneNumber,
-      doctorPhoneNumber: doctor?.phone_number,
-      prefix
-    });
-
-  } catch (err) {
-    console.error('WhatsApp/SMS failed but appointment created', err);
-    // ❗ DO NOT break flow
-  }
-
-  res.status(201).json(newAppointment);
-}
-
+    // Fallback for any other terminal status (e.g. cancelled passed through).
+    res.status(201).json(newAppointment);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
@@ -349,8 +384,63 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
 
 
 
-        await doctorRepository.addBookedSlot(doctorId, date, time,userId.toString());
-        // 🔹 Create the appointment
+        // Atomic: slot availability check + BookedSlot insert + Appointment create.
+        // Same SLOT_TAKEN guard as createAppointment so the walk-in path can't double-book either.
+        // withSlotLock serializes same-slot concurrent walk-in creates with each other and
+        // with the reschedule/booked-slots path. See doctor.controller.ts withSlotLock.
+        const created = await withSlotLock(`${doctorId}|${date}|${time}`, async () => await prisma.$transaction(async (tx) => {
+          const conflictingSlot = await tx.bookedSlot.findFirst({
+            where: { doctorId, date, time, complete: false }
+          });
+          if (conflictingSlot) {
+            throw new Error('SLOT_TAKEN');
+          }
+          const conflictingAppt = await tx.appointment.findFirst({
+            where: { doctorId, date, time, status: 'confirmed' }
+          });
+          if (conflictingAppt) {
+            throw new Error('SLOT_TAKEN');
+          }
+
+          await tx.bookedSlot.create({
+            data: {
+              doctorId,
+              date,
+              time,
+              complete: false,
+              createdBy: String(userId ?? ''),
+            }
+          });
+
+          return await tx.appointment.create({
+            data: {
+              patientName,
+              phoneNumber,
+              doctorName,
+              doctorId,
+              department,
+              date,
+              time,
+              status,
+              email,
+              messageSent,
+              emailSent,
+              smsSent: true,
+              userId: appointment.userId || null,
+              prnNumber,
+              age,
+              gender,
+              serviceId,
+              type,
+              requestVia: 'Walk-In',
+              prefix,
+              patientType
+            }
+          });
+        }));
+
+        // WhatsApp fired AFTER the transaction commits — never inside a transaction.
+        // Failure here doesn't roll the appointment back (matches prior behaviour).
         const name = `${prefix} ${patientName}`;
         try {
           const url = process.env.WHATSAPP_API_URL;
@@ -359,46 +449,39 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
             apikey: process.env.WHATSAPP_AUTH_TOKEN,
           };
           const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+          // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+          // const patientPayload = {
+          //   from: fromPhoneNumber,
+          //   to: phoneNumber,
+          //   type: "template",
+          //   message: { templateid: "750561", placeholders: [name, doctorName, status, formatDateYear(new Date(date)), time] },
+          // };
+          // await axios.post(url!, patientPayload, { headers });
+          // ===== GoBuzz (walkin) =====
           const patientPayload = {
-            from: fromPhoneNumber,
-            to: phoneNumber,
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: formatGoBuzzNumber(phoneNumber),
             type: "template",
-            message: {
-              templateid: "750561", // Replace with the actual template ID
-              placeholders: [name, doctorName, status, formatDateYear(new Date(date)), time], // Dynamic placeholders
+            template: {
+              name: "walkin",
+              language: { code: "en" },
+              components: [{ type: "body", parameters: [
+                { type: "text", text: String(name) },
+                { type: "text", text: String(doctorName) },
+                { type: "text", text: String(status) },
+                { type: "text", text: formatDateYear(new Date(date)) },
+                { type: "text", text: String(time) },
+              ] }],
             },
           };
-          const patientResponse = await axios.post(url!, patientPayload, { headers });
-
+          await sendGoBuzzMessage(patientPayload);
+        } catch (waErr) {
+          console.error('WhatsApp send failed in createNewAppointment (appointment already created):', waErr);
+          // Don't break the flow — appointment is already in DB.
         }
-        catch (error) {
-          res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
-        }
-        return await resolver.createAppointment({
-          patientName,
-          phoneNumber,
-          doctorName,
-          doctorId,
-          department,
-          date,
-          time,
-          status,
-          email,
-          messageSent,
-          emailSent,
-          smsSent: true,
-          userId: appointment.userId || null,
-          prnNumber,
-          age,
-          gender,
-          serviceId,
-          type,
-          requestVia: 'Walk-In',
-          prefix,
-          patientType
-        });
 
-
+        return created;
       })
 
     );
@@ -407,7 +490,12 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
 
 
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    const msg = error instanceof Error ? error.message : 'An error occurred';
+    if (msg === 'SLOT_TAKEN') {
+      res.status(409).json({ error: 'Selected slot is already booked' });
+      return;
+    }
+    res.status(500).json({ error: msg });
   }
 };
 
@@ -483,36 +571,105 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       updateData.userId = userId;
     }
 
-    // Fetch existing appointment before update to detect status transition
-    const existingAppointment = await prisma.appointment.findUnique({
-      where: { id: Number(req.params.id) }
+    const appointmentId = Number(req.params.id);
+
+    // Whole flow is transactional so the slot check + appointment write + BookedSlot
+    // move/create cannot interleave with another concurrent update or create.
+    // (Race-free fix still needs @@unique([doctorId,date,time]) on BookedSlot — DB change
+    // deferred per ops constraint; this transaction narrows the window to near-zero.)
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.appointment.findUnique({ where: { id: appointmentId } });
+      if (!existing) {
+        throw new Error('APPT_NOT_FOUND');
+      }
+
+      const newDoctorId = updateData.doctorId ?? existing.doctorId;
+      const newDate = updateData.date ?? existing.date;
+      const newTime = updateData.time ?? existing.time;
+      const finalStatus = updateData.status ?? existing.status;
+
+      const slotChanged = (
+        newDoctorId !== existing.doctorId ||
+        newDate !== existing.date ||
+        newTime !== existing.time
+      );
+
+      // Pre-check: only reject if ANOTHER confirmed Appointment already occupies the
+      // new slot. Do NOT also reject on BookedSlot existence — the frontend reschedule
+      // flow pre-creates the BookedSlot at the new time via a separate POST
+      // /doctors/booked-slots BEFORE this PUT runs, so a BookedSlot at the new slot is
+      // expected and belongs to this same reschedule. A genuine double-book is caught by
+      // the standalone addBookedSlot controller at step 1; if that succeeded, the slot
+      // was free at the time the frontend reserved it.
+      if (slotChanged && finalStatus === 'confirmed' && newDoctorId && newDate && newTime) {
+        const conflictingAppt = await tx.appointment.findFirst({
+          where: {
+            doctorId: newDoctorId,
+            date: newDate,
+            time: newTime,
+            status: 'confirmed',
+            NOT: { id: appointmentId },
+          }
+        });
+        if (conflictingAppt) {
+          throw new Error('SLOT_TAKEN');
+        }
+      }
+
+      const updated = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: updateData,
+      });
+
+      // Maintain BookedSlot in sync with the appointment's confirmed slot.
+      // Slot moved: drop any BookedSlot at the old (doctorId,date,time) regardless of
+      // the prior status. If no row exists there, this is a harmless no-op; if one does
+      // (created e.g. by a separate booked-slots POST from the UI), we want it gone so
+      // the old time becomes available again.
+      if (slotChanged && existing.doctorId && existing.date && existing.time) {
+        const cleared = await tx.bookedSlot.deleteMany({
+          where: {
+            doctorId: existing.doctorId,
+            date: existing.date,
+            time: existing.time,
+          }
+        });
+        console.log(`Booked slot deleteMany on reschedule: Doctor ${existing.doctorId}, ${existing.date} ${existing.time} — cleared ${cleared.count} row(s)`);
+      }
+      if (finalStatus === 'confirmed' && updated.doctorId && updated.date && updated.time) {
+        // Ensure a BookedSlot exists at the new (or unchanged) slot.
+        const existingNewSlot = await tx.bookedSlot.findFirst({
+          where: { doctorId: updated.doctorId, date: updated.date, time: updated.time }
+        });
+        if (!existingNewSlot) {
+          await tx.bookedSlot.create({
+            data: {
+              doctorId: updated.doctorId,
+              date: updated.date,
+              time: updated.time,
+              complete: false,
+              createdBy: String(userId ?? ''),
+            }
+          });
+          console.log(`Booked slot created on confirmation: Doctor ${updated.doctorId}, ${updated.date} ${updated.time}`);
+        }
+      }
+
+      return updated;
     });
 
-    const updatedAppointment = await resolver.updateAppointment(Number(req.params.id), updateData);
-
-    // If status changed to confirmed, create booked slot (pending → confirmed flow)
-    if (updateData.status === 'confirmed' && existingAppointment?.status !== 'confirmed') {
-      const existingSlot = await prisma.bookedSlot.findFirst({
-        where: {
-          doctorId: updatedAppointment.doctorId,
-          date: updatedAppointment.date,
-          time: updatedAppointment.time,
-        }
-      });
-      if (!existingSlot && updatedAppointment.doctorId && updatedAppointment.date && updatedAppointment.time) {
-        await doctorRepository.addBookedSlot(
-          updatedAppointment.doctorId,
-          updatedAppointment.date,
-          updatedAppointment.time,
-          String(userId ?? '')
-        );
-        console.log(`Booked slot created on confirmation: Doctor ${updatedAppointment.doctorId}, ${updatedAppointment.date} ${updatedAppointment.time}`);
-      }
-    }
-
-    res.status(200).json(updatedAppointment);
+    res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+    const msg = error instanceof Error ? error.message : 'An error occurred';
+    if (msg === 'SLOT_TAKEN') {
+      res.status(409).json({ error: 'Selected slot is already booked' });
+      return;
+    }
+    if (msg === 'APPT_NOT_FOUND') {
+      res.status(404).json({ error: 'Appointment not found' });
+      return;
+    }
+    res.status(500).json({ error: msg });
   }
 };
 
@@ -710,15 +867,23 @@ export const checkInAppointment = async (req: Request, res: Response) => {
   }
 
   try {
-    // Update the checkedIn status for the specified appointment
+    // Phase 2.5 (WF-1) — when the appointment.type is 'paid', also stamp the
+    // payment fields so the revenue rollup picks it up. Reception only sees a
+    // single "Check-in" button; the type=paid|free|concession is set just
+    // before this endpoint fires by the updateAppointment call from the popup.
+    const isPaidType = (appointment.type ?? '').toLowerCase() === 'paid';
+
     const updatedAppointment = await prisma.appointment.update({
-      where: {
-        id: Number(id),
-      },
+      where: { id: Number(id) },
       data: {
         checkedIn: true,
         checkedInTime: new Date(),
-        checkedInBy: username
+        checkedInBy: username,
+        ...(isPaidType && !appointment.paidAt && {
+          paymentStatus: 'paid',
+          paidAt: new Date(),
+          paymentSource: 'cash-counter',
+        }),
       },
     });
     notifyDoctor(appointment.doctorId);
@@ -792,26 +957,37 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
     };
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
-    const whatsappPayload = {
-      from: fromPhoneNumber,
-      to: ['919880544866', '916364833988'], // Patient's WhatsApp number
-      // to: ['919342287945'],
-      // to:['919342003000'],
-      type: "template",
-      message: {
-        templateid: "738055", // Replace with actual template ID
-        placeholders: [doctorName, appointmentsToUpdate.length, doctor?.roomNo], // Dynamic placeholders
-      },
-    };
-    try {
-      const response = await axios.post(url!, whatsappPayload, { headers });
-      if (response.data.code === "200") {
-        console.log(`WhatsApp message sent successfully to `);
-      } else {
-        console.log(`Failed to send WhatsApp message to `, response.data);
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // const whatsappPayload = {
+    //   from: fromPhoneNumber,
+    //   to: ['919880544866', '916364833988'],
+    //   type: "template",
+    //   message: { templateid: "738055", placeholders: [doctorName, appointmentsToUpdate.length, doctor?.roomNo] },
+    // };
+    // await axios.post(url!, whatsappPayload, { headers });
+    // ===== GoBuzz (close_opd) — single-recipient, loop over DB recipients =====
+    const closeOpdRecipients = await getRecipientPhones('appointment_confirm');
+    for (const recipient of closeOpdRecipients) {
+      const whatsappPayload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(recipient),
+        type: "template",
+        template: {
+          name: "close_opd",
+          language: { code: "en" },
+          components: [{ type: "body", parameters: [
+            { type: "text", text: String(doctorName) },
+            { type: "text", text: String(appointmentsToUpdate.length) },
+            { type: "text", text: String(doctor?.roomNo ?? "") },
+          ] }],
+        },
+      };
+      try {
+        await sendGoBuzzMessage(whatsappPayload);
+      } catch (error) {
+        console.error("Error sending WhatsApp message:", error);
       }
-    } catch (error) {
-      console.error("Error sending WhatsApp message:", error);
     }
     res.status(200).json({ message: 'Appointments updated successfully', updatePromises });
 
@@ -982,46 +1158,69 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
 
       const name = prefix + ' ' + existingAppointment.patientName;
       // **Send WhatsApp message to patient**
+      // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+      // const patientMessagePayload = {
+      //   from: fromPhoneNumber,
+      //   to: phoneNumber,
+      //   type: "template",
+      //   message: { templateid: "790519", placeholders: [name, doctor?.name, time, formatDateYear(new Date(date))] },
+      // };
+      // await axios.post(url!, patientMessagePayload, { headers });
+      // ===== GoBuzz (patient_cancel_message) =====
       const patientMessagePayload = {
-        from: fromPhoneNumber,
-        to: phoneNumber, // Patient's WhatsApp number
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formatGoBuzzNumber(phoneNumber),
         type: "template",
-        message: {
-          templateid: "790519", // Replace with the actual template ID
-          placeholders: [name, doctor?.name, time, formatDateYear(new Date(date))], // Dynamic placeholders
+        template: {
+          name: "patient_cancel_message",
+          language: { code: "en" },
+          components: [{ type: "body", parameters: [
+            { type: "text", text: String(name) },
+            { type: "text", text: String(doctor?.name ?? "") },
+            { type: "text", text: String(time) },
+            { type: "text", text: formatDateYear(new Date(date)) },
+          ] }],
         },
       };
-
       try {
-        const patientResponse = await axios.post(url!, patientMessagePayload, { headers });
-        if (patientResponse.data.code === "200") {
-          console.log(`WhatsApp message sent successfully to Patient: ${phoneNumber}`);
-        } else {
-          console.log(`Failed to send WhatsApp message to Patient: ${phoneNumber}`, patientResponse.data);
-        }
+        await sendGoBuzzMessage(patientMessagePayload);
+        console.log(`WhatsApp message sent to Patient: ${phoneNumber}`);
       } catch (error) {
         console.error("Error sending WhatsApp message to Patient:", error);
       }
 
       // **Send WhatsApp message to doctor**
       if (doctor?.phone_number) {
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const doctorMessagePayload = {
+        //   from: fromPhoneNumber,
+        //   to: doctor.phone_number,
+        //   type: "template",
+        //   message: { templateid: "774273", placeholders: [doctor.name, "cancelled", name, time, date] },
+        // };
+        // await axios.post(url!, doctorMessagePayload, { headers });
+        // ===== GoBuzz (doctor_appts_status) =====
         const doctorMessagePayload = {
-          from: fromPhoneNumber,
-          to: doctor.phone_number, // Doctor's WhatsApp number
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: formatGoBuzzNumber(doctor.phone_number),
           type: "template",
-          message: {
-            templateid: "774273", // Replace with actual doctor template ID
-            placeholders: [doctor.name, "cancelled", name, time, date], // Dynamic placeholders
+          template: {
+            name: "doctor_appts_status",
+            language: { code: "en" },
+            components: [{ type: "body", parameters: [
+              { type: "text", text: String(doctor.name) },
+              { type: "text", text: "cancelled" },
+              { type: "text", text: String(name) },
+              { type: "text", text: String(time) },
+              { type: "text", text: String(date) },
+            ] }],
           },
         };
-
         try {
-          const doctorResponse = await axios.post(url!, doctorMessagePayload, { headers });
-          if (doctorResponse.data.code === "200") {
-            console.log(`WhatsApp message sent successfully to Doctor: ${doctor.phone_number}`);
-          } else {
-            console.log(`Failed to send WhatsApp message to Doctor: ${doctor.phone_number}`, doctorResponse.data);
-          }
+          await sendGoBuzzMessage(doctorMessagePayload);
+          console.log(`WhatsApp message sent to Doctor: ${doctor.phone_number}`);
         } catch (error) {
           console.error("Error sending WhatsApp message to Doctor:", error);
         }
@@ -1613,22 +1812,30 @@ const sendFollowUpWhatsApp = async (appointment: any) => {
   try {
     const patientName = `${appointment.prefix || ""} ${appointment.firstName} ${appointment.lastName}`.trim();
 
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // const payload = {
+    //   from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
+    //   to: appointment.phoneNumber,
+    //   type: "template",
+    //   message: { templateid: process.env.WHATSAPP_FOLLOWUP_TEMPLATE_ID, placeholders: [patientName, appointment.doctorName] },
+    // };
+    // await axios.post(process.env.WHATSAPP_API_URL!, payload, { headers });
+    // ===== GoBuzz (followup_appt_remainder) =====
     const payload = {
-      from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
-      to: appointment.phoneNumber,
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(appointment.phoneNumber),
       type: "template",
-      message: {
-        templateid: process.env.WHATSAPP_FOLLOWUP_TEMPLATE_ID,
-        placeholders: [patientName, appointment.doctorName],
+      template: {
+        name: "followup_appt_remainder",
+        language: { code: "en" },
+        components: [{ type: "body", parameters: [
+          { type: "text", text: String(patientName) },
+          { type: "text", text: String(appointment.doctorName) },
+        ] }],
       },
     };
-
-    const headers = {
-      "Content-Type": "application/json",
-      apikey: process.env.WHATSAPP_AUTH_TOKEN,
-    };
-
-    await axios.post(process.env.WHATSAPP_API_URL!, payload, { headers });
+    await sendGoBuzzMessage(payload);
 
     console.log("Follow-up WhatsApp sent to:", appointment.phoneNumber);
   } catch (error) {

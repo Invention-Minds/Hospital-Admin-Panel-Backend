@@ -4,12 +4,13 @@ import {
   getTodayPriorities,
   clearPriority
 } from './priority.controller';
+import { authenticateToken } from '../../middleware/middleware';
 
 const router = Router();
 
 // Mounted at /api/priority in src/index.ts
-router.post('/', setPriority);
-router.get('/today', getTodayPriorities);
-router.patch('/:id/clear', clearPriority);
+router.post('/', authenticateToken, setPriority);
+router.get('/today', authenticateToken, getTodayPriorities);
+router.patch('/:id/clear', authenticateToken, clearPriority);
 
 export default router;

@@ -1,8 +1,37 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
+import { snapshotTemplateFields } from '../note-template/note-template.controller';
 
 const prisma = new PrismaClient();
+
+/**
+ * Build the templated-values JSON snapshot from `noteTemplateId` +
+ * `templatedValueMap` on a request body. Strips both keys so callers can
+ * spread the rest of the body straight into Prisma. Returns the JSON string
+ * (or undefined when no template is in use). Keeps doctor notes consistent
+ * with the discharge / OPD assessment snapshot pattern.
+ */
+async function buildTemplatedValuesSnapshot(
+  body: Record<string, unknown>,
+): Promise<{ noteTemplateId: string | undefined; templatedValues: string | undefined }> {
+  const noteTemplateId = typeof body['noteTemplateId'] === 'string'
+    ? (body['noteTemplateId'] as string)
+    : undefined;
+  const templatedValueMap = body['templatedValueMap'];
+  // Remove the frontend-only key so the spread doesn't try to write it.
+  delete body['templatedValueMap'];
+
+  if (!noteTemplateId || !templatedValueMap || typeof templatedValueMap !== 'object') {
+    return { noteTemplateId: undefined, templatedValues: undefined };
+  }
+  const fieldDefs = await snapshotTemplateFields(noteTemplateId);
+  const json = JSON.stringify({
+    _schema: fieldDefs ?? [],
+    _values: templatedValueMap,
+  });
+  return { noteTemplateId, templatedValues: json };
+}
 
 // Create doctor note
 export const createDoctorNote = async (req: Request, res: Response) => {
@@ -10,12 +39,22 @@ export const createDoctorNote = async (req: Request, res: Response) => {
     const actorId = getClinicalActor(req, res);
     if (actorId === null) return;
 
+    const body = stripAuditFields({ ...req.body }) as Record<string, unknown>;
+    const snap = await buildTemplatedValuesSnapshot(body);
+
     const note = await prisma.doctorNote.create({
+      // Body shape mirrors the existing schema columns; we trust upstream
+      // validation. Cast through `any` because the spread + snapshot fields
+      // make the literal too narrow for Prisma's strict checked input type.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: {
-        ...stripAuditFields({ ...req.body }),
+        ...body,
+        ...(snap.noteTemplateId && { noteTemplateId: snap.noteTemplateId }),
+        ...(snap.templatedValues && { templatedValues: snap.templatedValues }),
         createdBy: req.user!.username,
         updatedBy: req.user!.username,
-      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
     });
 
     res.status(201).json({ message: 'Doctor note created successfully', data: note });
@@ -70,12 +109,16 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
 
     const { prn } = req.params;
     const date = req.query.date as string;
-    const payload = stripAuditFields({ ...req.body });
+    const payload = stripAuditFields({ ...req.body }) as Record<string, unknown>;
 
     if (!date) {
        res.status(400).json({ message: 'Date is required' });
        return
     }
+
+    // Snapshot the template (if one is in use) and strip the frontend-only
+    // `templatedValueMap` from the spread payload.
+    const snap = await buildTemplatedValuesSnapshot(payload);
 
     const existing = await prisma.doctorNote.findFirst({
       where: {
@@ -94,6 +137,8 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
           ...payload,
           prn: Number(prn), // Ensure PRN is stored as a number
           date, // Ensure date is stored correctly
+          ...(snap.noteTemplateId && { noteTemplateId: snap.noteTemplateId }),
+          ...(snap.templatedValues && { templatedValues: snap.templatedValues }),
           updatedBy: req.user!.username,
         },
       });
@@ -104,6 +149,8 @@ export const updateDoctorNoteByPRNAndDate = async (req: Request, res: Response) 
           prn: Number(prn),
           date,
           ...payload,
+          ...(snap.noteTemplateId && { noteTemplateId: snap.noteTemplateId }),
+          ...(snap.templatedValues && { templatedValues: snap.templatedValues }),
           createdBy: req.user!.username,
           updatedBy: req.user!.username,
         }

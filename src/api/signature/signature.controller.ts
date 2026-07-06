@@ -31,6 +31,10 @@ interface SignContextBody {
 const ALLOWED_SIGNER_TYPES = [
   'doctor',
   'nurse',
+  // 'staff' covers generic clinical-staff signatures (used by Phase 4–7 chains —
+  // MAR witness, ICU transfer originator/receiver, staff-handover originator,
+  // discharge clinician). Treated like 'nurse'/'doctor' for signerId attribution.
+  'staff',
   'patient',
   'attender',
   'supervisor',
@@ -102,7 +106,7 @@ export const createSignature = async (req: Request, res: Response): Promise<void
         blobUrl,
         mimeType,
         signerType: body.signerType,
-        signerId: body.signerType === 'doctor' || body.signerType === 'nurse' || body.signerType === 'supervisor' ? signerId : null,
+        signerId: body.signerType === 'doctor' || body.signerType === 'nurse' || body.signerType === 'staff' || body.signerType === 'supervisor' ? signerId : null,
         signerName: body.signerName.trim(),
         signerRole: body.signerRole?.trim() ?? null,
         signerRelation: body.signerRelation?.trim() ?? null,

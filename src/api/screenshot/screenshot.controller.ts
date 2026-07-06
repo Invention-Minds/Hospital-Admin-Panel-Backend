@@ -1,17 +1,25 @@
 import { Request, Response } from 'express';
 import * as puppeteer from 'puppeteer';
-import { Client } from "basic-ftp";
 import axios from 'axios';
+import { saveFileToStorage } from '../../service/local-file-store';
+import { getRecipientPhones } from '../../service/notification-recipients';
+import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 
 import fs from 'fs';
 import path from 'path';
 
-const FTP_CONFIG = {
-    host: "srv680.main-hosting.eu",  // Your FTP hostname
-    user: "u948610439",       // Your FTP username
-    password: "Bsrenuk@1993",   // Your FTP password
-    secure: false                    // Set to true if using FTPS
-};
+// --- DEPRECATED: external FTP upload (replaced by local-file-store) ---------
+// Screenshots now live on the API server under PDF_STORAGE_DIR, served via
+// /files. WhatsApp fetches the image via the absolute URL (PUBLIC_BASE_URL).
+// Hardcoded FTP credentials removed for security.
+// import { Client } from "basic-ftp";
+// const FTP_CONFIG = {
+//     host: "srv680.main-hosting.eu",  // Your FTP hostname
+//     user: "u948610439",       // Your FTP username
+//     password: "<moved to rotation — was hardcoded>",
+//     secure: false                    // Set to true if using FTPS
+// };
+// ---------------------------------------------------------------------------
 
 class ScreenshotController {
     static async captureDashboard(): Promise<void> {
@@ -21,7 +29,7 @@ class ScreenshotController {
 
             await page.setViewport({ width: 1920, height: 1080 })
             // Open the login page
-            await page.goto('https://rashtrotthanahospital.docminds.in/login', { waitUntil: 'networkidle2' });
+            await page.goto('https://docmindsjmrh.imapps.in/login', { waitUntil: 'networkidle2' });
 
             // Perform login
             
@@ -33,7 +41,7 @@ class ScreenshotController {
             ]);
 
             // Navigate to the dashboard
-            await page.goto('https://rashtrotthanahospital.docminds.in/analytics', { waitUntil: 'networkidle2' });
+            await page.goto('https://docmindsjmrh.imapps.in/analytics', { waitUntil: 'networkidle2' });
             console.log("⏳ Waiting for 30 seconds to load all data...");
             await new Promise(resolve => setTimeout(resolve, 30000));
 
@@ -51,12 +59,16 @@ class ScreenshotController {
             const screenshotPath = path.resolve(screenshotDir, screenshotFileName); // Normalize path
 
             console.log("🛠️ Screenshot Path (Local):", screenshotPath);
-            const remoteFilePath = `/public_html/docminds/images/${screenshotFileName}`;
             await page.screenshot({ path: screenshotPath, fullPage: true });
-            // Upload to FTP and delete local file after upload
-            const imageUrl = await uploadToFTP(screenshotPath, remoteFilePath);
 
+            // --- DEPRECATED FTP upload (kept for reference) ---
+            // const remoteFilePath = `/public_html/docminds/images/${screenshotFileName}`;
+            // const imageUrl = await uploadToFTP(screenshotPath, remoteFilePath);
 
+            // Store on the API server; serve via /files. WhatsApp must fetch by
+            // URL, so use the absolute URL (requires PUBLIC_BASE_URL in env).
+            const stored = saveFileToStorage(screenshotPath, 'images', screenshotFileName);
+            const imageUrl = stored.absoluteUrl;
 
             await browser.close();
 
@@ -68,33 +80,28 @@ class ScreenshotController {
         }
     }
 }
-async function uploadToFTP(localFilePath: string, remoteFilePath: string) {
-    const client = new Client();
-    client.ftp.verbose = true; // Enable logs
-
-    try {
-        await client.access(FTP_CONFIG);
-        console.log("✅ Connected to FTP Server!");
-
-        // Ensure the "images" directory exists inside /docminds
-        await client.ensureDir("/docminds/images");
-        const imageUrl = `https://inventionminds.com/docminds/images/${path.basename(remoteFilePath)}`
-        // Upload the file
-        await client.uploadFrom(localFilePath, remoteFilePath);
-        console.log(`✅ Uploaded: ${remoteFilePath}`);
-
-        // Delete local file after upload
-        if (fs.existsSync(localFilePath)) {
-            fs.unlinkSync(localFilePath);
-            console.log(`🗑️ Deleted local file: ${localFilePath}`);
-        }
-
-        await client.close();
-        return imageUrl
-    } catch (error) {
-        console.error("❌ FTP Upload Error:", error);
-    }
-}
+// --- DEPRECATED: replaced by saveFileToStorage (local-file-store). Kept for
+// reference / rollback. Re-enable the basic-ftp import + FTP_CONFIG above to use.
+// async function uploadToFTP(localFilePath: string, remoteFilePath: string) {
+//     const client = new Client();
+//     client.ftp.verbose = true; // Enable logs
+//     try {
+//         await client.access(FTP_CONFIG);
+//         console.log("✅ Connected to FTP Server!");
+//         await client.ensureDir("/docminds/images");
+//         const imageUrl = `https://inventionminds.com/docminds/images/${path.basename(remoteFilePath)}`
+//         await client.uploadFrom(localFilePath, remoteFilePath);
+//         console.log(`✅ Uploaded: ${remoteFilePath}`);
+//         if (fs.existsSync(localFilePath)) {
+//             fs.unlinkSync(localFilePath);
+//             console.log(`🗑️ Deleted local file: ${localFilePath}`);
+//         }
+//         await client.close();
+//         return imageUrl
+//     } catch (error) {
+//         console.error("❌ FTP Upload Error:", error);
+//     }
+// }
 // Fixed autoScroll function
 async function autoScroll(page: puppeteer.Page) {
     await page.evaluate(() => {
@@ -123,37 +130,43 @@ function formatDateYear(date: Date): string {
 async function sendWhatsAppMessage(imageUrl: any) {
     try {
         const todayDate = new Date().toISOString().split('T')[0];
-        const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
-        const url = process.env.WHATSAPP_API_URL_BULK;
         console.log(todayDate)
-        const payload = {
-            from: fromPhoneNumber,
-            to: ["919496217976", "919341227264", "919995703633 ","919880544866","916364833988","919342003000"], // Recipient's WhatsApp number
-            // to:['919342287945'],
-            // to:['919342003000'],
-            type: "template",
-            message: {
-                templateid: "735729", // Use your actual template ID
-                url: imageUrl, // Extracts PDF name
-                placeholders: [formatDateYear(new Date(todayDate))]
+
+        // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+        // const payload = {
+        //     from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
+        //     to: await getRecipientPhones('dashboard_screenshot'),
+        //     type: "template",
+        //     message: { templateid: "735729", url: imageUrl, placeholders: [formatDateYear(new Date(todayDate))] }
+        // };
+        // const headers = { "Content-Type": "application/json", apikey: process.env.WHATSAPP_AUTH_TOKEN };
+        // const response = await axios.post(process.env.WHATSAPP_API_URL_BULK!, payload, { headers });
+
+        // ===== GoBuzz (dashboad_overview) — single-recipient, loop over DB recipients =====
+        const recipients = await getRecipientPhones('dashboard_screenshot');
+        for (const recipient of recipients) {
+            const payload = {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: formatGoBuzzNumber(recipient),
+                type: "template",
+                template: {
+                    name: "dashboad_overview",
+                    language: { code: "en" },
+                    components: [
+                        { type: "header", parameters: [{ type: "image", image: { link: imageUrl } }] },
+                        { type: "body", parameters: [{ type: "text", text: formatDateYear(new Date(todayDate)) }] },
+                    ],
+                },
+            };
+            try {
+                await sendGoBuzzMessage(payload);
+                console.log("✅ GoBuzz dashboard screenshot sent to", recipient);
+            } catch (err) {
+                console.error("❌ GoBuzz screenshot send failed for", recipient);
             }
-        };
-
-        const headers = {
-            "Content-Type": "application/json",
-            apikey: process.env.WHATSAPP_AUTH_TOKEN, // API key from Pinnacle
-        };
-
-        const response = await axios.post(url!, payload, { headers });
-
-        if (response.data.code === "200") {
-            console.log("✅ WhatsApp message sent successfully:", response.data);
-
-            return response;
-        } else {
-            console.error("❌ Failed to send WhatsApp message:", response.data);
-            throw new Error("WhatsApp API failed");
         }
+        return;
     } catch (error) {
         console.error("❌ WhatsApp API Error:", error);
         throw error;
