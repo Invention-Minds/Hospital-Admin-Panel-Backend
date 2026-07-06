@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { getRecipientPhones } from '../../service/notification-recipients';
-import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import { withSlotLock } from '../doctor/doctor.controller';
@@ -8,10 +7,11 @@ import AppointmentRepository from './appointment.repository';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import axios from 'axios';
-import { sendConfirmedWhatsApp } from '../whatsapp/whatsapp.controller';
+import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import { sendConfirmedSMS } from '../sms/sms.controller';
 
 const prisma = new PrismaClient();
+const templateLang = "en";
 
 let clients: Response[] = [];
 const resolver = new AppointmentResolver();
@@ -950,12 +950,13 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
     // Wait for all update promises to resolve
     await Promise.all(updatePromises)
 
-    const url = process.env.WHATSAPP_API_URL_BULK;
-    const headers = {
-      "Content-Type": "application/json",
-      apikey: process.env.WHATSAPP_AUTH_TOKEN,
-    };
-    const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
+    // ===== Pinnacle (commented out — migrated to GoBuzz) =====
+    // const url = process.env.WHATSAPP_API_URL_BULK;
+    // const headers = {
+    //   "Content-Type": "application/json",
+    //   apikey: process.env.WHATSAPP_AUTH_TOKEN,
+    // };
+    // const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
     // ===== Pinnacle (commented out — migrated to GoBuzz) =====
     // const whatsappPayload = {

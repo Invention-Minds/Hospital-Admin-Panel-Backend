@@ -2703,10 +2703,19 @@ async function runDoctorAssignments() {
     //     console.log(`❌ No available doctors for Channel ${channel.name} at this time.`);
     //   }
     // }
+    // Track doctors already placed in a channel during this run so a doctor is
+    // never assigned to more than one channel (prevents cross-channel duplicates).
+    const assignedDoctorIdsThisRun = new Set<number>();
+
     for (const channel of channels) {
       const assignedDoctors = doctors.filter((doctor) => {
         // ❌ Skip invalid doctors
         if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
+          return false;
+        }
+
+        // ❌ Skip doctors already assigned to another channel in this run
+        if (assignedDoctorIdsThisRun.has(doctor.id)) {
           return false;
         }
 
@@ -2761,9 +2770,9 @@ async function runDoctorAssignments() {
           }
         }
 
-        // ✅ Ensure doctor is assigned to the correct room
-        const channelRooms = channel.roomNumber!.split(',').map(room => room.trim());
-        const isDoctorInChannel = channelRooms.includes(doctor.roomNo!);
+        // ✅ Ensure doctor is assigned to the correct room (guard null roomNumber/roomNo)
+        const channelRooms = (channel.roomNumber || '').split(',').map(room => room.trim()).filter(Boolean);
+        const isDoctorInChannel = !!doctor.roomNo && channelRooms.includes(doctor.roomNo);
         console.log(channelRooms, doctor.roomNo)
 
         if (!isDoctorInChannel) {
@@ -2784,6 +2793,9 @@ async function runDoctorAssignments() {
         // ✅ Doctor is assigned only if in the correct room, available now, and arrived
         return isDoctorInChannel && isDoctorAvailableNow && hasArrived;
       });
+
+      // Reserve these doctors so later channels in this run won't take them too.
+      assignedDoctors.forEach((doctor) => assignedDoctorIdsThisRun.add(doctor.id));
 
       // ✅ Remove existing doctor assignments for this channel
       await prisma.doctorAssignment.deleteMany({
@@ -3314,6 +3326,7 @@ export const sendConfirmedWhatsApp = async ({
 
   try {
     for (const payload of payloads) {
+      // await axios.post(url, payload, { headers }); // Pinnacle — migrated to GoBuzz
       await sendGoBuzzMessage(payload);
     }
   } catch (error: any) {
