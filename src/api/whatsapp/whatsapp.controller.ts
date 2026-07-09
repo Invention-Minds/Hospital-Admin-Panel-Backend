@@ -1836,7 +1836,7 @@ export const cancelExpiredAppointments = async () => {
   const currentTimeIST = moment().tz("Asia/Kolkata");
   console.log("⏰ Current IST Time:", currentTimeIST.format("YYYY-MM-DD HH:mm:ss"));
 
-  // **Step 1: Fetch Expired Appointments (Older than 30 mins)**
+  // **Step 1: Fetch Expired Appointments (slot time older than 3 hrs, not checked in)**
   const expiredAppointments = await prisma.appointment.findMany({
     where: {
       checkedIn: false,
@@ -1848,7 +1848,7 @@ export const cancelExpiredAppointments = async () => {
   });
   // const thresholdTime = currentTimeIST.subtract(30, "minutes").format("HH:mm:ss");
   // const currentTimeIST = moment().tz("Asia/Kolkata"); // Get current IST time
-  const thresholdTime = moment().tz("Asia/Kolkata").subtract(30, "minutes"); // Subtract 30 mins from current time
+  const thresholdTime = moment().tz("Asia/Kolkata").subtract(3, "hours"); // Cancel if the slot time was more than 3 hours ago
 
   const filteredAppointments = expiredAppointments.filter((appt) => {
     // Ensure appointment date and time are correctly parsed together
@@ -2982,26 +2982,37 @@ export const sendWhatsAppFollowUpMessage = async (req: Request, res: Response) =
 
 
 
-// cron.schedule("0 7 * * *", async () => {
-//   await updateEstimation();
-//   await processRepeatedAppointments();
-// });
-// cron.schedule("* 8-19 * * *", updateDoctorAssignments);
-// cron.schedule("0 21 * * *", sendDoctorMessage);
-// cron.schedule("0 * * * *", async () => {
-//   await checkAndSendReminders();
-//   await remainderForAdmin();
-//   await reminderForServices();
-// });
-// cron.schedule("0 23 * * *", async () => {
-//   await markComplete();
-//   await markCompleteRadio();
-// });
-// cron.schedule("50 15 * * *", markComplete);
+cron.schedule("0 7 * * *", async () => {
+  await updateEstimation();
+  await processRepeatedAppointments();
+});
+cron.schedule("* 8-19 * * *", updateDoctorAssignments);
+cron.schedule("0 21 * * *", sendDoctorMessage);
+cron.schedule("0 * * * *", async () => {
+  await checkAndSendReminders();
+  await remainderForAdmin();
+  await reminderForServices();
+  // Runs on the server (no Cloud Scheduler): cancel not-checked-in appts whose
+  // slot was >3h ago, and send doctor login reminders — same work the hourly
+  // /cancel-appointments (doctorAvailability) endpoint used to do.
+  await cancelExpiredAppointments();
+  await checkDoctorAvailability();
+});
+cron.schedule("0 23 * * *", async () => {
+  await markComplete();
+  await markCompleteRadio();
+});
+cron.schedule("50 15 * * *", markComplete);
 
-// cron.schedule("*/1 * * * *", async () => {
-//   await sendTherapyReminders();
-// });
+// Was */1 (every minute). Reduced to */2 to cut load. Adjust the "2" (e.g. */3,
+// */5) and/or add a clinic-hours range (e.g. "*/2 7-21 * * *") to reduce further.
+cron.schedule("*/2 * * * *", async () => {
+  await sendTherapyReminders();
+  // Runs on the server (no Cloud Scheduler): patient waiting-time watch — alerts
+  // admin when consultation runs past slot duration + grace. Same work the
+  // per-minute /one-min (scheduleForWaiting) endpoint used to do.
+  await checkPatientWaitingTime();
+});
 
 
 export const sendWhatsAppTemplate = async (

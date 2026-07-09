@@ -296,8 +296,8 @@ app.listen(PORT, () => {
     // Initialize HMIS polling queue (lab/radiology results, bed availability, retry logic)
     // hmisSyncQueue.initializePollingJobs();
 
-    // // Initialize follow-up appointment reminders (daily at 8 AM)
-    // initializeFollowUpReminders();
+    // Initialize follow-up appointment reminders (daily at 8 AM)
+    initializeFollowUpReminders();
 
     // // Sprint 4a Phase 1e — Daily bed census snapshot cron (00:05 local)
     // registerBedCensusCron();

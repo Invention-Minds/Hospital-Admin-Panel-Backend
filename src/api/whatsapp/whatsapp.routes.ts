@@ -7,7 +7,9 @@ const router = Router();
 
 // Define the route for sending WhatsApp messages
 router.post('/send', sendWhatsAppMessage);
-router.post('/run-hourly-task', CornSchedular);
+// Cloud Scheduler — removed. Its work (checkAndSendReminders + remainderForAdmin
+// + reminderForServices) already runs on the internal hourly cron.
+// router.post('/run-hourly-task', CornSchedular);
 router.post('/remainder', updateEstimation );
 router.post('/send-doctor-message',sendDoctorMessage)
 router.post('/send-receive-message',sendWhatsAppChatbot);
@@ -21,11 +23,17 @@ router.post('/send-followup-message', sendWhatsAppFollowUpMessage);
 router.post('/send-doctor-remainder', loginRemainder)
 router.post('/mark-complete', individualComplete)
 router.post('/send-admin-late', adminDoctorLateLogin)
-router.post('/cancel-appointments', doctorAvailability)
-router.post('/nine-remainder', timeNineRemainder)
-router.post('/timeEleven-remainder', timeElevenRemainder)
-router.post('/timeThree-remainder', timeThreeRemainder)
-router.post('/one-min',scheduleForWaiting)
+// ===== Cloud Scheduler endpoints — REMOVED. Now handled by internal node-cron
+// in whatsapp.controller (hourly cancelExpiredAppointments + checkDoctorAvailability,
+// per-minute checkPatientWaitingTime). Commenting so an external scheduler can't
+// double-trigger the WhatsApp sends. =====
+// router.post('/cancel-appointments', doctorAvailability)
+// Cloud Scheduler — removed. Their work already runs on internal cron:
+//   sendDoctorMessage → 0 21 * * *   |   markComplete(+Radio) → 0 23 & 50 15 * * *
+// router.post('/nine-remainder', timeNineRemainder)
+// router.post('/timeEleven-remainder', timeElevenRemainder)
+// router.post('/timeThree-remainder', timeThreeRemainder)
+// router.post('/one-min',scheduleForWaiting)
 // router.post('/doctor-avail', doctorAvailability)
 
 export default router;  // Make sure this line is present
