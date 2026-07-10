@@ -15,7 +15,7 @@ router.get('/', authenticateToken, getChannels); // Get all channels
 router.post('/', authenticateToken, createChannel); // Create a new channel
 router.post('/assign', authenticateToken, assignDoctorToChannel); // Assign a doctor to a channel
 router.post('/remove', authenticateToken, removeDoctorFromChannel); // Remove a doctor from a channel
-router.get('/:channelId/doctors', authenticateToken, getDoctorsByChannel);
-router.get('/:doctorId/channels', authenticateToken, getChannelsByDoctor)
+router.get('/:channelId/doctors', getDoctorsByChannel);
+router.get('/:doctorId/channels', getChannelsByDoctor)
 
 export default router;
