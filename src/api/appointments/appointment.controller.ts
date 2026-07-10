@@ -612,7 +612,14 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     const userId = req.user?.id ?? null;
     // Destructure and remove unnecessary nested objects before updating.
     // `userId` is also destructured off so the body value cannot leak in via ...updateData.
-    const { id, doctor, user, userId: _bodyUserId, ...updateData } = req.body;
+    // checkedInTime / checkedInBy are ONLY set by the dedicated /checkin endpoint;
+    // strip them here so a generic PUT (which sends the whole appointment, with these
+    // still null pre-check-in) can never overwrite the check-in stamp.
+    const {
+      id, doctor, user, userId: _bodyUserId,
+      checkedInTime: _checkedInTime, checkedInBy: _checkedInBy,
+      ...updateData
+    } = req.body;
     console.log("updateDatsa", updateData)
 
     // Include userId if present (from JWT).
