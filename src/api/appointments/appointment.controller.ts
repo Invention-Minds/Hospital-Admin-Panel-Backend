@@ -310,15 +310,64 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     if (newAppointment.status === 'confirmed') {
       try {
         const doctor = await doctorRepository.getDoctorById(doctorId);
-        await sendConfirmedWhatsApp({
-          patientName,
-          doctorName,
-          date,
-          time,
-          patientPhoneNumber: phoneNumber,
-          doctorPhoneNumber: doctor?.phone_number,
-          prefix
-        });
+        // Walk-in confirmations use the dedicated GoBuzz "walkin" template
+        // (normalise so 'Walk-In' / 'walkin' / 'Walk In' all match); every other
+        // request-via keeps the standard confirmed WhatsApp template.
+        const isWalkin = String(requestVia || '').toLowerCase().replace(/[^a-z]/g, '') === 'walkin';
+        if (isWalkin) {
+          const name = `${prefix} ${patientName}`;
+          // Patient — dedicated "walkin" template.
+          const patientPayload = {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: formatGoBuzzNumber(phoneNumber),
+            type: "template",
+            template: {
+              name: "walkin",
+              language: { code: "en" },
+              components: [{ type: "body", parameters: [
+                { type: "text", text: String(name) },
+                { type: "text", text: String(doctorName) },
+                { type: "text", text: String(status) },
+                { type: "text", text: formatDateYear(new Date(date)) },
+                { type: "text", text: String(time) },
+              ] }],
+            },
+          };
+          await sendGoBuzzMessage(patientPayload);
+
+          // Doctor still gets notified on walk-ins (same message as the normal
+          // confirmed path — sendConfirmedWhatsApp's doctor_appts_status half).
+          if (doctor?.phone_number) {
+            await sendGoBuzzMessage({
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: formatGoBuzzNumber(doctor.phone_number),
+              type: "template",
+              template: {
+                name: "doctor_appts_status",
+                language: { code: "en" },
+                components: [{ type: "body", parameters: [
+                  { type: "text", text: String(doctorName) },
+                  { type: "text", text: "confirmed" },
+                  { type: "text", text: String(name) },
+                  { type: "text", text: String(time) },
+                  { type: "text", text: formatDateYear(new Date(date)) },
+                ] }],
+              },
+            });
+          }
+        } else {
+          await sendConfirmedWhatsApp({
+            patientName,
+            doctorName,
+            date,
+            time,
+            patientPhoneNumber: phoneNumber,
+            doctorPhoneNumber: doctor?.phone_number,
+            prefix
+          });
+        }
         await sendConfirmedSMS({
           patientName,
           doctorName,
@@ -1317,6 +1366,68 @@ export const todayCheckedInAppointments = async (req: Request, res: Response): P
       },
     });
     res.status(200).json(appointments);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+}
+
+// Per-doctor consultation activity for a given day, for the admin analytics
+// drill-down. "Started" and "Finished" aren't separate records — they're flags
+// on the Appointment (checkedOut / endConsultation), so we pull today's
+// checked-in rows and roll them up by doctor. Returns one entry per doctor that
+// has any started or finished consultation today, with the patient breakdown.
+export const consultationSummary = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { date } = req.query;
+    if (!date) {
+      res.status(400).json({ error: 'Date is required' });
+      return;
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        date: date as string,
+        checkedIn: true,
+      },
+      include: { doctor: true },
+    });
+
+    // Roll up by doctorId.
+    const byDoctor = new Map<number, any>();
+    for (const a of appointments) {
+      const started = a.checkedOut === true;
+      const finished = a.endConsultation === true;
+      // Skip rows the doctor never acted on (only checked-in, not started).
+      if (!started && !finished) continue;
+
+      const key = a.doctorId ?? -1;
+      if (!byDoctor.has(key)) {
+        byDoctor.set(key, {
+          doctorId: a.doctorId ?? null,
+          doctorName: a.doctor?.name || a.doctorName || 'Unknown',
+          department: a.department || '',
+          started: 0,
+          finished: 0,
+          patients: [] as any[],
+        });
+      }
+      const entry = byDoctor.get(key);
+      if (started) entry.started += 1;
+      if (finished) entry.finished += 1;
+      entry.patients.push({
+        patientName: a.patientName,
+        prnNumber: a.prnNumber ?? null,
+        time: a.time,
+        startedAt: a.checkedOutTime,
+        finishedAt: a.endConsultationTime,
+        state: finished ? 'Finished' : (started ? 'Ongoing' : 'Waiting'),
+      });
+    }
+
+    const summary = Array.from(byDoctor.values())
+      .sort((x, y) => (y.started + y.finished) - (x.started + x.finished));
+
+    res.status(200).json(summary);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }

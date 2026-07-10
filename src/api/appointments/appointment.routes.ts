@@ -34,7 +34,8 @@ import {
     getDoctorTodayReport,
     getAppointmentById,
     getCheckedInAppointmentsByDateRange,
-    broadcastConsultationStart
+    broadcastConsultationStart,
+    consultationSummary
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 
@@ -58,6 +59,7 @@ router.get('/opd-status',authenticateToken, opdStatusWise);
 router.get('/prn-wise',authenticateToken, prnWiseAppointment);
 router.get('/opd-gender',authenticateToken, opdGenderWise)
 router.get('/today-checkin', authenticateToken, todayCheckedInAppointments);
+router.get('/consultation-summary', authenticateToken, consultationSummary);
 router.get('/confirmed-appts', authenticateToken, confirmedAppointments);
 router.get('/cancelled-appts', authenticateToken, cancelledAppointments);
 router.get('/completed-appts', authenticateToken, completedAppointments);
