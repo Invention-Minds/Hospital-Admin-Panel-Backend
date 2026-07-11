@@ -3023,27 +3023,30 @@ export const sendWhatsAppTemplate = async (
 ) => {
   try {
 
-    console.log("🚀 Sending WhatsApp Template:", { to, templateid, placeholders });
+    console.log("🚀 Sending GoBuzz Template:", { to, template: templateid, placeholders });
+    // ===== GoBuzz (therapy templates) — migrated from Pinnacle =====
+    // `templateid` is now a GoBuzz template NAME (from the TEMPLATE map);
+    // `placeholders` fill the template body {{1}}..{{n}} in order.
     const payload = {
-      from: process.env.WHATSAPP_FROM_PHONE_NUMBER,
-      to,
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: formatGoBuzzNumber(to),
       type: "template",
-      message: {
-        templateid,
-        placeholders,
+      template: {
+        name: templateid,
+        language: { code: "en" },
+        components: [
+          {
+            type: "body",
+            parameters: (placeholders || []).map((t) => ({ type: "text", text: String(t ?? "") })),
+          },
+        ],
       },
     };
 
-    const headers = {
-      "Content-Type": "application/json",
-      apikey: process.env.WHATSAPP_AUTH_TOKEN,
-    };
+    const response = await sendGoBuzzMessage(payload);
 
-    const response = await axios.post(process.env.WHATSAPP_API_URL!, payload, {
-      headers,
-    });
-
-    console.log("📩 WhatsApp sent:", response.data);
+    console.log("📩 GoBuzz template sent:", response?.data);
     // Update only if whatsappSent is not already true
     if (id) {
       const existing = await prisma.therapyAppointment.findUnique({
@@ -3059,32 +3062,35 @@ export const sendWhatsAppTemplate = async (
       }
     }
 
-    return response.data;
+    return response?.data;
   } catch (err) {
-    console.error("❌ WhatsApp Error:", err);
+    console.error("❌ GoBuzz Template Error:", err);
     return null;
   }
 };
+// GoBuzz template NAMES for therapy (migrated from Pinnacle numeric ids).
+// Names are used verbatim as created in GoBuzz — including the "therpay" /
+// "appnt" spellings — since the send must match the approved template name.
 export const TEMPLATE = {
   // Cancellation
-  PATIENT_CANCEL: "935429",
-  THERAPIST_CANCEL: "938765",
-  DOCTOR_CANCEL: "938763",
+  PATIENT_CANCEL: "therapy_appt_patient_cancel",
+  THERAPIST_CANCEL: "therapist_cancellation_appt",
+  DOCTOR_CANCEL: "cancel_doctor_therapy",
 
   // Confirmation
-  PATIENT_CONFIRM: "944351",
-  THERAPIST_CONFIRM: "944357",
-  DOCTOR_CONFIRM: "944361",
+  PATIENT_CONFIRM: "patient_therpay_confirmation",
+  THERAPIST_CONFIRM: "therpay_therapist_confirmation",
+  DOCTOR_CONFIRM: "doctor_therapy_confirmation",
 
   // Reschedule
-  PATIENT_RESCHEDULE: "938767",
-  THERAPIST_RESCHEDULE: "935423",
-  DOCTOR_RESCHEDULE: "935425",
+  PATIENT_RESCHEDULE: "therapy_appt_patient_reschedule",
+  THERAPIST_RESCHEDULE: "therapy_appt_therapist_reschedule",
+  DOCTOR_RESCHEDULE: "therapy_appnt_doctor_reschedule",
 
   // Reminder
-  PATIENT_REMINDER: "936145",
-  THERAPIST_REMINDER: "944341",
-  DOCTOR_REMINDER: "944345",
+  PATIENT_REMINDER: "patient_therapy_reminder",
+  THERAPIST_REMINDER: "therapist_therapy_reminder",
+  DOCTOR_REMINDER: "doctor_therapy_reminder",
 };
 export const buildPlaceholders = (type: string, appt: any, therapistName: string, doctorName: string) => {
   const therapyNames = getTherapyNames(appt);
