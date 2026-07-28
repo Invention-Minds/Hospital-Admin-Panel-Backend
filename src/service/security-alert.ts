@@ -79,14 +79,37 @@ const recordFailedAuth = (ip: string, now: number): boolean => {
   return hits.length >= securityConfig.bruteForceThreshold;
 };
 
-/** Drop stale IP windows so the map doesn't grow unbounded. */
-const pruneFailedAuth = (now: number): void => {
-  const windowMs = securityConfig.bruteForceWindowMin * 60 * 1000;
+// --- File-probe sliding window (auto-block repeat scanners) ------------------
+// ip -> array of file-probe epoch-ms timestamps within the window. Feeds the
+// auto-block decision in middleware/security-logger.ts.
+const probeByIp = new Map<string, number[]>();
+
+/**
+ * Record a file-probe hit for an IP and return how many it has made inside the
+ * configured probe window. Caller compares against probeBlockThreshold.
+ */
+export const recordProbe = (ip: string, now: number): number => {
+  const windowMs = securityConfig.probeBlockWindowMin * 60 * 1000;
   const cutoff = now - windowMs;
+  const hits = (probeByIp.get(ip) ?? []).filter((t) => t >= cutoff);
+  hits.push(now);
+  probeByIp.set(ip, hits);
+  return hits.length;
+};
+
+/** Drop stale IP windows so the maps don't grow unbounded. */
+const pruneWindows = (now: number): void => {
+  const authCutoff = now - securityConfig.bruteForceWindowMin * 60 * 1000;
   for (const [ip, hits] of failedAuthByIp) {
-    const kept = hits.filter((t) => t >= cutoff);
+    const kept = hits.filter((t) => t >= authCutoff);
     if (kept.length === 0) failedAuthByIp.delete(ip);
     else failedAuthByIp.set(ip, kept);
+  }
+  const probeCutoff = now - securityConfig.probeBlockWindowMin * 60 * 1000;
+  for (const [ip, hits] of probeByIp) {
+    const kept = hits.filter((t) => t >= probeCutoff);
+    if (kept.length === 0) probeByIp.delete(ip);
+    else probeByIp.set(ip, kept);
   }
 };
 
@@ -96,6 +119,11 @@ const pruneFailedAuth = (now: number): void => {
  */
 export const classifyThreat = (input: ThreatInput, now: number): ThreatResult => {
   const rules: string[] = [];
+
+  // 429 = our own rate-limit / IP-block response. The IP is already handled;
+  // don't re-classify or re-alert on it (otherwise a blocked prober keeps
+  // generating alerts on every throttled hit).
+  if (input.statusCode === 429) return { rules };
 
   // Anonymous hit on a sensitive route.
   if (
@@ -158,7 +186,7 @@ export const bufferThreat = (input: ThreatInput, rules: string[]): void => {
  * Empty recipients → log to console, don't send. Never throws.
  */
 export const flushAlerts = async (now: number): Promise<void> => {
-  pruneFailedAuth(now);
+  pruneWindows(now);
 
   if (buffer.length === 0) return;
 

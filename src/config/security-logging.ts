@@ -93,6 +93,19 @@ export const securityConfig = {
   bruteForceWindowMin: parseInt10(process.env.SECURITY_BRUTEFORCE_WINDOW_MIN, 5),
 
   /**
+   * Auto-block scanners: N file-probes (see security-alert PROBE_PATTERNS) from
+   * one IP within the window → block the IP via the same SecurityIpBlock table
+   * the global rate limiter uses. A super_admin can unblock via /api/security/blocks.
+   * The rate limiter only trips at 600 req/min, so low-and-slow scanners never
+   * get blocked without this. Set SECURITY_PROBE_BLOCK_ENABLED=false to disable.
+   */
+  probeBlockEnabled: parseBool(process.env.SECURITY_PROBE_BLOCK_ENABLED, true),
+  probeBlockThreshold: parseInt10(process.env.SECURITY_PROBE_BLOCK_THRESHOLD, 5),
+  probeBlockWindowMin: parseInt10(process.env.SECURITY_PROBE_BLOCK_WINDOW_MIN, 10),
+  /** Block duration (minutes) for auto-blocked probers. Default 24h. */
+  probeBlockDurationMin: parseInt10(process.env.SECURITY_PROBE_BLOCK_DURATION_MIN, 1440),
+
+  /**
    * When true, EVERY request is persisted to the DB table. When false, only
    * suspicious requests are persisted (the file log still gets everything).
    */

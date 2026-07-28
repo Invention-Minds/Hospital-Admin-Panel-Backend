@@ -40,7 +40,7 @@ const config = {
 };
 
 // Loopback is always allowed.
-const isWhitelisted = (ip: string): boolean =>
+export const isWhitelisted = (ip: string): boolean =>
   ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || config.whitelist.includes(ip);
 
 const clientIp = (req: Request): string => {

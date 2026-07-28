@@ -4,7 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import prisma from '../service/prisma-client';
 import { securityConfig } from '../config/security-logging';
-import { classifyThreat, bufferThreat } from '../service/security-alert';
+import { classifyThreat, bufferThreat, recordProbe } from '../service/security-alert';
+import { blockIp, isWhitelisted } from './global-rate-limit';
 
 /**
  * Security request logging middleware.
@@ -151,6 +152,27 @@ export const securityLogger = (req: Request, res: Response, next: NextFunction):
         now
       );
       const suspicious = rules.length > 0;
+
+      // Auto-block IPs that repeatedly probe for non-API files/paths. The global
+      // rate limiter only trips at 600 req/min, so a low-and-slow scanner is
+      // otherwise never blocked — just alerted forever. Reuses the same
+      // SecurityIpBlock table, so a super_admin can unblock via /api/security/blocks.
+      if (
+        securityConfig.probeBlockEnabled &&
+        rules.includes('file_probe') &&
+        ip &&
+        !isWhitelisted(ip)
+      ) {
+        const probeCount = recordProbe(ip, now);
+        if (probeCount >= securityConfig.probeBlockThreshold) {
+          void blockIp(
+            ip,
+            `probe flood: ${probeCount} file-probe requests / ${securityConfig.probeBlockWindowMin}min`,
+            securityConfig.probeBlockDurationMin,
+            probeCount
+          );
+        }
+      }
 
       persist({
         ts,
