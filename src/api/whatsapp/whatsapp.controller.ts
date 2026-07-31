@@ -2144,51 +2144,55 @@ async function checkDoctorAvailability() {
       continue;
     }
 
-    // ✅ Send a login reminder 5 minutes before shift
-    const notificationTime = availableTime.clone().subtract(5, "minutes");
-    // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-    if (currentTime.isSame(availableTime, 'minute')) {
-      const sentAlert = await prisma.sentMessage.findFirst({
-        where: {
-          doctorId: doctor.id,
-          alertType: "lateLogin",
-          sentAt: {
-            gte: moment().tz("Asia/Kolkata").startOf("day").toISOString(),  // ✅ Reset every day
-            lte: moment().tz("Asia/Kolkata").toISOString(),  // ✅ Only check today
-          },
-        },
-      });
-
-      if (!sentAlert) {
-        console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
-
-        await sendMessageToDoctor(doctor.phone_number, appointments.length, appointments[0].time, doctor.name, doctor.id);
-      } else {
-        console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
-      }
-    }
-
-
-    // ✅ Check waiting time for first appointment
-    if (appointments.length > 0) {
-      const firstAppointment = appointments[0];
-      console.log(firstAppointment)
+    // ⛔ DISABLED — doctor login-reminder WhatsApp (login_remainder / admin_consult_new).
+    // Paused on request; uncomment this block to resume.
+    // // ✅ Send a login reminder 5 minutes before shift
+    // const notificationTime = availableTime.clone().subtract(5, "minutes");
+    // // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+    // if (currentTime.isSame(availableTime, 'minute')) {
+    //   const sentAlert = await prisma.sentMessage.findFirst({
+    //     where: {
+    //       doctorId: doctor.id,
+    //       alertType: "lateLogin",
+    //       sentAt: {
+    //         gte: moment().tz("Asia/Kolkata").startOf("day").toISOString(),  // ✅ Reset every day
+    //         lte: moment().tz("Asia/Kolkata").toISOString(),  // ✅ Only check today
+    //       },
+    //     },
+    //   });
+    //
+    //   if (!sentAlert) {
+    //     console.warn(`🚨 Sending login reminder to Dr. ${doctor.name}...`);
+    //
+    //     await sendMessageToDoctor(doctor.phone_number, appointments.length, appointments[0].time, doctor.name, doctor.id);
+    //   } else {
+    //     console.log(`🚫 WhatsApp alert already sent to Dr. ${doctor.name}, skipping.`);
+    //   }
+    // }
 
 
-      // Old hardcoded recipients (kept for reference / seeding into DB):
-      // const adminPhoneNumbers = ["919880544866", "916364833988"];
-      const adminPhoneNumbers = await getRecipientPhones('whatsapp_admin'); // DB-managed recipients
-
-      const now = moment().tz("Asia/Kolkata").toDate();
-
-      const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
-
-      if (!firstAppointment.checkedOut && now.getTime() > thresholdTime.toDate().getTime()) {
-        console.warn(`⏳ Alert: First checked-in patient for Dr. ${doctor.name} has exceeded waiting time!`);
-        await sendAdminAlertMessage(adminPhoneNumbers, appointments.length, doctor.name, doctor.id);
-      }
-
-    }
+    // ⛔ DISABLED — "first checked-in patient waiting >10 min past shift start" admin
+    // WhatsApp alert. Paused on request; uncomment this block to resume.
+    // // ✅ Check waiting time for first appointment
+    // if (appointments.length > 0) {
+    //   const firstAppointment = appointments[0];
+    //   console.log(firstAppointment)
+    //
+    //
+    //   // Old hardcoded recipients (kept for reference / seeding into DB):
+    //   // const adminPhoneNumbers = ["919880544866", "916364833988"];
+    //   const adminPhoneNumbers = await getRecipientPhones('whatsapp_admin'); // DB-managed recipients
+    //
+    //   const now = moment().tz("Asia/Kolkata").toDate();
+    //
+    //   const thresholdTime = moment(availableTime).add(10, "minutes"); // Keeps thresholdTime as Moment
+    //
+    //   if (!firstAppointment.checkedOut && now.getTime() > thresholdTime.toDate().getTime()) {
+    //     console.warn(`⏳ Alert: First checked-in patient for Dr. ${doctor.name} has exceeded waiting time!`);
+    //     await sendAdminAlertMessage(adminPhoneNumbers, appointments.length, doctor.name, doctor.id);
+    //   }
+    //
+    // }
   }
 
   console.log("✅ Doctor Availability Check Completed.");
@@ -2454,22 +2458,25 @@ async function checkPatientWaitingTime() {
 
 
 
-          // Step 7: Send WhatsApp notifications to Admins & Doctor
-          // Old hardcoded recipients (kept for reference / seeding into DB):
-          // const adminPhoneNumbers = ["919880544866", "916364833988"];
-          const adminPhoneNumbers = await getRecipientPhones('whatsapp_admin'); // DB-managed recipients
-          const adminsToSend = Array.isArray(adminPhoneNumbers)
-            ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
-            : [];
-
-
-          await waitingTimeMessage(
-            adminsToSend,
-            doctor.phone_number,
-            pendingCount,
-            doctorName,
-            waitingMultiplier, // Include waiting multiplier in the alert
-          )
+          // ⛔ DISABLED — consultation-overrun WhatsApp alert to admins + doctor.
+          // Paused on request; uncomment to resume. extraWaitingTime above is still
+          // written to the appointment, so the UI keeps showing the overrun.
+          // // Step 7: Send WhatsApp notifications to Admins & Doctor
+          // // Old hardcoded recipients (kept for reference / seeding into DB):
+          // // const adminPhoneNumbers = ["919880544866", "916364833988"];
+          // const adminPhoneNumbers = await getRecipientPhones('whatsapp_admin'); // DB-managed recipients
+          // const adminsToSend = Array.isArray(adminPhoneNumbers)
+          //   ? adminPhoneNumbers.slice(0, waitingMultiplier) // Send message to more admins based on waiting multiplier
+          //   : [];
+          //
+          //
+          // await waitingTimeMessage(
+          //   adminsToSend,
+          //   doctor.phone_number,
+          //   pendingCount,
+          //   doctorName,
+          //   waitingMultiplier, // Include waiting multiplier in the alert
+          // )
 
         }
       }
