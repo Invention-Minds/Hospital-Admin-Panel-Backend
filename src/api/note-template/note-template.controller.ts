@@ -28,6 +28,7 @@ const VALID_FIELD_TYPES = [
   'text', 'textarea', 'number', 'date', 'datetime',
   'select', 'multiselect', 'checkbox', 'radio',
   'handwritten', // option C — canvas widget for OPD
+  'table', // row x column grid (e.g. ENT ear exam: EAC/TM/Post Aural x R/L)
 ];
 
 interface FieldDef {
@@ -40,6 +41,8 @@ interface FieldDef {
   placeholder?: string;
   group?: string;
   order?: number;
+  rows?: string[];    // type=table only — row labels
+  columns?: string[]; // type=table only — column labels
 }
 
 interface CreateBody {
@@ -106,6 +109,14 @@ function validateFields(fields: unknown): string | null {
     const needsOptions = ['select', 'multiselect', 'radio'].includes(f.type);
     if (needsOptions && (!Array.isArray(f.options) || f.options.length === 0)) {
       return `fields[${i}].options is required for type=${f.type}`;
+    }
+    if (f.type === 'table') {
+      if (!Array.isArray(f.rows) || f.rows.length === 0) {
+        return `fields[${i}].rows is required for type=table`;
+      }
+      if (!Array.isArray(f.columns) || f.columns.length === 0) {
+        return `fields[${i}].columns is required for type=table`;
+      }
     }
   }
   return null;
