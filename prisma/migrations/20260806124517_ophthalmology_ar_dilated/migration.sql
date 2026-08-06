@@ -1,0 +1,10 @@
+-- AlterTable
+ALTER TABLE `OphthalmologyPrescription` ADD COLUMN `arDilAxisL` TEXT NULL,
+    ADD COLUMN `arDilAxisR` TEXT NULL,
+    ADD COLUMN `arDilCylL` TEXT NULL,
+    ADD COLUMN `arDilCylR` TEXT NULL,
+    ADD COLUMN `arDilIPD` TEXT NULL,
+    ADD COLUMN `arDilSphL` TEXT NULL,
+    ADD COLUMN `arDilSphR` TEXT NULL,
+    ADD COLUMN `arDilVAL` TEXT NULL,
+    ADD COLUMN `arDilVAR` TEXT NULL;

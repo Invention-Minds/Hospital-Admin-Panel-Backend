@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 import { snapshotTemplateFields } from '../note-template/note-template.controller';
+import { pushOpdNotesReady } from '../../service/record-push.service';
 
 const prisma = new PrismaClient();
 
@@ -56,6 +57,9 @@ export const createDoctorNote = async (req: Request, res: Response) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
     });
+
+    // WhatsApp: send the patient their consultation notes.
+    pushOpdNotesReady(note.id).catch((e) => console.warn('[doctor-notes] whatsapp push failed:', (e as Error).message));
 
     res.status(201).json({ message: 'Doctor note created successfully', data: note });
   } catch (error) {

@@ -26,6 +26,7 @@ model Department {
   Estimation Estimation[]
   // Phase 9.19 — ordered escalation chain for unacknowledged ER referrals.
   escalationSteps EscalationChainStep[]
+  ophthalmologyExamOptions OphthalmologyExaminationOption[]
 }
 
 model Doctor {
@@ -69,6 +70,9 @@ model Doctor {
   escalationSteps    EscalationChainStep[] @relation("DoctorEscalationSteps")
   // Phase 9.21 — personal (doctor-scoped) note templates.
   noteTemplates      NoteTemplate[]        @relation("DoctorNoteTemplates")
+  // Ophthalmology department prescriptions + doctor-added exam option values.
+  ophthalmologyPrescriptions OphthalmologyPrescription[]
+  ophthalmologyExamOptions   OphthalmologyExaminationOption[]
 
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
@@ -227,6 +231,7 @@ model Appointment {
   doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
   patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
   user                User?             @relation("UserAppointments", fields: [userId], references: [id])
+  ophthalmologyPrescriptions OphthalmologyPrescription[]
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -826,6 +831,7 @@ model Prescription {
   prescribedById  String?
   prescribedByKMC String?
   tablets         Tablet[] @relation("PrescriptionTablets")
+  ophthalmologyPrescriptions OphthalmologyPrescription[]
 }
 
 model Tablet {
@@ -6543,6 +6549,8 @@ model WhatsappBotSession {
   otpCode       String?  // last OTP issued (cleared after verify)
   otpExpiresAt  DateTime?
   consentAt     DateTime? // when the user accepted the consent disclaimer
+  verifiedPrn   Int?      // PRN this session is OTP-verified for (record access)
+  verifiedUntil DateTime? // verification expiry — short-lived
   lastInboundAt DateTime @default(now())
   expiresAt     DateTime
   created_at    DateTime @default(now())
@@ -6622,4 +6630,304 @@ model Surgeon {
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+// ─── Patient record access over WhatsApp ───────────────────────────────────
+// Records are only released to an OTP-verified session on the PRN's REGISTERED
+// mobile. Files live in a PRIVATE dir (not under /files) and are served only
+// through /p/:token, which expires. Every access is audited.
+
+model SecureLink {
+  id         Int       @id @default(autoincrement())
+  token      String    @unique
+  prn        Int
+  kind       String // report | opd_note | prescription | discharge_summary | bill
+  refId      String?
+  filePath   String    @db.Text // absolute path on disk (private storage)
+  fileName   String
+  mimeType   String    @default("application/pdf")
+  expiresAt  DateTime
+  firstUsedAt DateTime?
+  created_at DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([prn])
+}
+
+model PatientRecordAccessLog {
+  id         Int      @id @default(autoincrement())
+  prn        Int
+  phone      String
+  itemType   String // report | opd_note | prescription | discharge_summary | bill | list
+  itemRef    String?
+  action     String // listed | sent | viewed | denied
+  channel    String   @default("whatsapp")
+  created_at DateTime @default(now())
+
+  @@index([prn])
+  @@index([created_at])
+}
+
+// ─── WhatsApp push/journey notifications ───────────────────────────────────
+// Every business-initiated (template) message. `refId` de-duplicates so an
+// event replay never double-sends to a patient.
+
+model WhatsappNotificationLog {
+  id         Int      @id @default(autoincrement())
+  prn        Int?
+  phone      String
+  template   String
+  refType    String?
+  refId      String?
+  status     String // sent | failed | skipped
+  error      String?  @db.Text
+  created_at DateTime @default(now())
+
+  @@index([template, refId])
+  @@index([created_at])
+  @@index([prn])
+}
+
+// ======================================================================
+// OPHTHALMOLOGY — department-specific OPD prescription (ported from
+// DocMinds Clinic). One row per consultation: visual acuity, glass power,
+// autorefraction, subjective refraction, IOP, slit-lamp examination,
+// diagnosis, plus JSON blobs for visual field / EOM / gonioscopy and
+// point marks on the eye / cornea / fundus diagrams.
+// ======================================================================
+
+model OphthalmologyPrescription {
+  id                Int     @id @default(autoincrement())
+  prescriptionId    String  @unique
+  appointmentId     Int?
+  doctorId          Int?
+  prn               Int
+  opdPrescriptionId String?
+
+  patientName   String
+  patientAge    String?
+  patientGender String?
+
+  // ================= VISUAL ACUITY =================
+  uaVr   String? @db.Text
+  uaVl   String? @db.Text
+  glVr   String? @db.Text
+  glVl   String? @db.Text
+  nearVr String? @db.Text
+  nearVl String? @db.Text
+
+  // ================= CURRENT GLASS =================
+  curSphR  String? @db.Text
+  curCylR  String? @db.Text
+  curAxisR String? @db.Text
+  curVAR   String? @db.Text
+  curSphL  String? @db.Text
+  curCylL  String? @db.Text
+  curAxisL String? @db.Text
+  curVAL   String? @db.Text
+  curAdd   String? @db.Text
+  curIPD   String? @db.Text
+  curType  String? @db.Text
+
+  curAddSphR  String? @db.Text
+  curAddCylR  String? @db.Text
+  curAddAxisR String? @db.Text
+  curAddVAR   String? @db.Text
+
+  curAddSphL  String? @db.Text
+  curAddCylL  String? @db.Text
+  curAddAxisL String? @db.Text
+  curAddVAL   String? @db.Text
+
+  // ================= AUTO REFRACTION (BEFORE DILATION) =================
+  arSphR  String? @db.Text
+  arCylR  String? @db.Text
+  arAxisR String? @db.Text
+  arVAR   String? @db.Text
+  arSphL  String? @db.Text
+  arCylL  String? @db.Text
+  arAxisL String? @db.Text
+  arVAL   String? @db.Text
+  arIPD   String? @db.Text
+
+  // ============= AUTO REFRACTION (AFTER DILATION) =============
+  // Repeat AR reading taken once the dilating drops have acted — cycloplegic
+  // refraction. Same capture as the undilated set above.
+  arDilSphR  String? @db.Text
+  arDilCylR  String? @db.Text
+  arDilAxisR String? @db.Text
+  arDilVAR   String? @db.Text
+  arDilSphL  String? @db.Text
+  arDilCylL  String? @db.Text
+  arDilAxisL String? @db.Text
+  arDilVAL   String? @db.Text
+  arDilIPD   String? @db.Text
+
+  // ================= SUBJECTIVE =================
+  srSphR  String? @db.Text
+  srCylR  String? @db.Text
+  srAxisR String? @db.Text
+  srVAR   String? @db.Text
+  srSphL  String? @db.Text
+  srCylL  String? @db.Text
+  srAxisL String? @db.Text
+  srVAL   String? @db.Text
+  srIPD   String? @db.Text
+  srType  String? @db.Text
+
+  srAddSphR  String? @db.Text
+  srAddCylR  String? @db.Text
+  srAddAxisR String? @db.Text
+  srAddVAR   String? @db.Text
+
+  srAddSphL  String? @db.Text
+  srAddCylL  String? @db.Text
+  srAddAxisL String? @db.Text
+  srAddVAL   String? @db.Text
+
+  // ================= IOP =================
+  iopR       String?  @db.Text
+  iopL       String?  @db.Text
+  includeIOP Boolean? @default(false)
+
+  // ================= EXAM =================
+  eyelidsR     String? @db.Text
+  eyelidsL     String? @db.Text
+  eomR         String? @db.Text
+  eomL         String? @db.Text
+  corneaR      String? @db.Text
+  corneaL      String? @db.Text
+  anteriorChR  String? @db.Text
+  anteriorChL  String? @db.Text
+  conjunctivaR String? @db.Text
+  conjunctivaL String? @db.Text
+  scleraR      String? @db.Text
+  scleraL      String? @db.Text
+  irisR        String? @db.Text
+  irisL        String? @db.Text
+  pupilR       String? @db.Text
+  pupilL       String? @db.Text
+  lensR        String? @db.Text
+  lensL        String? @db.Text
+  fundusR      String? @db.Text
+  fundusL      String? @db.Text
+
+  // ================= PUPIL =================
+  pupilReactionR String? @db.Text
+  pupilReactionL String? @db.Text
+
+  // ================= DIAGNOSIS =================
+  diagnosis     String? @db.Text
+  diagnosisList String? @db.LongText
+  advice        String? @db.Text
+  reviewAfter   String? @db.Text
+
+  vfData    String? @db.LongText // Visual Field
+  eomData   String? @db.LongText // Extraocular movements
+  gonioData String? @db.LongText // Gonioscopy
+
+  diagramImage String? @db.LongText
+
+  // ================= OPTOMETRIST WORK-UP / DOCTOR VERIFICATION =========
+  // The refraction work-up (VA, glass power, AR, SR, IOP) is typically
+  // recorded by an optometrist before the consult. Those values stay
+  // PROVISIONAL until the doctor verifies them — an optometrist's mis-entry
+  // must never silently become the doctor's signed word.
+  //   pending   — nothing submitted yet
+  //   submitted — optometrist finished; awaiting the doctor
+  //   verified  — doctor accepted the values unchanged
+  //   amended   — doctor changed one or more values before accepting
+  workupStatus String? @default("pending")
+
+  recordedBy   String? // optometrist name snapshot
+  recordedById Int? // User.id of the optometrist
+  recordedAt   DateTime?
+
+  verifiedBy   String? // doctor name snapshot
+  verifiedById Int? // User.id of the verifying doctor
+  verifiedAt   DateTime?
+
+  // Immutable copy of exactly what the optometrist submitted. Doctor edits
+  // land in the columns above; this keeps the original so the UI can show
+  // "was -2.25, changed by doctor" per field.
+  workupSnapshot String? @db.LongText
+
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  diagramMarks    OphthalmologyDiagramMark[]
+  doctor          Doctor?                    @relation(fields: [doctorId], references: [id])
+  appointment     Appointment?               @relation(fields: [appointmentId], references: [id])
+  opdPrescription Prescription?              @relation(fields: [opdPrescriptionId], references: [prescriptionId])
+
+  @@index([doctorId])
+  @@index([appointmentId])
+  @@index([opdPrescriptionId])
+  @@index([prn])
+}
+
+// Doctor-extensible pick-list values for the slit-lamp exam dropdowns
+// (fieldName = "cornea" | "lens" | "pupil" | ... , optionLabel = the value).
+model OphthalmologyExaminationOption {
+  id           Int      @id @default(autoincrement())
+  fieldName    String
+  optionLabel  String
+  departmentId Int?
+  createdBy    Int?
+  createdAt    DateTime @default(now())
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  doctor     Doctor?     @relation(fields: [createdBy], references: [id])
+
+  @@index([fieldName])
+  @@index([departmentId])
+  @@index([createdBy])
+}
+
+// In-OPD topical drug administration (drops instilled in the clinic — dilating
+// agents, topical anaesthetic, etc). This is an ADMINISTRATION record, not a
+// prescription: one row per instillation, append-only, so the dilation timing
+// and the 'who gave what, when' evidence survive. Same intent as
+// IpdMedicationLog, but OPD/appointment-scoped rather than admission-scoped.
+model OphthalmologyDropAdministration {
+  id             Int     @id @default(autoincrement())
+  prn            Int
+  appointmentId  Int?
+  prescriptionId String? // links to the eye prescription of the same visit, when saved
+
+  drugName  String
+  eye       String // OD | OS | OU
+  dropCount Int    @default(1)
+  purpose   String? // dilation | anaesthesia | diagnostic | treatment
+
+  instilledAt   DateTime @default(now())
+  instilledBy   String? // staff name snapshot
+  instilledById Int? // User.id of whoever recorded it
+  remarks       String?  @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([prn])
+  @@index([appointmentId])
+  @@index([instilledAt])
+}
+
+// A single point the doctor clicked on one of the eye diagrams.
+model OphthalmologyDiagramMark {
+  id             Int    @id @default(autoincrement())
+  prescriptionId String
+
+  diagram String // eye | cornea | fundus
+  eye     String // OD | OS
+
+  x     Float
+  y     Float
+  size  Int
+  color String
+  label String
+
+  createdAt DateTime @default(now())
+
+  prescription OphthalmologyPrescription @relation(fields: [prescriptionId], references: [prescriptionId], onDelete: Cascade)
+
+  @@index([prescriptionId])
 }
