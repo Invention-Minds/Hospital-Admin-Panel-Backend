@@ -13,6 +13,8 @@
 
 import axios from 'axios';
 import https from 'https';
+import fs from 'fs';
+import FormData from 'form-data';
 
 const BASE = (process.env.GOBUZZ_API_URL ?? 'https://api.app.gobuzzmarketing.com').replace(/\/$/, '');
 
@@ -127,6 +129,39 @@ export async function sendList(
 }
 
 /**
+ * Upload a local file to GoBuzz and get a media id back. Used to send private
+ * PDFs as WhatsApp documents WITHOUT exposing a public URL. Returns null on failure.
+ */
+export async function uploadMedia(filePath: string): Promise<string | null> {
+  if (!PHONE_NUMBER_ID || !API_KEY) return null;
+  try {
+    const form = new FormData();
+    form.append('sheet', fs.createReadStream(filePath));
+    const res = await axios.post(`${BASE}/v3/${PHONE_NUMBER_ID}/media`, form, {
+      headers: { ...form.getHeaders(), apikey: API_KEY },
+      httpsAgent: gobuzzAgent,
+      maxBodyLength: Infinity,
+    });
+    const d: any = res.data;
+    const id = d?.response?.id ?? d?.id ?? d?.media_id ?? d?.data?.id;
+    return id ? String(id) : null;
+  } catch (e: any) {
+    console.error('[gobuzz] media upload failed:', e.response?.data || e.message);
+    return null;
+  }
+}
+
+/** Send a previously uploaded document by media id. */
+export async function sendDocument(to: string, mediaId: string, filename: string, caption?: string) {
+  return post({
+    messaging_product: 'whatsapp',
+    to,
+    type: 'document',
+    document: { id: mediaId, filename, ...(caption ? { caption } : {}) },
+  });
+}
+
+/**
  * Download inbound media (image/document/...) by its WhatsApp media id.
  * Two-step (Meta-style): GET /v3/{id} returns a JSON descriptor with a `url`,
  * then we fetch that url as bytes. Falls back to treating the first response as
@@ -181,17 +216,31 @@ export async function sendTemplate(
   templateName: string,
   languageCode: string,
   params: string[],
+  opts?: {
+    /** Fills the dynamic suffix of a URL button (e.g. the secure-link token). */
+    urlButtonParam?: string;
+    /** Media id (from uploadMedia) for a DOCUMENT header — e.g. the bill PDF. */
+    headerDocumentId?: string;
+    headerDocumentFilename?: string;
+  },
 ) {
+  const components: Record<string, unknown>[] = [];
+  if (opts?.headerDocumentId) {
+    components.push({
+      type: 'header',
+      parameters: [{ type: 'document', document: { id: opts.headerDocumentId, filename: opts.headerDocumentFilename ?? 'document.pdf' } }],
+    });
+  }
+  if (params.length) {
+    components.push({ type: 'body', parameters: params.map((text) => ({ type: 'text', text })) });
+  }
+  if (opts?.urlButtonParam) {
+    components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: opts.urlButtonParam }] });
+  }
   return post({
     messaging_product: 'whatsapp',
     to,
     type: 'template',
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-      components: params.length
-        ? [{ type: 'body', parameters: params.map((text) => ({ type: 'text', text })) }]
-        : [],
-    },
+    template: { name: templateName, language: { code: languageCode }, components },
   });
 }
