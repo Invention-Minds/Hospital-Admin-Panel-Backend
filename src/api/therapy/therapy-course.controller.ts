@@ -416,9 +416,15 @@ export const applyCourseReschedule = async (req: Request, res: Response): Promis
   }
 };
 
-/** Course + ordered plan days, each with its materialised appointment summary. */
+/**
+ * Course + ordered plan days, each with its materialised appointment summary.
+ *
+ * Plan days store their selections as raw id arrays (`plannedTherapyIds` /
+ * `plannedTherapistIds` — MySQL has no scalar list type), so resolve them to
+ * display names here rather than making the client fetch both masters.
+ */
 async function loadCourse(id: number) {
-  return prisma.therapyCourse.findUnique({
+  const course = await prisma.therapyCourse.findUnique({
     where: { id },
     include: {
       doctor: { select: { id: true, name: true } },
@@ -435,4 +441,23 @@ async function loadCourse(id: number) {
       },
     },
   });
+  if (!course) return null;
+
+  const [therapies, therapists] = await Promise.all([
+    prisma.therapy.findMany({ select: { id: true, name: true } }),
+    prisma.therapist.findMany({ select: { id: true, name: true } }),
+  ]);
+  const therapyById = new Map(therapies.map((t) => [t.id, t.name]));
+  const therapistById = new Map(therapists.map((t) => [t.id, t.name]));
+  const namesFor = (ids: unknown, lookup: Map<number, string>): string[] =>
+    ((ids as number[]) || []).map((raw) => lookup.get(Number(raw)) || `#${raw}`);
+
+  return {
+    ...course,
+    planDays: course.planDays.map((p) => ({
+      ...p,
+      therapyNames: namesFor(p.plannedTherapyIds, therapyById),
+      therapistNames: namesFor(p.plannedTherapistIds, therapistById),
+    })),
+  };
 }
