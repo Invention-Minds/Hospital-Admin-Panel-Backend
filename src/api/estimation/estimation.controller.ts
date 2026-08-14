@@ -393,13 +393,25 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
         let where: any = baseWhere;
 
         if (fromDate || toDate) {
-            // Explicit date range from user — only include estimations whose surgery date falls in range
+            // Explicit date range from user — match on surgery date OR raised date, so that
+            // estimations never scheduled (estimatedDate = null) are still reachable by range.
+            // Note: estimatedDate is a String column (YYYY-MM-DD), so this is a lexical compare.
             where = {
                 ...baseWhere,
-                estimatedDate: {
-                    ...(fromDate ? { gte: fromDate } : {}),
-                    ...(toDate ? { lte: toDate } : {})
-                }
+                OR: [
+                    {
+                        estimatedDate: {
+                            ...(fromDate ? { gte: fromDate } : {}),
+                            ...(toDate ? { lte: toDate } : {})
+                        }
+                    },
+                    {
+                        estimationCreatedTime: {
+                            ...(fromDate ? { gte: new Date(fromDate + 'T00:00:00') } : {}),
+                            ...(toDate ? { lte: new Date(toDate + 'T23:59:59') } : {})
+                        }
+                    }
+                ]
             };
         } else {
             // Default: surgery date in last 7 days + today + future,
