@@ -22,6 +22,11 @@ const csvUpload = multer({
 const uploadCsv: RequestHandler = (req, res, next) => {
   csvUpload.single('file')(req, res, (err: unknown) => {
     if (err instanceof multer.MulterError) {
+      // Multer stops reading the body the moment it aborts. Answering while
+      // the client is still uploading resets the socket, so the caller sees
+      // ECONNRESET instead of this response — drain the rest first.
+      req.unpipe();
+      req.resume();
       const tooLarge = err.code === 'LIMIT_FILE_SIZE';
       res.status(tooLarge ? 413 : 400).json({
         message: tooLarge
