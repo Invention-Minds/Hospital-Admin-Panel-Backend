@@ -1,6 +1,11 @@
 import cron from 'node-cron';
 import AppointmentRepository from './appointment.repository';
 import { sendWhatsAppMessage, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
+import {
+  recordAppointmentEventSystem,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
 import axios from 'axios';
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -114,6 +119,13 @@ export function scheduleAppointmentCompletionJob(appointmentId: number, delayMin
       // Retrieve appointment details to send WhatsApp message
       const appointment = await repository.getAppointmentById(appointmentId);
       if (appointment) {
+        await recordAppointmentEventSystem({
+          appointmentId,
+          eventType: 'COMPLETED',
+          to: slotSnapshot(appointment),
+          subject: subjectSnapshot(appointment),
+          source: 'scheduled-completion',
+        });
         // Send a message to the patient
         const url = process.env.WHATSAPP_API_URL;
         const headers = {

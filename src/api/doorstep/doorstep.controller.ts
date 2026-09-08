@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
+import { notifyDoorstepStatus } from '../../service/whatsapp-notify.service';
 
 // Doorstep service requests (lab pickup / pharmacy delivery) raised via the
 // WhatsApp bot. Ops team lists and progresses them from the panel.
@@ -30,5 +31,11 @@ export const updateDoorstepStatus = async (req: Request, res: Response): Promise
     return;
   }
   const updated = await prisma.doorstepRequest.update({ where: { id }, data: { status } });
+
+  // Push the status to the patient on WhatsApp (no-op until templates are live).
+  const serviceLabel = updated.serviceType === 'PHARMACY_DELIVERY' ? 'pharmacy delivery' : 'lab sample pickup';
+  notifyDoorstepStatus(updated.patientPhone, updated.patientName, serviceLabel, updated.refNo, status, updated.prn)
+    .catch((e) => console.warn('[doorstep] notify failed:', (e as Error).message));
+
   res.json({ data: updated });
 };

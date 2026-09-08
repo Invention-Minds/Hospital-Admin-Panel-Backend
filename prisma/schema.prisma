@@ -228,16 +228,83 @@ model Appointment {
   paidAt              DateTime?
   receiptNo           String?
   paymentSource       String? // "cash" | "card" | "upi" | "insurance" | "scheme"
+  // Appointment lifecycle trail — denormalised counters + cancel attribution so
+  // list screens don't need a subquery over AppointmentEvent. The full
+  // who/when/from/to history lives in AppointmentEvent (see below).
+  rescheduleCount     Int               @default(0)
+  cancelledBy         String? // actor display name; "system" for cron-driven cancels
+  cancelledById       Int? // User.id when a logged-in user cancelled
+  cancelledAt         DateTime?
+  cancelReason        String?           @db.Text
   doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
   patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
   user                User?             @relation("UserAppointments", fields: [userId], references: [id])
   ophthalmologyPrescriptions OphthalmologyPrescription[]
+  events              AppointmentEvent[] @relation("AppointmentToEvent")
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
   @@index([userId], map: "appointments_userId_fkey")
   @@index([paymentStatus, paidAt])
   @@map("appointments")
+}
+
+// Per-appointment lifecycle trail — one row per thing that happened to an
+// appointment: booked, confirmed, rescheduled, cancelled, checked in/out,
+// completed, deleted. Answers "who rescheduled this, how many times, from
+// which slot to which, for which patient, when, and from where".
+//
+// Distinct from AppAuditLog (generic cross-module audit): the slot-change and
+// actor columns are typed here so reschedule/cancel counts are indexed queries
+// instead of JSON digging. Writes are fire-and-forget via
+// service/appointment-event.ts — a logging failure never blocks a booking.
+model AppointmentEvent {
+  id            String   @id @default(uuid())
+  appointmentId Int
+  // BOOKED | CONFIRMED | RESCHEDULED | CANCELLED | STATUS_CHANGE | CHECKED_IN |
+  // CHECKED_OUT | COMPLETED | OPD_CLOSED | DELETED
+  eventType     String
+
+  // --- What changed (nulls where not applicable) -------------------------
+  fromDate       String?
+  fromTime       String?
+  fromDoctorId   Int?
+  fromDoctorName String?
+  fromStatus     String?
+  toDate         String?
+  toTime         String?
+  toDoctorId     Int?
+  toDoctorName   String?
+  toStatus       String?
+
+  // --- Who did it --------------------------------------------------------
+  actorType String // "user" | "system" | "bot" | "patient" | "unknown"
+  actorId   Int? // User.id when a logged-in user acted
+  actorName String? // username / display-name snapshot at time of action
+  actorRole String? // role snapshot when the caller knows it; joinable from User.id
+  ipAddress String?
+
+  // --- Who it was for (snapshot; appointment rows get edited) -------------
+  patientId   Int?
+  prnNumber   Int?
+  patientName String?
+
+  // --- Context -----------------------------------------------------------
+  // admin-panel | walk-in | whatsapp-bot | cron:expired-3h | service-close |
+  // followup-automation | hmis
+  source    String?
+  reason    String?  @db.Text
+  payload   String?  @db.LongText // optional JSON for anything not modelled above
+  createdAt DateTime @default(now())
+
+  appointment Appointment @relation("AppointmentToEvent", fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([actorId, eventType])
+  @@index([prnNumber])
+  @@index([createdAt])
+  @@map("appointment_events")
 }
 
 model BookedSlot {

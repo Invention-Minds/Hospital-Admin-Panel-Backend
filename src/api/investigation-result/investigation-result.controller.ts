@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import prisma from '../../service/prisma-client';
 import bucket from '../../config/googeCloudStorage';
 import { auditLog } from '../../service/app-audit';
+import { pushReportReady } from '../../service/record-push.service';
 
 // Phase 9.11 — Lab & Radiology results / report attachment.
 //
@@ -216,6 +217,11 @@ export const uploadResult = async (req: Request, res: Response): Promise<void> =
       entityId: String(row.id),
       payload: { orderId, testName: row.testName, department: row.department, status: row.status, critical: row.criticalFlag },
     });
+
+    // WhatsApp: tell the patient their report is ready (only when final).
+    if (row.status === 'final') {
+      pushReportReady(row.id).catch((e) => console.warn('[investigation-result] whatsapp push failed:', (e as Error).message));
+    }
 
     res.status(201).json({ data: row });
   } catch (error) {
@@ -442,6 +448,11 @@ export const updateResult = async (req: Request, res: Response): Promise<void> =
       entityId: String(row.id),
       payload: { status: row.status, critical: row.criticalFlag },
     });
+
+    // A result can be finalised on update too — push then (de-duped by refId).
+    if (row.status === 'final') {
+      pushReportReady(row.id).catch((e) => console.warn('[investigation-result] whatsapp push failed:', (e as Error).message));
+    }
 
     res.status(200).json({ data: row });
   } catch (error) {

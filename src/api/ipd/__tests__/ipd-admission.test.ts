@@ -82,6 +82,8 @@ beforeEach(() => {
     wardId: 'ward-1',
     bedType: 'general',
     status: 'available',
+    // The controller includes live admissions on the bed to catch status drift.
+    admissions: [],
   });
   mockedPrisma.ipdAdmission.findFirst.mockResolvedValue(null);
   mockedPrisma.ipdAdmission.create.mockResolvedValue(admissionFixture);
@@ -222,6 +224,7 @@ describe('createIpdAdmission — validation guards (sanity)', () => {
       wardId: 'ward-1',
       bedNumber: 'B1',
       bedType: 'general',
+      admissions: [],
     });
 
     const res = buildRes();
@@ -231,5 +234,41 @@ describe('createIpdAdmission — validation guards (sanity)', () => {
     expect(mockedPrisma.ipdAdmission.create).not.toHaveBeenCalled();
     expect(mockedPushIpdAdmission).not.toHaveBeenCalled();
     expect(mockedCreateHmisAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when the bed is reserved (booked) for another patient', async () => {
+    mockedPrisma.ipdBed.findUnique.mockResolvedValue({
+      id: 'bed-1',
+      status: 'reserved',
+      wardId: 'ward-1',
+      bedNumber: 'B1',
+      bedType: 'general',
+      admissions: [],
+    });
+
+    const res = buildRes();
+    await createIpdAdmission(buildReq(), res);
+
+    expect((res.status as jest.Mock)).toHaveBeenCalledWith(409);
+    expect(mockedPrisma.ipdAdmission.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when a live admission still holds the bed despite status=available', async () => {
+    // Status drift: the bed column says free but an admission is on it. This is
+    // how booked beds used to reach the New Admission dropdown.
+    mockedPrisma.ipdBed.findUnique.mockResolvedValue({
+      id: 'bed-1',
+      status: 'available',
+      wardId: 'ward-1',
+      bedNumber: 'B1',
+      bedType: 'general',
+      admissions: [{ id: 'adm-99', admissionNo: 'JMRH-IPD-0099' }],
+    });
+
+    const res = buildRes();
+    await createIpdAdmission(buildReq(), res);
+
+    expect((res.status as jest.Mock)).toHaveBeenCalledWith(409);
+    expect(mockedPrisma.ipdAdmission.create).not.toHaveBeenCalled();
   });
 });

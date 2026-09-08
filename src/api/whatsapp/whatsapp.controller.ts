@@ -19,6 +19,12 @@ import { start } from 'repl';
 import { Console } from 'console';
 import { callRepeatedAppointments, processRepeatedAppointments } from '../services/services.controller';
 import { sendTherapyReminders } from '../therapy/therapy.controller';
+import {
+  recordAppointmentEvent,
+  recordAppointmentEventSystem,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
 
 // import { utcToZonedTime, format } from 'date-fns-tz';
 dotenv.config();
@@ -1261,6 +1267,15 @@ export const markComplete = async () => {
         });
         console.log(`Marked appointment ${appointment.id} as Complete`);
 
+        await recordAppointmentEventSystem({
+          appointmentId: appointment.id,
+          eventType: 'COMPLETED',
+          from: slotSnapshot(appointment),
+          to: { ...slotSnapshot(appointment), status: 'completed' },
+          subject: subjectSnapshot(appointment),
+          source: 'cron:mark-complete',
+        });
+
         // Send WhatsApp message
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
@@ -1739,6 +1754,15 @@ export const individualComplete = async (req: Request, res: Response) => {
         });
         console.log(`Marked appointment ${appointment.id} as Complete`);
 
+        await recordAppointmentEvent(req, {
+          appointmentId: appointment.id,
+          eventType: 'COMPLETED',
+          from: slotSnapshot(appointment),
+          to: { ...slotSnapshot(appointment), status: 'completed' },
+          subject: subjectSnapshot(appointment),
+          source: 'admin-panel',
+        });
+
         // Send WhatsApp message
         const url = process.env.WHATSAPP_API_URL;
         const headers = {
@@ -1900,6 +1924,19 @@ export const cancelExpiredAppointments = async () => {
       data: { status: "cancelled" },
     });
     console.log(`❌ Updated appointment status to cancelled for Appointment ID: ${id}`);
+
+    // Lifecycle trail — this is the one cancel path with no human behind it,
+    // so the source string is what tells a no-show auto-cancel apart from a
+    // front-desk cancel in the reschedule report.
+    await recordAppointmentEventSystem({
+      appointmentId: id,
+      eventType: 'CANCELLED',
+      from: slotSnapshot(appointment),
+      to: { ...slotSnapshot(appointment), status: 'cancelled' },
+      subject: subjectSnapshot(appointment),
+      source: 'cron:expired-3h',
+      reason: 'Auto-cancelled: not checked in more than 3 hours after slot time',
+    });
 
     // **Step 4: Send WhatsApp message to Patient**
     if (phoneNumber) {

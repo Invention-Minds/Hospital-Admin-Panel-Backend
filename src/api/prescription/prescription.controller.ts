@@ -4,6 +4,7 @@ import prisma from '../../service/prisma-client';
 import { syncPrescriptionToHmis } from './prescription-sync';
 import { checkPaymentGate } from '../../service/payment-gate';
 import { auditLog } from '../../service/app-audit';
+import { pushPrescriptionReady } from '../../service/record-push.service';
 
 const generatePrescriptionId = async (): Promise<string> => {
   const latest = await prisma.prescription.findFirst({
@@ -64,6 +65,9 @@ export const createPrescription = async (req: Request, res: Response) => {
       payload: { prescriptionId, prn, tabletCount: tablets?.length ?? 0, appointmentId },
     });
 
+    // WhatsApp: send the patient their prescription.
+    pushPrescriptionReady(prescriptionId).catch((e) => console.warn('[prescription] whatsapp push failed:', (e as Error).message));
+
     res.status(201).json({ message: 'Prescription created', data: newPrescription });
 
     // Async HMIS sync (fire-and-forget, doesn't block response)
@@ -87,7 +91,10 @@ export const getPrescriptionByPrn = async (req: Request, res: Response) => {
     const prescriptions = await prisma.prescription.findMany({
       where: { prn },
       include: {
-        tablets: true, // include the tablets if needed
+        // Insertion order is the clinical order — a tapering regimen's stages
+        // ("Days 1–7", "then Days 8–14") must print in the sequence they were
+        // entered, so make that explicit rather than relying on the default.
+        tablets: { orderBy: { id: 'asc' } },
       },
       orderBy: {
         prescribedDate: 'desc',

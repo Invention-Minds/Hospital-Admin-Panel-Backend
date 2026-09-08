@@ -28,21 +28,55 @@ function shiftFor(d: Date): 'M' | 'E' | 'N' {
   return 'N';
 }
 
-// Phase 9.7 fix — dayStart/dayEnd MUST stay in UTC so the keys produced by
-// the pre-seed loop in getChart() match the keys produced by `toISOString()
-// .slice(0,10)` on each stored row's recordedAt. The old implementation used
-// setHours() (local time) which on a non-UTC server (e.g. Asia/Kolkata IST)
-// shifted the pre-seeded keys by ±1 day, so freshly recorded vitals / I/O
-// entries landed in a key like "2025-09-01" but the pre-seeded blocks only
-// had keys "2025-08-30" + "2025-08-31" — the `if (!b) continue;` then
-// silently dropped the row. Net effect: nurse adds vitals, save returns 201,
-// chart reloads, but the new row is invisible.
+// Day bucketing runs on the *server-local* calendar, which is the hospital's
+// calendar — the deployment pins TZ=Asia/Kolkata (see bed-census-snapshot.ts).
+// That's the same basis shiftFor() above already uses, so a reading's shift
+// token and its day column can no longer disagree.
+//
+// Two kinds of date live in this chart and they are keyed differently:
+//   * vitals / intake-output — real instants (`recordedAt`). Bucketed by the
+//     LOCAL calendar day, because 02:00 IST belongs to the nurse's today, not
+//     to the previous UTC day.
+//   * IpdDailyChart.chartDate — a date-only value stored at UTC midnight.
+//     Keyed with toISOString().slice(0,10), which yields exactly the calendar
+//     date it represents. Do NOT switch this to local: existing rows are
+//     already persisted at UTC midnight and would stop matching.
+// Both paths produce the same 'YYYY-MM-DD' string for the same calendar day,
+// which is what lets them share one column.
+
+function pad2(n: number): string { return String(n).padStart(2, '0'); }
+
+/** Local calendar-day key for an instant, e.g. '2026-09-02'. */
+function localKey(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** Parse a 'YYYY-MM-DD' query param into local midnight. Component-wise so it
+ *  is correct for both positive and negative UTC offsets — `new Date(s)` on a
+ *  date-only string parses as UTC midnight, which lands on the wrong local day
+ *  for western timezones. */
+function parseLocalDate(s: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return new Date(NaN);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
+}
+
 function dayStart(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+  const x = new Date(d); x.setHours(0, 0, 0, 0); return x;
 }
 
 function dayEnd(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+  const x = new Date(d); x.setHours(23, 59, 59, 999); return x;
+}
+
+/** The UTC-midnight instant used as IpdDailyChart.chartDate for a day key. */
+function chartDateKey(key: string): Date {
+  return new Date(`${key}T00:00:00.000Z`);
+}
+
+/** Advance a local date by n calendar days (DST-safe — setDate, not +86400s). */
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d); x.setDate(x.getDate() + n); return x;
 }
 
 // ─── Vitals readings ────────────────────────────────────────────────
@@ -202,12 +236,11 @@ export const upsertDaily = async (req: Request, res: Response): Promise<void> =>
       res.status(400).json({ error: 'chartDate is required' });
       return;
     }
-    // Parse as UTC midnight (…T00:00:00.000Z), NOT local. getChart() keys
-    // rows by toISOString().slice(0,10) against UTC-seeded day columns; a
-    // local-time parse on a non-UTC server (e.g. IST) shifts this to the
-    // previous UTC day, so the saved row attaches to the wrong column / is
-    // dropped. Same fix as dayStart/dayEnd above.
-    const date = new Date(`${body.chartDate}T00:00:00.000Z`);
+    // chartDate is a date-only value, stored at UTC midnight so the calendar
+    // date survives verbatim in toISOString().slice(0,10) — that is the key
+    // getChart() matches against its day columns. Must NOT be parsed as local
+    // midnight: every existing row is persisted on the UTC-midnight basis.
+    const date = chartDateKey(body.chartDate);
     if (Number.isNaN(date.getTime())) {
       res.status(400).json({ error: 'chartDate must be YYYY-MM-DD' });
       return;
@@ -266,12 +299,11 @@ export const signShift = async (req: Request, res: Response): Promise<void> => {
       res.status(400).json({ error: 'shift must be M, E or N' });
       return;
     }
-    // Parse as UTC midnight (…T00:00:00.000Z), NOT local. getChart() keys
-    // rows by toISOString().slice(0,10) against UTC-seeded day columns; a
-    // local-time parse on a non-UTC server (e.g. IST) shifts this to the
-    // previous UTC day, so the saved row attaches to the wrong column / is
-    // dropped. Same fix as dayStart/dayEnd above.
-    const date = new Date(`${body.chartDate}T00:00:00.000Z`);
+    // chartDate is a date-only value, stored at UTC midnight so the calendar
+    // date survives verbatim in toISOString().slice(0,10) — that is the key
+    // getChart() matches against its day columns. Must NOT be parsed as local
+    // midnight: every existing row is persisted on the UTC-midnight basis.
+    const date = chartDateKey(body.chartDate);
     if (Number.isNaN(date.getTime())) {
       res.status(400).json({ error: 'chartDate must be YYYY-MM-DD' });
       return;
@@ -353,23 +385,44 @@ interface DayBlock {
 export const getChart = async (req: Request, res: Response): Promise<void> => {
   try {
     const admissionId = req.params.admissionId;
-    const today = new Date();
-    // 6 UTC-days back. Use ms-arithmetic so we don't get bitten by DST or
-    // by setDate() being local-time on a non-UTC server.
-    const defaultFrom = new Date(today.getTime() - 6 * 86_400_000);
 
-    const from = req.query.from ? dayStart(new Date(req.query.from as string)) : dayStart(defaultFrom);
-    const to = req.query.to ? dayEnd(new Date(req.query.to as string)) : dayEnd(today);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    // Fetched up-front (not inside the Promise.all below) because the chart
+    // window is anchored to admissionDate — no column may precede admission.
+    const admissionRow = await prisma.ipdAdmission.findUnique({
+      where: { id: admissionId },
+      select: {
+        admissionDate: true,
+        vitalsMonitoringFrequency: true, vitalsMonitoringSetBy: true,
+        vitalsMonitoringSetAt: true,
+      },
+    });
+
+    const today = dayStart(new Date());
+    // The chart cannot start before the patient was admitted. Without an
+    // admission row fall back to the historical today-minus-6 default.
+    const admittedOn = admissionRow?.admissionDate
+      ? dayStart(admissionRow.admissionDate)
+      : addDays(today, -6);
+
+    let from = req.query.from ? dayStart(parseLocalDate(req.query.from as string)) : admittedOn;
+    if (Number.isNaN(from.getTime())) {
       res.status(400).json({ error: 'from / to must be valid dates' });
       return;
     }
-    if (from > to) {
-      res.status(400).json({ error: 'from must be ≤ to' });
+    // Clamp: a caller paging backwards can never go past the admission day.
+    if (from < admittedOn) from = admittedOn;
+
+    // Default window is the 7 days from admission (day 1 first), never running
+    // past today.
+    const defaultTo = addDays(from, 6) > today ? today : addDays(from, 6);
+    let to = req.query.to ? dayEnd(parseLocalDate(req.query.to as string)) : dayEnd(defaultTo);
+    if (Number.isNaN(to.getTime())) {
+      res.status(400).json({ error: 'from / to must be valid dates' });
       return;
     }
+    if (to < from) to = dayEnd(from);
 
-    const [vitals, io, daily, admissionRow, lastVitals] = await Promise.all([
+    const [vitals, io, daily, lastVitals] = await Promise.all([
       prisma.ipdVitalsReading.findMany({
         where: { admissionId, recordedAt: { gte: from, lte: to } },
         orderBy: { recordedAt: 'asc' },
@@ -378,18 +431,15 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
         where: { admissionId, recordedAt: { gte: from, lte: to } },
         orderBy: { recordedAt: 'asc' },
       }),
+      // chartDate is a date-only value at UTC midnight, so it is filtered on
+      // the UTC-midnight instants of the window's first and last day — not on
+      // the local instants used for the timestamped rows above.
       prisma.ipdDailyChart.findMany({
-        where: { admissionId, chartDate: { gte: from, lte: to } },
-        orderBy: { chartDate: 'asc' },
-      }),
-      // Phase 9.13 — the doctor-ordered monitoring frequency lives on the
-      // admission; the nurse needs it on this (vitals-recording) screen.
-      prisma.ipdAdmission.findUnique({
-        where: { id: admissionId },
-        select: {
-          vitalsMonitoringFrequency: true, vitalsMonitoringSetBy: true,
-          vitalsMonitoringSetAt: true,
+        where: {
+          admissionId,
+          chartDate: { gte: chartDateKey(localKey(from)), lte: chartDateKey(localKey(to)) },
         },
+        orderBy: { chartDate: 'asc' },
       }),
       // Latest reading regardless of the chart window — drives "next due".
       prisma.ipdVitalsReading.findFirst({
@@ -399,13 +449,14 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
       }),
     ]);
 
-    // Bucket by day.
+    // Bucket by local calendar day.
     const blocks: Record<string, DayBlock> = {};
-    const keyFor = (d: Date): string => d.toISOString().slice(0, 10);
 
     // Pre-seed every day in the range so empty days still render columns.
-    for (let t = from.getTime(); t <= to.getTime(); t += 86_400_000) {
-      const key = keyFor(new Date(t));
+    // Walk by calendar day rather than by +86 400 000 ms so a DST transition
+    // can't skip or duplicate a column.
+    for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+      const key = localKey(d);
       blocks[key] = {
         date: key, vitals: [], intakeTotalMl: 0, outputTotalMl: 0,
         intakeBreakdown: {}, outputBreakdown: {}, ioEntries: [], daily: null,
@@ -413,7 +464,7 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
     }
 
     for (const v of vitals) {
-      const key = keyFor(v.recordedAt);
+      const key = localKey(v.recordedAt);
       const b = blocks[key];
       if (!b) continue;
       b.vitals.push({
@@ -427,7 +478,7 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
     }
 
     for (const e of io) {
-      const key = keyFor(e.recordedAt);
+      const key = localKey(e.recordedAt);
       const b = blocks[key];
       if (!b) continue;
       if (e.entryType === 'INTAKE') {
@@ -445,7 +496,9 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
     }
 
     for (const d of daily) {
-      const key = keyFor(d.chartDate);
+      // chartDate is date-only at UTC midnight — its UTC date IS the calendar
+      // date, so this matches the local keys seeded above.
+      const key = d.chartDate.toISOString().slice(0, 10);
       const b = blocks[key];
       if (b) b.daily = d;
     }
@@ -454,6 +507,10 @@ export const getChart = async (req: Request, res: Response): Promise<void> => {
       admissionId,
       from: from.toISOString(),
       to: to.toISOString(),
+      // Lets the chart stop its "previous week" paging at the admission day.
+      admissionDate: admissionRow?.admissionDate
+        ? admissionRow.admissionDate.toISOString()
+        : null,
       days: Object.values(blocks),
       // Phase 9.13 — doctor-ordered vitals monitoring frequency + last
       // reading time so the chart can show a "next due / overdue" banner.

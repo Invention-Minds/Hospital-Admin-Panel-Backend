@@ -38,6 +38,22 @@ jest.mock('../follow-up-automation', () => ({
   createFollowUpAppointment: jest.fn().mockResolvedValue(undefined),
 }));
 
+// Prescribing runs two pre-save safety gates. Both must be stubbed or the
+// handler 409s before it ever reaches prisma: evaluatePregnancyAlerts touches
+// models this suite does not mock, and probeStock makes a live HTTP call to
+// HMIS which fails under test and returns a stock warning.
+jest.mock('../pregnancy-alerts', () => ({
+  evaluatePregnancyAlerts: jest.fn().mockResolvedValue([]),
+}));
+
+jest.mock('../../../service/pharmacy-stock-probe', () => ({
+  probeStock: jest.fn().mockResolvedValue({
+    ok: true, source: 'hmis', generic: 'Paracetamol',
+    quantityOnHand: 50, brands: [], warning: undefined,
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+  }),
+}));
+
 import prisma from '../../../service/prisma-client';
 import { addProgressNote, createDischarge } from '../ipd.controller';
 import {
@@ -87,6 +103,10 @@ const buildReq = (withUser = true, overrides: Record<string, unknown> = {}): Req
       frequency: 'BID',
       duration: '5 days',
       quantity: 10,
+      // MAR administration (NABH MOM.4 / IPC.6) — both flags must be true or
+      // administerMedication 400s before it looks the prescription up.
+      verifiedTwoIdentifiers: true,
+      fiveRightsChecked: true,
       ...overrides,
     },
     params: { admissionId: 'adm-1', prescriptionId: 'rx-1' },
@@ -111,6 +131,11 @@ const prescriptionFixture = {
   carryOverFrom: null,
   status: 'active',
   adminStatus: 'pending',
+  // Phase P — the MAR guard refuses to administer until pharmacy has dispensed
+  // and the ward has collected the script.
+  dispensedAt: new Date('2026-01-01T08:00:00.000Z'),
+  nurseCollectedAt: new Date('2026-01-01T08:30:00.000Z'),
+  nurseReturnedAt: null,
 };
 
 beforeEach(() => {

@@ -2,10 +2,19 @@ import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../../service/prisma-client';
-import { sendText, sendList, sendButtons, downloadMedia, markReadAndTyping } from '../../service/gobuzz.service';
+import { sendText, sendList, sendButtons, downloadMedia, markReadAndTyping, uploadMedia, sendDocument } from '../../service/gobuzz.service';
+import {
+  getRegisteredNumber, maskNumber, phoneMatchesPrn, createSecureLink, logRecordAccess,
+} from '../../service/record-access.service';
+import { buildRecordFile } from '../../service/record-builder.service';
 import { openai } from '../../config/openai';
 import { generateOtp, otpExpiry, sendOtpSms } from '../../service/otp-sms.service';
 import { createComplaintRecord } from '../feedback/complaint.controller';
+import {
+  recordAppointmentEventSystem,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
 import moment from 'moment-timezone';
 
 const TZ = 'Asia/Kolkata';
@@ -194,6 +203,7 @@ async function sendMainMenu(to: string, greet = true): Promise<void> {
     'Main menu',
     [
       { id: 'APPT', title: 'Doctor Appointment' },
+      { id: 'RECORDS', title: 'My Records' },
       { id: 'DOORSTEP', title: 'Doorstep Services' },
       { id: 'EMERGENCY', title: 'Emergency' },
       { id: 'ENQUIRY', title: 'Enquiry' },
@@ -234,7 +244,8 @@ const MAIN_MENU_MAP: Record<string, string> = {
   '3': 'EMERGENCY', emergency: 'EMERGENCY',
   '4': 'ENQUIRY', enquiry: 'ENQUIRY', enquire: 'ENQUIRY', inquiry: 'ENQUIRY',
   '5': 'OTHERS', other: 'OTHERS', others: 'OTHERS',
-  APPT: 'APPT', DOORSTEP: 'DOORSTEP', EMERGENCY: 'EMERGENCY', ENQUIRY: 'ENQUIRY', OTHERS: 'OTHERS',
+  '6': 'RECORDS', records: 'RECORDS', 'my records': 'RECORDS',
+  APPT: 'APPT', DOORSTEP: 'DOORSTEP', EMERGENCY: 'EMERGENCY', ENQUIRY: 'ENQUIRY', OTHERS: 'OTHERS', RECORDS: 'RECORDS',
 };
 const ENQUIRY_MENU_MAP: Record<string, string> = {
   '1': 'ENQ_REPORT', report: 'ENQ_REPORT',
@@ -464,7 +475,7 @@ async function suggestDepartment(symptoms: string): Promise<{ id: number; name: 
 }
 
 // Classify free-typed text into a top-level intent so we can route without a menu tap.
-const INTENTS = ['APPT', 'DOORSTEP', 'EMERGENCY', 'ENQ_REPORT', 'ENQ_SURGERY', 'ENQ_INSURANCE', 'ENQ_COMPLAINT', 'OTHERS', 'GREETING', 'UNKNOWN'];
+const INTENTS = ['APPT', 'RECORDS', 'DOORSTEP', 'EMERGENCY', 'ENQ_REPORT', 'ENQ_SURGERY', 'ENQ_INSURANCE', 'ENQ_COMPLAINT', 'OTHERS', 'GREETING', 'UNKNOWN'];
 async function classifyIntent(text: string): Promise<string> {
   if (!process.env.OPENAI_API_KEY) return 'UNKNOWN';
   try {
@@ -477,6 +488,7 @@ async function classifyIntent(text: string): Promise<string> {
           role: 'system',
           content: `Classify the patient's WhatsApp message into ONE code; reply with only the code.
 APPT = book/reschedule a doctor appointment, consult, see/meet a doctor, follow-up visit
+RECORDS = wants a COPY of their own records: report/prescription/consultation notes/discharge summary/visit history (download, send me, share my report)
 DOORSTEP = home lab sample collection, or medicine/pharmacy home delivery
 EMERGENCY = medical emergency, urgent help, ambulance
 ENQ_REPORT = questions or clarification about their lab/investigation/test/scan report or results
@@ -571,6 +583,18 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
         isfollowup: sc.type === 'followup',
         prnNumber: sc.prn ?? undefined,
       },
+    });
+    // Lifecycle trail — actorType 'bot', since the patient drove this over
+    // WhatsApp and no staff member touched it.
+    await recordAppointmentEventSystem({
+      appointmentId: appt.id,
+      eventType: 'BOOKED',
+      to: slotSnapshot(appt),
+      subject: subjectSnapshot(appt),
+      actorType: 'bot',
+      actorName: `whatsapp:${from}`,
+      source: 'whatsapp-bot',
+      payload: { flowType: sc.type ?? 'new' },
     });
     await prisma.notification
       .create({
@@ -759,6 +783,10 @@ async function startFlow(from: string, intent: string): Promise<boolean> {
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'OTHERS_NAME', flow: 'OTHERS', scratch: null } });
       await sendText(from, 'Sure — please type your full name.');
       return true;
+    case 'RECORDS':
+      await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'RECORDS_PRN', flow: 'RECORDS', scratch: null } });
+      await sendText(from, 'To protect your privacy, medical records are shared only with the mobile number registered against the PRN.\n\nPlease enter your *PRN*.');
+      return true;
     default:
       return false;
   }
@@ -784,6 +812,112 @@ async function finishWithThanks(from: string, confirmation: string): Promise<voi
     { id: 'ELSE_YES', title: 'Yes, show menu' },
     { id: 'ELSE_NO', title: 'No, thank you' },
   ]);
+}
+
+// ── My Records (OTP-verified, registered-number only) ───────────────────────
+const VERIFY_TTL_MS = 15 * 60 * 1000; // verified session window
+
+function recordsVerified(s: { verifiedPrn: number | null; verifiedUntil: Date | null }): boolean {
+  return !!s.verifiedPrn && !!s.verifiedUntil && s.verifiedUntil > new Date();
+}
+
+// OTP is sent by SMS to the REGISTERED mobile (not the chatting WhatsApp number).
+// That way a patient can use someone else's WhatsApp, and the registered phone
+// doesn't need WhatsApp — they just need to receive the SMS.
+async function startRecordsOtp(from: string, name: string, registeredNumber: string): Promise<void> {
+  const otp = generateOtp();
+  await prisma.whatsappBotSession.update({
+    where: { phone: from },
+    data: { state: 'RECORDS_OTP', otpCode: otp, otpExpiresAt: otpExpiry() },
+  });
+  const ok = await sendOtpSms(registeredNumber, name || 'Patient', otp, 'Medical Records');
+  await sendText(
+    from,
+    ok
+      ? `We have sent a 6-digit OTP by SMS to the registered mobile number ending ${maskNumber(registeredNumber)}. Enter it here to continue (valid 2 minutes). Reply "resend" for a new code.`
+      : `We couldn't send the OTP right now. Please try again later or call ${HELPLINE}.`,
+  );
+}
+
+async function sendRecordsMenu(to: string): Promise<void> {
+  await sendList(to, 'My Records', 'Which record would you like?', 'Records', [
+    { id: 'REC_REPORTS', title: 'Reports' },
+    { id: 'REC_OPD', title: 'Consultation notes' },
+    { id: 'REC_RX', title: 'Prescriptions' },
+    { id: 'REC_DISCHARGE', title: 'Discharge summary' },
+    { id: 'REC_VISITS', title: 'Visit history' },
+  ]);
+}
+
+type RecordRef = { ref: string; title: string };
+
+async function fetchRecordItems(kind: string, prn: number): Promise<RecordRef[]> {
+  const d = (x?: Date | null, f?: string | null) => (x ? new Date(x).toLocaleDateString('en-GB') : f ?? '-');
+  if (kind === 'REC_REPORTS') {
+    const rows = await prisma.investigationResult.findMany({
+      where: { prn: String(prn), isDeleted: false },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    return rows.map((r) => ({ ref: String(r.id), title: `${r.testName} — ${d(r.reportedAt ?? r.createdAt)}` }));
+  }
+  if (kind === 'REC_OPD') {
+    const rows = await prisma.doctorNote.findMany({ where: { prn }, orderBy: { createdAt: 'desc' }, take: 20 });
+    return rows.map((r) => ({ ref: String(r.id), title: `Consultation — ${r.date || d(r.createdAt)}` }));
+  }
+  if (kind === 'REC_RX') {
+    const rows = await prisma.prescription.findMany({ where: { prn: String(prn) }, orderBy: { createdAt: 'desc' }, take: 20 });
+    return rows.map((r) => ({ ref: r.prescriptionId, title: `Prescription — ${r.prescribedDate || d(r.createdAt)}` }));
+  }
+  if (kind === 'REC_DISCHARGE') {
+    const adms = await prisma.ipdAdmission.findMany({ where: { prn: String(prn) }, select: { id: true, admissionNo: true } });
+    if (!adms.length) return [];
+    const discharges = await prisma.ipdDischarge.findMany({
+      where: { admissionId: { in: adms.map((a) => a.id) }, summaryStatus: { in: ['SIGNED', 'DELIVERED'] } },
+      orderBy: { dischargeDate: 'desc' },
+      take: 20,
+    });
+    return discharges.map((dis) => ({ ref: dis.admissionId, title: `Discharge — ${d(dis.dischargeDate)}` }));
+  }
+  return [];
+}
+
+/** Build the PDF, store it privately, mint an expiring link, and send both. */
+async function deliverRecord(from: string, prn: number, patientName: string, kind: string, ref: string): Promise<boolean> {
+  const built = await buildRecordFile(kind, ref, prn, patientName);
+  if (!built) return false;
+  const { filePath, fileName } = built;
+
+  const { url } = await createSecureLink({ prn, kind, refId: ref, filePath, fileName });
+  const mediaId = await uploadMedia(filePath);
+  if (mediaId) {
+    await sendDocument(from, mediaId, fileName, `${patientName} — PRN ${prn}`);
+  }
+  await sendText(from, `You can also view it online here (the link expires in 24 hours):\n${url}`);
+  await logRecordAccess({ prn, phone: from, itemType: kind, itemRef: ref, action: 'sent' });
+  return true;
+}
+
+async function sendVisitHistory(from: string, prn: number): Promise<void> {
+  const appts = await prisma.appointment.findMany({
+    where: { prnNumber: prn }, orderBy: { created_at: 'desc' }, take: 10,
+    select: { doctorName: true, department: true, date: true, status: true },
+  });
+  const adms = await prisma.ipdAdmission.findMany({
+    where: { prn: String(prn) }, orderBy: { admissionDate: 'desc' }, take: 5,
+    select: { admissionNo: true, admissionDate: true, status: true },
+  });
+  const lines: string[] = [];
+  if (appts.length) {
+    lines.push('Recent OPD visits:');
+    appts.forEach((a) => lines.push(`- ${a.date} · ${a.doctorName} (${a.department}) · ${a.status}`));
+  }
+  if (adms.length) {
+    lines.push('', 'Admissions:');
+    adms.forEach((a) => lines.push(`- ${a.admissionNo} · ${new Date(a.admissionDate).toLocaleDateString('en-GB')} · ${a.status}`));
+  }
+  await sendText(from, lines.length ? lines.join('\n') : 'No visit history found for this PRN.');
+  await logRecordAccess({ prn, phone: from, itemType: 'REC_VISITS', action: 'listed' });
 }
 
 export const handleWebhook = async (req: Request, res: Response): Promise<void> => {
@@ -918,6 +1052,129 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU' } });
       if (c !== 'ELSE_YES' && (await routeFreeText(from, text))) return; // typed a new request
       await sendMainMenu(from, false);
+      return;
+    }
+
+    // ── My Records (registered number + OTP required) ─────────────────────
+    case 'RECORDS_PRN': {
+      const digits = (text ?? '').replace(/\D/g, '');
+      const prn = digits ? parseInt(digits, 10) : NaN;
+      if (!prn || Number.isNaN(prn)) { await sendText(from, 'Please send a valid *PRN* (numbers only).'); return; }
+      const pd = await prisma.patientDetails.findUnique({ where: { prn } });
+      if (!pd) {
+        const attempts = (session.prnAttempts ?? 0) + 1;
+        await prisma.whatsappBotSession.update({ where: { phone: from }, data: { prnAttempts: attempts } });
+        await sendText(from, attempts >= MAX_PRN_ATTEMPTS
+          ? `We couldn't verify your PRN. Please call our helpline: ${HELPLINE}`
+          : `No record found for PRN ${prn}. Please check and resend.`);
+        return;
+      }
+      // Identity is proved by an OTP sent to the REGISTERED mobile (via SMS).
+      // The chatting WhatsApp number may be someone else's; the registered
+      // phone doesn't need WhatsApp. No number on file → we cannot verify.
+      const registered = await getRegisteredNumber(prn);
+      if (!registered) {
+        await logRecordAccess({ prn, phone: from, itemType: 'list', action: 'denied' });
+        await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU', flow: null, scratch: null } });
+        await sendText(from, `We don't have a mobile number registered against PRN ${prn}, so we can't verify your identity here. Please contact reception to update it, or call ${HELPLINE}.`);
+        return;
+      }
+      // Audit when records are pulled from a phone other than the registered one.
+      if (!(await phoneMatchesPrn(from, prn))) {
+        await logRecordAccess({ prn, phone: from, itemType: 'list', action: 'listed', channel: 'whatsapp-other-device' });
+      }
+      await mergeScratch(from, session, { prn, name: pd.name, regNumber: registered });
+      await startRecordsOtp(from, pd.name, registered);
+      return;
+    }
+
+    case 'RECORDS_OTP': {
+      const sc = readScratch(session);
+      const entry = (text ?? '').trim();
+      if (entry.toLowerCase() === 'resend') {
+        const reg = sc.regNumber || (sc.prn ? await getRegisteredNumber(sc.prn) : null);
+        if (!reg) { await sendText(from, `We can't resend the OTP. Please call ${HELPLINE}.`); return; }
+        await startRecordsOtp(from, sc.name, reg);
+        return;
+      }
+      if (!session.otpCode || !session.otpExpiresAt || session.otpExpiresAt < now) {
+        await sendText(from, 'Your OTP has expired. Reply "resend" for a new code.');
+        return;
+      }
+      if (entry.replace(/\D/g, '') !== session.otpCode) {
+        await sendText(from, 'Incorrect OTP. Please re-enter, or reply "resend".');
+        return;
+      }
+      await prisma.whatsappBotSession.update({
+        where: { phone: from },
+        data: { otpCode: null, state: 'RECORDS_MENU', verifiedPrn: sc.prn, verifiedUntil: new Date(now.getTime() + VERIFY_TTL_MS) },
+      });
+      await sendText(from, `Verified. You can access your records for the next 15 minutes.`);
+      await sendRecordsMenu(from);
+      return;
+    }
+
+    case 'RECORDS_MENU': {
+      if (!recordsVerified(session)) {
+        await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'RECORDS_PRN' } });
+        await sendText(from, 'Your verification has expired. Please enter your *PRN* again.');
+        return;
+      }
+      const prn = session.verifiedPrn!;
+      const sc = readScratch(session);
+      const kind = pickChoice(replyId, text, {
+        REC_REPORTS: 'REC_REPORTS', REC_OPD: 'REC_OPD', REC_RX: 'REC_RX', REC_DISCHARGE: 'REC_DISCHARGE', REC_VISITS: 'REC_VISITS',
+        '1': 'REC_REPORTS', reports: 'REC_REPORTS', '2': 'REC_OPD', notes: 'REC_OPD',
+        '3': 'REC_RX', prescriptions: 'REC_RX', '4': 'REC_DISCHARGE', discharge: 'REC_DISCHARGE',
+        '5': 'REC_VISITS', visits: 'REC_VISITS',
+      });
+      if (!kind) { await sendRecordsMenu(from); return; }
+      if (kind === 'REC_VISITS') { await sendVisitHistory(from, prn); await sendRecordsMenu(from); return; }
+
+      const items = await fetchRecordItems(kind, prn);
+      await logRecordAccess({ prn, phone: from, itemType: kind, action: 'listed' });
+      if (!items.length) {
+        await sendText(from, 'No documents of that type were found for your PRN.');
+        await sendRecordsMenu(from);
+        return;
+      }
+      await prisma.whatsappBotSession.update({
+        where: { phone: from },
+        data: { state: 'RECORDS_LIST', scratch: JSON.stringify({ ...sc, recKind: kind, _recItems: items, _recPage: 0 }) },
+      });
+      await sendPagedList(from, 'Select document', 'Choose the document to receive:', 'Documents',
+        items.map((it) => ({ id: `REC_${it.ref}`, title: it.title })), 0);
+      return;
+    }
+
+    case 'RECORDS_LIST': {
+      if (!recordsVerified(session)) {
+        await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'RECORDS_PRN' } });
+        await sendText(from, 'Your verification has expired. Please enter your *PRN* again.');
+        return;
+      }
+      const prn = session.verifiedPrn!;
+      const sc = readScratch(session);
+      const items: RecordRef[] = sc._recItems || [];
+      const listRows = items.map((it) => ({ id: `REC_${it.ref}`, title: it.title }));
+      if (replyId === 'MORE' || replyId === 'PREV') {
+        const page = replyId === 'PREV' ? Math.max(0, (sc._recPage || 0) - 1) : (sc._recPage || 0) + 1;
+        await mergeScratch(from, session, { _recPage: page });
+        await sendPagedList(from, 'Select document', 'Choose the document to receive:', 'Documents', listRows, page);
+        return;
+      }
+      let ref: string | undefined;
+      if (replyId?.startsWith('REC_')) ref = replyId.slice(4);
+      if (!ref && text) ref = items.find((it) => it.title.toLowerCase() === text.trim().toLowerCase())?.ref;
+      if (!ref) {
+        await sendPagedList(from, 'Select document', 'Please pick a document:', 'Documents', listRows, sc._recPage || 0);
+        return;
+      }
+      await sendText(from, 'Preparing your document…');
+      const ok = await deliverRecord(from, prn, sc.name ?? 'Patient', sc.recKind, ref);
+      if (!ok) await sendText(from, `Sorry, we couldn't prepare that document. Please call ${HELPLINE}.`);
+      await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'RECORDS_MENU' } });
+      await sendRecordsMenu(from);
       return;
     }
 

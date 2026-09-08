@@ -141,10 +141,29 @@ export const createInsulinReading = async (req: Request, res: Response): Promise
 export const updateInsulinReading = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
-    const existing = await prisma.ipdInsulinInfusion.findUnique({ where: { id }, select: { id: true } });
+    const existing = await prisma.ipdInsulinInfusion.findUnique({
+      where: { id },
+      select: { id: true, admissionId: true, doctorSignatureId: true, nurseSignatureId: true },
+    });
     if (!existing) { res.status(404).json({ message: 'Reading not found' }); return; }
 
     const body = req.body as InsulinBody;
+
+    // Editing voids the signature that attested to the old values. A row that
+    // is already signed may only be updated together with a *new* signature —
+    // reusing or dropping the old id would leave a stale attestation on
+    // mutated clinical data. Insulin is a high-risk medication (NABH MOM.4b).
+    if (existing.doctorSignatureId &&
+        (!body.doctorSignatureId || body.doctorSignatureId === existing.doctorSignatureId)) {
+      res.status(400).json({ message: 'This reading is doctor-signed — a fresh doctor e-signature is required to edit it' });
+      return;
+    }
+    if (existing.nurseSignatureId &&
+        (!body.nurseSignatureId || body.nurseSignatureId === existing.nurseSignatureId)) {
+      res.status(400).json({ message: 'This reading is nurse-signed — a fresh nurse e-signature is required to edit it' });
+      return;
+    }
+
     const row = await prisma.ipdInsulinInfusion.update({
       where: { id },
       data: {
@@ -157,6 +176,10 @@ export const updateInsulinReading = async (req: Request, res: Response): Promise
         ...(body.nurseSignatureId !== undefined && { nurseSignatureId: body.nurseSignatureId || null }),
         ...(body.remarks !== undefined && { remarks: body.remarks?.trim() || null }),
       },
+    });
+    await auditLog(req, {
+      module: 'ipd-insulin', action: 'UPDATE', entityType: 'IpdInsulinInfusion',
+      entityId: row.id, payload: { admissionId: existing.admissionId, glucose: row.bloodGlucoseMgDl },
     });
     res.status(200).json({ data: row });
   } catch (error) {

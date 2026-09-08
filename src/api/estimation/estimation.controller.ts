@@ -14,6 +14,10 @@ import { proposeFromEstimation } from '../conversion/estimation-to-ipd';
 const prisma = new PrismaClient();
 const repository = new ServiceRepository();
 
+// Free-text estimation search spans all history, so the result set is capped to
+// keep the payload bounded. Widen the date range to narrow a search that hits it.
+const SEARCH_RESULT_LIMIT = 500;
+
 export const createEstimation = async (req: Request, res: Response) => {
     try {
         const { doctorId, departmentId, estimation, estimationType } = req.body;
@@ -385,19 +389,37 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
 
 export const getAllEstimationDetails = async (req: Request, res: Response) => {
     try {
-        const { fromDate, toDate } = req.query as { fromDate?: string; toDate?: string };
+        const { fromDate, toDate, search } = req.query as { fromDate?: string; toDate?: string; search?: string };
+        const searchTerm = (search || '').trim();
 
         // Filter by surgery date (estimatedDate). Note: estimatedDate is nullable —
         // pending/unscheduled estimations have estimatedDate = null but still need to be visible.
-        const baseWhere: any = { NOT: { estimationId: 'emergency' } };
-        let where: any = baseWhere;
+        const conditions: any[] = [{ NOT: { estimationId: 'emergency' } }];
+
+        if (searchTerm) {
+            // Free-text search deliberately skips the default recency window, otherwise
+            // historical estimations could never be found. Capped by SEARCH_RESULT_LIMIT.
+            // MySQL collations are case-insensitive, so `contains` needs no mode flag
+            // (Prisma's `mode: 'insensitive'` is unsupported on MySQL).
+            const searchMatches: any[] = [
+                { patientName: { contains: searchTerm } },
+                { estimationId: { contains: searchTerm } },
+                { consultantName: { contains: searchTerm } },
+                { patientPhoneNumber: { contains: searchTerm } }
+            ];
+            // patientUHID is an Int column — `contains` is not available on it, so a
+            // fully numeric term is matched exactly instead.
+            if (/^\d+$/.test(searchTerm)) {
+                searchMatches.push({ patientUHID: Number(searchTerm) });
+            }
+            conditions.push({ OR: searchMatches });
+        }
 
         if (fromDate || toDate) {
             // Explicit date range from user — match on surgery date OR raised date, so that
             // estimations never scheduled (estimatedDate = null) are still reachable by range.
             // Note: estimatedDate is a String column (YYYY-MM-DD), so this is a lexical compare.
-            where = {
-                ...baseWhere,
+            conditions.push({
                 OR: [
                     {
                         estimatedDate: {
@@ -412,8 +434,8 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
                         }
                     }
                 ]
-            };
-        } else {
+            });
+        } else if (!searchTerm) {
             // Default: surgery date in last 7 days + today + future,
             // OR estimation is recent (last 30 days) but unscheduled (estimatedDate = null)
             const sevenDaysAgo = new Date();
@@ -423,8 +445,7 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-            where = {
-                ...baseWhere,
+            conditions.push({
                 OR: [
                     { estimatedDate: { gte: sevenDaysAgoStr } },          // scheduled surgeries in range
                     {
@@ -434,8 +455,10 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
                         ]
                     }
                 ]
-            };
+            });
         }
+
+        const where = conditions.length === 1 ? conditions[0] : { AND: conditions };
 
         const estimationDetails = await prisma.estimationDetails.findMany({
             where,
@@ -444,10 +467,13 @@ export const getAllEstimationDetails = async (req: Request, res: Response) => {
                 exclusions: true,
                 followUpDates: true
             },
-            orderBy: [
-                { estimatedDate: 'asc' },                // earliest scheduled surgeries first
-                { estimationCreatedTime: 'desc' }        // unscheduled — newest first
-            ]
+            orderBy: searchTerm
+                ? [{ estimationCreatedTime: 'desc' }]    // searching history — newest first
+                : [
+                    { estimatedDate: 'asc' },            // earliest scheduled surgeries first
+                    { estimationCreatedTime: 'desc' }    // unscheduled — newest first
+                ],
+            ...(searchTerm ? { take: SEARCH_RESULT_LIMIT } : {})
         });
 
         res.status(200).json(estimationDetails);

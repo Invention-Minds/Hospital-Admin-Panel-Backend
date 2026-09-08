@@ -342,7 +342,26 @@ export class PatientController {
         },
         orderBy: { createdAt: 'desc' }
       });
-  
+
+      // OPD assessments — the note the doctor now writes for every visit
+      // (DoctorNote capture was retired). The visit-wise summary falls back to
+      // these when a visit has no legacy doctor note.
+      const opdAssessments = hasIntPrn
+        ? await prisma.oPDAssessment.findMany({
+            where: { uhId: prnStr },
+            orderBy: { id: 'desc' }
+          })
+        : [];
+
+      // Ophthalmology eye record per visit (eye department only).
+      const ophthalmologyPrescriptions = hasIntPrn
+        ? await prisma.ophthalmologyPrescription.findMany({
+            where: { prn: prnInt },
+            include: { diagramMarks: true },
+            orderBy: { createdAt: 'desc' }
+          })
+        : [];
+
       res.json({
         appointments: appointments,
         serviceAppointments: serviceAppointments,
@@ -351,7 +370,9 @@ export class PatientController {
         patientData: patientData,
         prescriptionData: prescriptionData,
         historyData: historyData,
-        investigationOrders: investigationOrders
+        investigationOrders: investigationOrders,
+        opdAssessments: opdAssessments,
+        ophthalmologyPrescriptions: ophthalmologyPrescriptions
       });
   
     } catch (error) {

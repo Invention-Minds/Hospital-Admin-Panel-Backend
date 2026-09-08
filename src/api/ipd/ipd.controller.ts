@@ -156,6 +156,12 @@ export const createIpdAdmission = async (
     // Check if bed exists and is available
     const bed = await prisma.ipdBed.findUnique({
       where: { id: bedId },
+      include: {
+        admissions: {
+          where: { status: { in: ['admitted', 'BED_ACCEPTED'] } },
+          select: { id: true, admissionNo: true },
+        },
+      },
     });
 
     if (!bed) {
@@ -163,8 +169,24 @@ export const createIpdAdmission = async (
       return;
     }
 
-    if (bed.status === 'occupied') {
-      res.status(409).json({ message: 'Bed is already occupied' });
+    // Only a free bed may be admitted into. Checking for 'occupied' alone let
+    // reserved (booked for another patient) and maintenance beds through.
+    if (bed.status !== 'available') {
+      res.status(409).json({
+        message: bed.status === 'occupied'
+          ? 'Bed is already occupied'
+          : `Bed is not available (status: ${bed.status})`,
+      });
+      return;
+    }
+
+    // Belt-and-braces: a bed still linked to a live admission is taken even if
+    // its status column says otherwise. Without this, status drift silently
+    // double-books the bed.
+    if (bed.admissions.length > 0) {
+      res.status(409).json({
+        message: `Bed is already assigned to admission ${bed.admissions[0].admissionNo}`,
+      });
       return;
     }
 

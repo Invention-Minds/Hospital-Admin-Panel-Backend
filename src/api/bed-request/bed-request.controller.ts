@@ -242,14 +242,37 @@ export const rejectBedRequest = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ error: `Cannot reject in status=${reqRow.status}` });
       return;
     }
-    const updated = await prisma.ipdBedRequest.update({
-      where: { id },
-      data: { status: 'REJECTED', rejectReason: body.rejectReason.trim() },
-    });
-    // Roll the admission back to PROPOSED so PRE can re-request elsewhere.
-    await prisma.ipdAdmission.update({
+    // If the request had already been ACCEPTED, a bed is sitting on `reserved`
+    // for this patient. Rejecting must hand it back, otherwise the bed stays
+    // booked forever and quietly leaves the available pool.
+    const admissionRow = await prisma.ipdAdmission.findUnique({
       where: { id: reqRow.admissionId },
-      data: { status: 'PROPOSED' },
+      select: { bedId: true },
+    });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedReq = await tx.ipdBedRequest.update({
+        where: { id },
+        data: { status: 'REJECTED', rejectReason: body.rejectReason.trim() },
+      });
+
+      // Roll the admission back to PROPOSED so PRE can re-request elsewhere,
+      // and detach it from the bed it no longer holds.
+      await tx.ipdAdmission.update({
+        where: { id: reqRow.admissionId },
+        data: { status: 'PROPOSED', wardId: null, bedId: null },
+      });
+
+      if (admissionRow?.bedId) {
+        // Only release a bed we reserved — never stomp one that has since been
+        // occupied by somebody else.
+        await tx.ipdBed.updateMany({
+          where: { id: admissionRow.bedId, status: 'reserved' },
+          data: { status: 'available' },
+        });
+      }
+
+      return updatedReq;
     });
     await auditLog(req, {
       module: 'bed-request',

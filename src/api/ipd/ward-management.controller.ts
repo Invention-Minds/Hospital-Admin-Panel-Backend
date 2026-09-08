@@ -196,9 +196,13 @@ export const getAllBeds = async (
       where,
       include: {
         ward: { select: { id: true, wardName: true, wardCode: true } },
+        // Any admission still holding this bed. BED_ACCEPTED counts: the
+        // nursing station has allocated the bed and the patient is on the way,
+        // so it must not be offered to a second admission. Callers filter on
+        // this as well as on `status`, because the two can drift apart.
         admissions: {
-          where: { status: 'admitted' },
-          select: { id: true, prn: true, admissionNo: true, admittingDoctor: true },
+          where: { status: { in: ['admitted', 'BED_ACCEPTED'] } },
+          select: { id: true, prn: true, admissionNo: true, admittingDoctor: true, status: true },
         },
       },
       orderBy: { bedNumber: 'asc' },

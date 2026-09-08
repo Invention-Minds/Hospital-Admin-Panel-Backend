@@ -34,6 +34,22 @@ jest.mock('../../hmis-sync/hmis-audit', () => ({
   createHmisAuditLog: jest.fn(),
 }));
 
+// Prescribing runs two pre-save safety gates. Both must be stubbed or the
+// handler 409s before it ever reaches prisma: evaluatePregnancyAlerts touches
+// models this suite does not mock, and probeStock makes a live HTTP call to
+// HMIS which fails under test and returns a stock warning.
+jest.mock('../pregnancy-alerts', () => ({
+  evaluatePregnancyAlerts: jest.fn().mockResolvedValue([]),
+}));
+
+jest.mock('../../../service/pharmacy-stock-probe', () => ({
+  probeStock: jest.fn().mockResolvedValue({
+    ok: true, source: 'hmis', generic: 'Paracetamol',
+    quantityOnHand: 50, brands: [], warning: undefined,
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+  }),
+}));
+
 import prisma from '../../../service/prisma-client';
 import {
   pushIpdPrescription,
@@ -121,6 +137,11 @@ const rxFixture = {
   adminStatus: 'pending',
   status: 'active',
   hmisRxId: null as string | null,
+  // Phase P — the MAR guard refuses to administer until pharmacy has dispensed
+  // and the ward has collected the script.
+  dispensedAt: new Date('2026-04-18T10:30:00Z') as Date | null,
+  nurseCollectedAt: new Date('2026-04-18T11:00:00Z') as Date | null,
+  nurseReturnedAt: null as Date | null,
   createdAt: new Date(),
   updatedAt: new Date(),
   createdBy: 'reception-1',
@@ -432,7 +453,8 @@ describe('administerMedication — happy path (fire-and-forget, MAR)', () => {
 
       const req = {
         params: { prescriptionId: 'rx-1' },
-        body: { quantity: 1, route: 'oral', remarks: null },
+        // NABH MOM.4 / IPC.6 — administerMedication 400s without both flags.
+        body: { quantity: 1, route: 'oral', remarks: null, verifiedTwoIdentifiers: true, fiveRightsChecked: true },
         user: { id: 1, username: 'nurse-1' },
       } as unknown as Request;
       const res = buildRes();
@@ -479,7 +501,7 @@ describe('administerMedication — HMIS failure (fire-and-forget, MAR)', () => {
 
     const req = {
       params: { prescriptionId: 'rx-1' },
-      body: { quantity: 1 },
+      body: { quantity: 1, verifiedTwoIdentifiers: true, fiveRightsChecked: true },
       user: { id: 1, username: 'nurse-1' },
     } as unknown as Request;
     const res = buildRes();
@@ -503,7 +525,7 @@ describe('administerMedication — sanity: prescription not found', () => {
 
     const req = {
       params: { prescriptionId: 'rx-missing' },
-      body: { quantity: 1 },
+      body: { quantity: 1, verifiedTwoIdentifiers: true, fiveRightsChecked: true },
       user: { id: 1, username: 'nurse-1' },
     } as unknown as Request;
     const res = buildRes();
@@ -765,7 +787,9 @@ describe('Sprint 4b.1 — IpdPrescription update attribution', () => {
   });
 
   it('administerMedication stamps updatedBy + updatedById on prescription update + createdById on MAR log', async () => {
-    const r = req({ body: { quantity: 1, route: 'oral', remarks: 'OK' } } as Partial<Request>);
+    const r = req({
+      body: { quantity: 1, route: 'oral', remarks: 'OK', verifiedTwoIdentifiers: true, fiveRightsChecked: true },
+    } as Partial<Request>);
     await administerMedication(r, buildRes());
     const rxArgs = mockedPrisma.ipdPrescription.update.mock.calls[0][0];
     expect(rxArgs.data).toEqual(expect.objectContaining({

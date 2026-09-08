@@ -9,6 +9,17 @@ import moment from 'moment-timezone';
 import axios from 'axios';
 import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import { sendConfirmedSMS } from '../sms/sms.controller';
+import { saveBufferToStorage } from '../../service/local-file-store';
+import { uploadMediaToGoBuzz, sendDocumentTemplate, formatGoBuzzPhone } from '../../service/gobuzz-document';
+import { getSentCount, recordSent } from '../../service/visit-summary.store';
+import { notifyAppointmentConfirmed, notifyAppointmentCancelled } from '../../service/whatsapp-notify.service';
+import {
+  recordAppointmentEvent,
+  classifyAppointmentChange,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
+import { auditLog } from '../../service/app-audit';
 
 const prisma = new PrismaClient();
 const templateLang = "en";
@@ -289,6 +300,20 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
 
     console.log("New Appointment:", newAppointment);
 
+    // Lifecycle trail — first row for this appointment. The route is public
+    // (anonymous website booking) but carries optionalAuth, so req.user is
+    // present for staff bookings and absent for anonymous ones.
+    // A front-desk booking is created straight as 'confirmed'; only an online
+    // request lands as 'pending'. Label the row for what actually happened —
+    // it's row 1 either way, so "this was the creation" isn't lost.
+    await recordAppointmentEvent(req, {
+      appointmentId: newAppointment.id,
+      eventType: newAppointment.status === 'confirmed' ? 'CONFIRMED' : 'BOOKED',
+      to: slotSnapshot(newAppointment),
+      subject: subjectSnapshot(newAppointment),
+      source: requestVia ? String(requestVia) : 'admin-panel',
+    });
+
     if (newAppointment.status === 'pending') {
       const newNotification = await prisma.notification.create({
         data: {
@@ -488,6 +513,14 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
           });
         }));
 
+        await recordAppointmentEvent(req, {
+          appointmentId: created.id,
+          eventType: created.status === 'confirmed' ? 'CONFIRMED' : 'BOOKED',
+          to: slotSnapshot(created),
+          subject: subjectSnapshot(created),
+          source: 'walk-in',
+        });
+
         // WhatsApp fired AFTER the transaction commits — never inside a transaction.
         // Failure here doesn't roll the appointment back (matches prior behaviour).
         const name = `${prefix} ${patientName}`;
@@ -615,11 +648,21 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     // checkedInTime / checkedInBy are ONLY set by the dedicated /checkin endpoint;
     // strip them here so a generic PUT (which sends the whole appointment, with these
     // still null pre-check-in) can never overwrite the check-in stamp.
+    // rescheduleCount / cancelled* / cancelReason are owned by the lifecycle
+    // trail (service/appointment-event.ts). The UI PUTs the whole appointment
+    // back, so strip them here or a stale echo would clobber the real values.
     const {
       id, doctor, user, userId: _bodyUserId,
       checkedInTime: _checkedInTime, checkedInBy: _checkedInBy,
+      rescheduleCount: _rescheduleCount, cancelledBy: _cancelledBy,
+      cancelledById: _cancelledById, cancelledAt: _cancelledAt,
+      cancelReason: _cancelReason, events: _events,
       ...updateData
     } = req.body;
+    // Free-text reason the UI may send alongside a cancel/reschedule. Recorded
+    // on the event, not on the appointment row.
+    const changeReason: string | null = req.body.changeReason ?? req.body.cancelReason ?? null;
+    delete updateData.changeReason;
     console.log("updateDatsa", updateData)
 
     // Include userId if present (from JWT).
@@ -633,11 +676,16 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     // move/create cannot interleave with another concurrent update or create.
     // (Race-free fix still needs @@unique([doctorId,date,time]) on BookedSlot — DB change
     // deferred per ops constraint; this transaction narrows the window to near-zero.)
+    // Captured inside the transaction, read after it commits so the lifecycle
+    // trail can record the before/after slot without a second query.
+    let before: Awaited<ReturnType<typeof prisma.appointment.findUnique>> = null;
+
     const result = await prisma.$transaction(async (tx) => {
       const existing = await tx.appointment.findUnique({ where: { id: appointmentId } });
       if (!existing) {
         throw new Error('APPT_NOT_FOUND');
       }
+      before = existing;
 
       const newDoctorId = updateData.doctorId ?? existing.doctorId;
       const newDate = updateData.date ?? existing.date;
@@ -714,6 +762,38 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       return updated;
     });
 
+    // Lifecycle trail. A generic PUT carries every field the popup holds, so
+    // only slot/status moves are recorded — vitals, waiting time and payment
+    // edits would otherwise bury the reschedule history.
+    if (before && result) {
+      const eventType = classifyAppointmentChange(slotSnapshot(before), slotSnapshot(result));
+      if (eventType) {
+        await recordAppointmentEvent(req, {
+          appointmentId: result.id,
+          eventType,
+          from: slotSnapshot(before),
+          to: slotSnapshot(result),
+          subject: subjectSnapshot(result),
+          source: 'admin-panel',
+          reason: changeReason,
+        });
+      }
+    }
+
+    // WhatsApp: confirm / cancel the appointment for the patient (de-duped, and
+    // a no-op while WHATSAPP_PUSH_ENABLED is off). Never blocks the response.
+    if (result?.status === 'confirmed') {
+      notifyAppointmentConfirmed(
+        result.prnNumber ?? null, result.phoneNumber, result.patientName,
+        result.doctorName, result.date, result.time, `${result.id}:confirmed`,
+      ).catch((e: unknown) => console.warn('[appointment] whatsapp confirm push failed:', (e as Error).message));
+    } else if (result?.status === 'cancelled') {
+      notifyAppointmentCancelled(
+        result.prnNumber ?? null, result.phoneNumber, result.patientName,
+        result.doctorName, result.date, `${result.id}:cancelled`,
+      ).catch((e: unknown) => console.warn('[appointment] whatsapp cancel push failed:', (e as Error).message));
+    }
+
     res.status(200).json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'An error occurred';
@@ -754,7 +834,28 @@ export const updateExtraWaitingTime = async (req: Request, res: Response): Promi
 
 export const deleteAppointment = async (req: Request, res: Response): Promise<void> => {
   try {
-    await resolver.deleteAppointment(Number(req.params.id));
+    const appointmentId = Number(req.params.id);
+    // AppointmentEvent rows cascade away with the appointment, so the tombstone
+    // goes to the generic audit table instead of the lifecycle trail.
+    const doomed = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    await resolver.deleteAppointment(appointmentId);
+    await auditLog(req, {
+      module: 'appointment',
+      action: 'DELETE',
+      entityType: 'Appointment',
+      entityId: appointmentId,
+      payload: doomed
+        ? {
+            patientName: doomed.patientName,
+            prnNumber: doomed.prnNumber,
+            doctorName: doomed.doctorName,
+            date: doomed.date,
+            time: doomed.time,
+            status: doomed.status,
+            rescheduleCount: doomed.rescheduleCount,
+          }
+        : null,
+    });
     res.status(204).send();
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -942,11 +1043,88 @@ export const checkInAppointment = async (req: Request, res: Response) => {
         }),
       },
     });
+    await recordAppointmentEvent(req, {
+      appointmentId: updatedAppointment.id,
+      eventType: 'CHECKED_IN',
+      to: slotSnapshot(updatedAppointment),
+      subject: subjectSnapshot(updatedAppointment),
+      source: 'admin-panel',
+      // `username` comes from the body on this endpoint (front-desk operator),
+      // which can differ from the JWT holder — keep it.
+      payload: { checkedInBy: username, paymentStamped: isPaidType && !appointment.paidAt },
+    });
     notifyDoctor(appointment.doctorId);
     res.status(200).json({ message: 'Appointment checked in successfully', updatedAppointment });
   } catch (error) {
     console.error('Error updating check-in status:', error);
     res.status(500).json({ error: 'An error occurred while updating the check-in status' });
+  }
+};
+
+// Send an OPD visit-summary PDF (built on the frontend with pdfmake) to the
+// patient over WhatsApp — mirrors the estimation flow: save the PDF bytes to
+// local storage, upload them to GoBuzz to get a media id, then send a template
+// message with a document header. The frontend passes the finished PDF as base64.
+export const sendVisitSummary = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { pdfBase64, patientPhoneNumber, patientName, filename, prn, date } = req.body;
+    if (!pdfBase64 || !patientPhoneNumber) {
+      res.status(400).json({ error: 'pdfBase64 and patientPhoneNumber are required' });
+      return;
+    }
+
+    // First send for this patient+visit-date uses the initial template; any later
+    // send that same day (updated notes) uses the "updated" template. Tracked in a
+    // small JSON store so no DB migration is needed.
+    const alreadySent = getSentCount(String(prn ?? ''), String(date ?? '')) > 0;
+
+    const firstTemplate = process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME;
+    const updateTemplate = process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_NAME;
+    // Fall back to the first template if the "updated" one isn't configured yet.
+    const templateName = alreadySent ? (updateTemplate || firstTemplate) : firstTemplate;
+    if (!templateName) {
+      res.status(500).json({
+        error: `OPD summary WhatsApp template not configured (set ${alreadySent ? 'GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_NAME' : 'GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME'})`,
+      });
+      return;
+    }
+    const templateLang = alreadySent
+      ? (process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_LANG || process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en')
+      : (process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en');
+
+    // Accept a raw base64 string or a data: URI.
+    const base64 = String(pdfBase64).replace(/^data:application\/pdf;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+    const safeName = (filename && String(filename)) || `VisitSummary_${Date.now()}.pdf`;
+
+    const stored = saveBufferToStorage(buffer, 'opd-summaries', safeName);
+    const mediaId = await uploadMediaToGoBuzz(stored.filePath);
+
+    const response = await sendDocumentTemplate({
+      to: formatGoBuzzPhone(patientPhoneNumber),
+      templateName,
+      templateLang,
+      mediaId,
+      filename: stored.fileName,
+      bodyParams: [patientName || 'Patient'],
+    });
+
+    if (response.data?.messages?.[0]?.id) {
+      // Only record on a confirmed send, so a failed first attempt still counts as "first".
+      recordSent(String(prn ?? ''), String(date ?? ''));
+      res.status(200).json({
+        success: true,
+        template: alreadySent ? 'updated' : 'initial',
+        url: stored.relativeUrl,
+        whatsapp: response.data,
+      });
+    } else {
+      console.error('GoBuzz send-visit-summary unexpected response:', response.data);
+      res.status(502).json({ success: false, error: 'GoBuzz WhatsApp send failed', whatsapp: response.data });
+    }
+  } catch (error) {
+    console.error('send-visit-summary error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };
 
@@ -1004,7 +1182,17 @@ export const bulkUpdateAppointments = async (req: Request, res: Response): Promi
     );
 
     // Wait for all update promises to resolve
-    await Promise.all(updatePromises)
+    const closedAppointments = await Promise.all(updatePromises)
+
+    for (const closed of closedAppointments) {
+      await recordAppointmentEvent(req, {
+        appointmentId: closed.id,
+        eventType: 'OPD_CLOSED',
+        to: slotSnapshot(closed),
+        subject: subjectSnapshot(closed),
+        source: 'admin-panel',
+      });
+    }
 
     // ===== Pinnacle (commented out — migrated to GoBuzz) =====
     // const url = process.env.WHATSAPP_API_URL_BULK;
@@ -1184,7 +1372,7 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
     };
     const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
 
-    const updatePromises = appointmentsToUpdate.map(async (appointment: { id: number, doctorId: number, date: string, time: string }) => {
+    const updatePromises = appointmentsToUpdate.map(async (appointment: { id: number, doctorId: number, date: string, time: string, cancelReason?: string }) => {
       // Fetch appointment details to get the patient and doctor info
       const existingAppointment = await prisma.appointment.findUnique({
         where: { id: appointment.id },
@@ -1212,6 +1400,16 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
       });
 
       console.log(`Updated appointment status to cancelled for Appointment ID: ${appointment.id}`);
+
+      await recordAppointmentEvent(req, {
+        appointmentId: appointment.id,
+        eventType: 'CANCELLED',
+        from: slotSnapshot(existingAppointment),
+        to: { ...slotSnapshot(existingAppointment), status: 'cancelled' },
+        subject: subjectSnapshot(existingAppointment),
+        source: 'admin-panel',
+        reason: appointment.cancelReason ?? 'Bulk cancellation (doctor unavailable)',
+      });
 
       const name = prefix + ' ' + existingAppointment.patientName;
       // **Send WhatsApp message to patient**
@@ -1520,6 +1718,9 @@ export const completedAppointments = async (req: Request, res: Response):Promise
     const appointments = await prisma.appointment.findMany({
       where,
       select: {
+        // `id` is required so the UI can join the lifecycle trail
+        // (POST /appointments/event-summary) onto these rows for the export.
+        id: true,
         patientName: true,
         phoneNumber: true,
         email: true,
@@ -1534,6 +1735,9 @@ export const completedAppointments = async (req: Request, res: Response):Promise
         messageSent: true,
         status: true,
         patientType: true,
+        checkedInBy: true,
+        checkedInTime: true,
+        rescheduleCount: true,
         user: {
           select: {
             username: true,
@@ -1959,5 +2163,283 @@ const sendFollowUpWhatsApp = async (appointment: any) => {
     console.log("Follow-up WhatsApp sent to:", appointment.phoneNumber);
   } catch (error) {
     console.error("WhatsApp follow-up failed:", error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Appointment lifecycle trail (AppointmentEvent) — read side.
+// Write side lives in service/appointment-event.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /appointments/:id/history
+ * Full ordered timeline for one appointment: who did what, when, from which
+ * slot to which. Actor role is joined from User at read time (the JWT only
+ * carries id + username, so it isn't snapshotted on the event).
+ */
+export const getAppointmentHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentId = Number(req.params.id);
+    if (Number.isNaN(appointmentId)) {
+      res.status(400).json({ error: 'Invalid appointment id' });
+      return;
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      select: {
+        id: true, patientName: true, prnNumber: true, phoneNumber: true,
+        doctorId: true, doctorName: true, department: true,
+        date: true, time: true, status: true, requestVia: true,
+        rescheduleCount: true, cancelledBy: true, cancelledById: true,
+        cancelledAt: true, cancelReason: true,
+        created_at: true, updated_at: true,
+      },
+    });
+    if (!appointment) {
+      res.status(404).json({ error: 'Appointment not found' });
+      return;
+    }
+
+    const events = await prisma.appointmentEvent.findMany({
+      where: { appointmentId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Join roles for the user-actors in one query rather than per event.
+    const actorIds = [...new Set(events.map((e) => e.actorId).filter((v): v is number => v != null))];
+    const actors = actorIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, username: true, role: true },
+        })
+      : [];
+    const roleById = new Map(actors.map((a) => [a.id, a.role]));
+
+    res.status(200).json({
+      appointment,
+      summary: {
+        totalEvents: events.length,
+        rescheduleCount: appointment.rescheduleCount,
+        cancelled: appointment.status === 'cancelled',
+        cancelledBy: appointment.cancelledBy,
+        cancelledAt: appointment.cancelledAt,
+        cancelReason: appointment.cancelReason,
+      },
+      events: events.map((e) => ({
+        ...e,
+        actorRole: e.actorRole ?? (e.actorId != null ? roleById.get(e.actorId) ?? null : null),
+        payload: e.payload ? safeJsonParse(e.payload) : null,
+      })),
+    });
+  } catch (error) {
+    console.error('[appointment-history] fetch failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+
+/**
+ * GET /appointments/reschedule-report?from=YYYY-MM-DD&to=YYYY-MM-DD&eventType=
+ * Aggregate view for the front-desk dashboard: how many reschedules and
+ * cancellations happened in a window, broken down by actor, by doctor, and by
+ * source (staff vs the 3-hour no-show cron vs the WhatsApp bot).
+ * Defaults to the last 30 days when no range is given.
+ */
+export const getAppointmentEventReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { from, to, eventType } = req.query;
+
+    const fromDate = from ? new Date(String(from)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const toDate = to ? new Date(String(to)) : new Date();
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      res.status(400).json({ error: 'Invalid from/to date' });
+      return;
+    }
+    // `to` is a plain date from the UI — include the whole day.
+    toDate.setHours(23, 59, 59, 999);
+
+    const types = eventType
+      ? String(eventType).split(',').map((t) => t.trim()).filter(Boolean)
+      : ['RESCHEDULED', 'CANCELLED'];
+
+    const events = await prisma.appointmentEvent.findMany({
+      where: {
+        createdAt: { gte: fromDate, lte: toDate },
+        eventType: { in: types },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const tally = <T extends string | number>(
+      keyOf: (e: (typeof events)[number]) => T | null,
+      labelOf: (e: (typeof events)[number]) => string,
+    ) => {
+      const map = new Map<T, { key: T; label: string; rescheduled: number; cancelled: number; total: number }>();
+      for (const e of events) {
+        const key = keyOf(e);
+        if (key == null) continue;
+        const row = map.get(key) ?? { key, label: labelOf(e), rescheduled: 0, cancelled: 0, total: 0 };
+        if (e.eventType === 'RESCHEDULED') row.rescheduled++;
+        if (e.eventType === 'CANCELLED') row.cancelled++;
+        row.total++;
+        map.set(key, row);
+      }
+      return [...map.values()].sort((a, b) => b.total - a.total);
+    };
+
+    // Appointments rescheduled more than once in the window — the "this patient
+    // keeps getting moved" list.
+    const perAppointment = new Map<number, number>();
+    for (const e of events) {
+      if (e.eventType !== 'RESCHEDULED') continue;
+      perAppointment.set(e.appointmentId, (perAppointment.get(e.appointmentId) ?? 0) + 1);
+    }
+    const repeatOffenders = [...perAppointment.entries()]
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 50)
+      .map(([appointmentId, count]) => {
+        const latest = events.find((e) => e.appointmentId === appointmentId);
+        return {
+          appointmentId,
+          rescheduleCount: count,
+          patientName: latest?.patientName ?? null,
+          prnNumber: latest?.prnNumber ?? null,
+          doctorName: latest?.toDoctorName ?? latest?.fromDoctorName ?? null,
+        };
+      });
+
+    res.status(200).json({
+      range: { from: fromDate, to: toDate },
+      eventTypes: types,
+      totals: {
+        rescheduled: events.filter((e) => e.eventType === 'RESCHEDULED').length,
+        cancelled: events.filter((e) => e.eventType === 'CANCELLED').length,
+        all: events.length,
+      },
+      byActor: tally(
+        (e) => e.actorId ?? (e.actorName as unknown as number | null),
+        (e) => e.actorName ?? e.actorType,
+      ),
+      byDoctor: tally(
+        (e) => e.fromDoctorId ?? e.toDoctorId,
+        (e) => e.fromDoctorName ?? e.toDoctorName ?? 'Unknown',
+      ),
+      bySource: tally((e) => e.source ?? 'unknown', (e) => e.source ?? 'unknown'),
+      repeatOffenders,
+    });
+  } catch (error) {
+    console.error('[appointment-event-report] fetch failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+
+const safeJsonParse = (value: string): unknown => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * POST /appointments/event-summary
+ * Body: { appointmentIds: number[] }
+ *
+ * Bulk companion to /:id/history — one row per appointment instead of a full
+ * timeline, so the Excel exports can add "who booked / who rescheduled / who
+ * cancelled and when" columns with a single request rather than one per row.
+ *
+ * POST rather than GET because an export can carry thousands of ids, which
+ * would overflow a query string. The client chunks; this caps defensively.
+ */
+export const getAppointmentEventSummary = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { appointmentIds } = req.body as { appointmentIds?: unknown };
+    if (!Array.isArray(appointmentIds)) {
+      res.status(400).json({ error: 'appointmentIds must be an array of appointment ids' });
+      return;
+    }
+
+    const ids = appointmentIds
+      .map((v) => Number(v))
+      .filter((v) => Number.isInteger(v) && v > 0)
+      .slice(0, 5000);
+
+    if (ids.length === 0) {
+      res.status(200).json({ summaries: {} });
+      return;
+    }
+
+    const events = await prisma.appointmentEvent.findMany({
+      where: { appointmentId: { in: ids } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    interface EventSummary {
+      bookedBy: string | null;
+      bookedByType: string | null;
+      bookedAt: Date | null;
+      rescheduleCount: number;
+      lastRescheduledBy: string | null;
+      lastRescheduledByType: string | null;
+      lastRescheduledAt: Date | null;
+      previousDate: string | null;
+      previousTime: string | null;
+      previousDoctorName: string | null;
+      cancelledBy: string | null;
+      cancelledByType: string | null;
+      cancelledBySource: string | null;
+      cancelledAt: Date | null;
+      cancelReason: string | null;
+    }
+
+    const blank = (): EventSummary => ({
+      bookedBy: null, bookedByType: null, bookedAt: null,
+      rescheduleCount: 0,
+      lastRescheduledBy: null, lastRescheduledByType: null, lastRescheduledAt: null,
+      previousDate: null, previousTime: null, previousDoctorName: null,
+      cancelledBy: null, cancelledByType: null, cancelledBySource: null,
+      cancelledAt: null, cancelReason: null,
+    });
+
+    const summaries: Record<string, EventSummary> = {};
+
+    // Events arrive oldest-first, so the creation event is the first one seen
+    // and later reschedules/cancels overwrite earlier ones — leaving the most
+    // recent of each in place.
+    for (const e of events) {
+      const key = String(e.appointmentId);
+      const row = summaries[key] ?? (summaries[key] = blank());
+
+      if ((e.eventType === 'BOOKED' || e.eventType === 'CONFIRMED') && row.bookedAt === null) {
+        row.bookedBy = e.actorName;
+        row.bookedByType = e.actorType;
+        row.bookedAt = e.createdAt;
+      }
+
+      if (e.eventType === 'RESCHEDULED') {
+        row.rescheduleCount++;
+        row.lastRescheduledBy = e.actorName;
+        row.lastRescheduledByType = e.actorType;
+        row.lastRescheduledAt = e.createdAt;
+        row.previousDate = e.fromDate;
+        row.previousTime = e.fromTime;
+        row.previousDoctorName = e.fromDoctorName;
+      }
+
+      if (e.eventType === 'CANCELLED') {
+        row.cancelledBy = e.actorName;
+        row.cancelledByType = e.actorType;
+        row.cancelledBySource = e.source;
+        row.cancelledAt = e.createdAt;
+        row.cancelReason = e.reason;
+      }
+    }
+
+    res.status(200).json({ summaries });
+  } catch (error) {
+    console.error('[appointment-event-summary] fetch failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };

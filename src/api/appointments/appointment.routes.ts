@@ -35,15 +35,25 @@ import {
     getAppointmentById,
     getCheckedInAppointmentsByDateRange,
     broadcastConsultationStart,
-    consultationSummary
+    consultationSummary,
+    sendVisitSummary,
+    getAppointmentHistory,
+    getAppointmentEventReport,
+    getAppointmentEventSummary
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
+import { optionalAuth } from '../../middleware/optional-auth';
 
 const router = Router();
 router.get('/updates', registerForUpdates);
 router.post('/notify-consultation-start', broadcastConsultationStart);
-router.post('/', createAppointment);
-router.post('/new', createNewAppointment);
+// Both stay public — anonymous website booking must keep working. optionalAuth
+// only decodes a token when one is sent (the admin panel always does), so a
+// staff booking is attributed to that user in the lifecycle trail instead of
+// being recorded as "unknown". It never rejects a request.
+router.post('/', optionalAuth, createAppointment);
+router.post('/new', optionalAuth, createNewAppointment);
+router.post('/send-visit-summary', authenticateToken, sendVisitSummary);
 router.put('/bulk-updates-accept', bulkUpdateAccepted);
 router.get('/', authenticateToken, getAppointments);
 router.put('/bulk-cancel', authenticateToken, bulkUpdateCancel)
@@ -86,6 +96,10 @@ router.put('/:id/checkin', authenticateToken, checkInAppointment);
 router.put('/:id/waitingTime', updateExtraWaitingTime);
 router.get('/notifications', getAllNotifications);
 router.delete('/notifications/:id', deleteNotification);
+// Lifecycle trail. All must stay ABOVE the catch-all '/:appointmentId'.
+router.post('/event-summary', authenticateToken, getAppointmentEventSummary);
+router.get('/reschedule-report', authenticateToken, getAppointmentEventReport);
+router.get('/:id/history', authenticateToken, getAppointmentHistory);
 router.get('/:appointmentId', authenticateToken, getAppointmentById);
 
 

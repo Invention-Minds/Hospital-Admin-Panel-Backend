@@ -1,5 +1,10 @@
 import prisma from '../../service/prisma-client';
 import { createHmisAuditLog } from '../hmis-sync/hmis-audit';
+import {
+  recordAppointmentEventSystem,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
 
 /**
  * Follow-up Appointment Automation Service (Sprint 4a Phase 1c).
@@ -222,6 +227,19 @@ export const createFollowUpAppointment = async (
         isfollowup: true,
         userId: responsibleUserId,                  // MRD attribution — propagated from discharge.
       },
+    });
+
+    // Lifecycle trail — mirrors the writeAudit call below, but on the
+    // appointment's own timeline so the history endpoint shows where the
+    // appointment came from.
+    await recordAppointmentEventSystem({
+      appointmentId: appointment.id,
+      eventType: 'BOOKED',
+      to: slotSnapshot(appointment),
+      subject: subjectSnapshot(appointment),
+      source: 'followup-automation',
+      reason: customReason || getFollowUpReason(admission.department, discharge.finalDiagnosis),
+      payload: { dischargeId, admissionId, responsibleUserId },
     });
 
     await writeAudit('appointment_auto_created', 'success', {

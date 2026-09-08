@@ -8,6 +8,11 @@ import cron from 'node-cron';
 import { sendServiceWhatsappMessage } from '../whatsapp/whatsapp.controller';
 import { updateEstimation } from '../whatsapp/whatsapp.controller';
 import axios from 'axios';
+import {
+  recordAppointmentEvent,
+  slotSnapshot,
+  subjectSnapshot,
+} from '../../service/appointment-event';
 
 const repository = new ServiceRepository();
 import { PrismaClient } from '@prisma/client';
@@ -1016,6 +1021,17 @@ export const individualComplete = async (req: Request, res: Response) => {
         await prisma.appointment.update({
           where: { id: appt.id },
           data: { status: 'cancelled' },
+        });
+        // Lifecycle trail — cancelled as a side effect of closing the parent
+        // service, not by anyone deciding to cancel this appointment.
+        await recordAppointmentEvent(req, {
+          appointmentId: appt.id,
+          eventType: 'CANCELLED',
+          from: slotSnapshot(appt),
+          to: { ...slotSnapshot(appt), status: 'cancelled' },
+          subject: subjectSnapshot(appt),
+          source: 'service-close',
+          reason: `Parent service ${appointment.id} marked completed; patient never checked out`,
         });
         const name = appt.prefix + ' ' + appt.patientName;
         // ===== GoBuzz (patient_cancel_message) =====
