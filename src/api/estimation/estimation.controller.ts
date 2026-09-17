@@ -1273,7 +1273,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         const writeStream = fs.createWriteStream(tempFilePath);
         doc.pipe(writeStream);
 
-        const backgroundImagePath = path.join(__dirname, '../../assets/JMRH Estimation Form.png');
+        // JMRH letterhead (header band ends ~82pt, address footer starts ~804pt).
+        const backgroundImagePath = path.join(__dirname, '../../assets/JMRH Letterhead.jpg');
         const poppinsFontPath = path.join(__dirname, '../../assets/Poppins-Regular.ttf');
         const poppinsMedium = path.join(__dirname, '../../assets/Poppins-Medium.ttf');
         const poppinsSemiBold = path.join(__dirname, '../../assets/Poppins-SemiBold.ttf')
@@ -1282,6 +1283,10 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
         doc.registerFont("PoppinsMedium", poppinsMedium);
         //         doc.registerFont("Poppins-Medium", poppinsMedium);
         doc.registerFont("PoppinsSemiBold", poppinsSemiBold)
+        // Where content resumes on a continuation page â€” just below the
+        // letterhead's header band (~82pt). Page 1 keeps its own fixed layout.
+        const CONTINUATION_TOP = 100;
+
         function addBackground(doc: any) {
             doc.image(backgroundImagePath, 0, 0, { width: 595, height: 842 });
             doc.y = 170; // Ensure text starts below header
@@ -1293,7 +1298,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                 doc.addPage();
                 addBackground(doc);
                 addCreatedAtFooter(doc);
-                doc.y = 80;
+                doc.y = CONTINUATION_TOP;
             }
         }
         function addCreatedAtFooter(doc: any) {
@@ -1306,7 +1311,8 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
             const text = `EST Created at: ${createdAt}`;
             const x = doc.page.width - 150;
-            const y = doc.page.height - 30; // âœ… Safely away from margin
+            // Above the letterhead's address/phone band, which starts ~804pt.
+            const y = doc.page.height - 56;
 
             // Use text with { continued: false, lineBreak: false } to avoid page break
             doc.save(); // Save current graphic state
@@ -1837,7 +1843,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
                 doc.addPage();
                 addBackground(doc);
                 addCreatedAtFooter(doc);
-                currentY = 80; // Reset Y for new page
+                currentY = CONTINUATION_TOP; // Reset Y for new page
             }
 
             for (let j = 0; j < itemsPerRow; j++) {
@@ -1957,7 +1963,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         if (dynamicY + requiredSpace > pageHeightThreshold) {
             doc.addPage();
-            dynamicY = 80; // Reset top padding for new page
+            dynamicY = CONTINUATION_TOP; // Reset top padding for new page
         }
 
         // Draw content with perfect alignment and spacing
@@ -1983,7 +1989,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         if (dynamicY + requiredSpace > pageHeightThreshold) {
             doc.addPage();
-            dynamicY = 80; // Reset top padding for new page
+            dynamicY = CONTINUATION_TOP; // Reset top padding for new page
         }
         const formattedDate = estimatedDate
             ? new Date(estimatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -1999,7 +2005,7 @@ export const generateEstimationPDF = async (req: Request, res: Response) => {
 
         if (dynamicY + requiredSpace > pageHeightThreshold) {
             doc.addPage();
-            dynamicY = 80; // Reset top padding for new page
+            dynamicY = CONTINUATION_TOP; // Reset top padding for new page
         }
         // Ensure space for cost details
         // checkPageSpace(doc, 50);
@@ -2066,7 +2072,7 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
         // // Check if there's enough space before adding the note
         if (dynamicY + 150 > doc.page.height - 100) {
             doc.addPage();
-            dynamicY = 80; // Reset Y position for new page
+            dynamicY = CONTINUATION_TOP; // Reset Y position for new page
         }
 
         // Add "Note" title with proper margins
@@ -2083,7 +2089,8 @@ Additional treatments may be suggested by the doctor, depending on the patientâ€
         // Ensure there's space before the signature section
         if (dynamicY + 150 > doc.page.height - 100) {
             doc.addPage();
-            dynamicY = 50; // Reset Y position for new page
+            // The declaration is drawn at dynamicY + 20, so it lands on CONTINUATION_TOP.
+            dynamicY = CONTINUATION_TOP - 20; // Reset Y position for new page
         }
         const startYAxisDec = dynamicY + 20;
         const declarationText = `I confirm that the admission details were explained to me clearly in a language I understand. I have understood the information and consent to proceed with admission and treatment as per hospital norms.`

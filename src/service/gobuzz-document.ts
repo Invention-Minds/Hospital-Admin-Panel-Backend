@@ -66,7 +66,11 @@ export async function uploadMediaToGoBuzz(filePath: string): Promise<string> {
 }
 
 /** Send a GoBuzz template message with a document header (uploaded media) plus
- *  optional body text params. Returns the raw axios response. */
+ *  optional body text params. Returns the raw axios response.
+ *
+ *  `bodyParamNames` — for templates approved with NAMED variables
+ *  ({{patient_name}} rather than {{1}}): one name per body param, same order.
+ *  Omit for positional templates. */
 export async function sendDocumentTemplate(opts: {
   to: string;
   templateName: string;
@@ -74,6 +78,7 @@ export async function sendDocumentTemplate(opts: {
   mediaId: string;
   filename: string;
   bodyParams?: (string | number)[];
+  bodyParamNames?: string[];
 }): Promise<any> {
   const baseUrl = process.env.GOBUZZ_API_BASE || 'https://api.app.gobuzzmarketing.com/v3';
   const phoneNumberId = process.env.GOBUZZ_PHONE_NUMBER_ID || '1051938688012992';
@@ -88,9 +93,19 @@ export async function sendDocumentTemplate(opts: {
     },
   ];
   if (opts.bodyParams && opts.bodyParams.length) {
+    const names = opts.bodyParamNames;
+    if (names && names.length !== opts.bodyParams.length) {
+      throw new Error(
+        `Template ${opts.templateName}: ${opts.bodyParams.length} body values but ${names.length} parameter names`,
+      );
+    }
     components.push({
       type: 'body',
-      parameters: opts.bodyParams.map((t) => ({ type: 'text', text: String(t) })),
+      parameters: opts.bodyParams.map((t, i) => ({
+        type: 'text',
+        ...(names ? { parameter_name: names[i] } : {}),
+        text: String(t),
+      })),
     });
   }
 

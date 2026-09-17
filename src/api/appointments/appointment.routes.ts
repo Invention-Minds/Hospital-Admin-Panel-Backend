@@ -43,6 +43,7 @@ import {
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { optionalAuth } from '../../middleware/optional-auth';
+import { requireClinicalActor } from '../../middleware/audit-guard';
 
 const router = Router();
 router.get('/updates', registerForUpdates);
@@ -53,7 +54,9 @@ router.post('/notify-consultation-start', broadcastConsultationStart);
 // being recorded as "unknown". It never rejects a request.
 router.post('/', optionalAuth, createAppointment);
 router.post('/new', optionalAuth, createNewAppointment);
-router.post('/send-visit-summary', authenticateToken, sendVisitSummary);
+// Sends a clinical document to the patient — needs an identified actor for the
+// audit row that records every send.
+router.post('/send-visit-summary', authenticateToken, requireClinicalActor, sendVisitSummary);
 router.put('/bulk-updates-accept', bulkUpdateAccepted);
 router.get('/', authenticateToken, getAppointments);
 router.put('/bulk-cancel', authenticateToken, bulkUpdateCancel)

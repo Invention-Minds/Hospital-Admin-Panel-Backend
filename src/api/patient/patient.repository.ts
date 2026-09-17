@@ -160,4 +160,35 @@ export class PatientRepository {
   async getAllPatients() {
     return this.prisma.patientDetails.findMany();
   }
+
+  /**
+   * As-you-type PRN lookup: patients whose PRN contains `digits` anywhere,
+   * best matches first — exact, then starts-with, then contains; shorter and
+   * lower PRNs first within each group.
+   *
+   * PRN is an Int column, so "contains" can't be a Prisma filter without raw
+   * SQL. Instead read only the prn column (served from its unique index, so it
+   * stays fast as the table grows), match in memory, then load the few winners.
+   * No cache — a patient registered a second ago is found immediately.
+   */
+  async searchByPrn(digits: string, limit: number) {
+    const rows = await this.prisma.patientDetails.findMany({ select: { prn: true } });
+
+    const rank = (prn: string) => (prn === digits ? 0 : prn.startsWith(digits) ? 1 : 2);
+    const winners = rows
+      .map((r) => String(r.prn))
+      .filter((prn) => prn.includes(digits))
+      .sort((a, b) => rank(a) - rank(b) || a.length - b.length || Number(a) - Number(b))
+      .slice(0, limit)
+      .map(Number);
+    if (!winners.length) return [];
+
+    const patients = await this.prisma.patientDetails.findMany({
+      where: { prn: { in: winners } },
+      // Only what the booking form fills in.
+      select: { prn: true, name: true, mobileNo: true, age: true, gender: true, email: true },
+    });
+    const position = new Map(winners.map((prn, i) => [prn, i]));
+    return patients.sort((a, b) => position.get(a.prn)! - position.get(b.prn)!);
+  }
 }

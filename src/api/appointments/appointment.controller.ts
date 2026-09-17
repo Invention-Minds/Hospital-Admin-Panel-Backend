@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import { getRecipientPhones } from '../../service/notification-recipients';
 import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
@@ -11,7 +12,6 @@ import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '..
 import { sendConfirmedSMS } from '../sms/sms.controller';
 import { saveBufferToStorage } from '../../service/local-file-store';
 import { uploadMediaToGoBuzz, sendDocumentTemplate, formatGoBuzzPhone } from '../../service/gobuzz-document';
-import { getSentCount, recordSent } from '../../service/visit-summary.store';
 import { notifyAppointmentConfirmed, notifyAppointmentCancelled } from '../../service/whatsapp-notify.service';
 import {
   recordAppointmentEvent,
@@ -1005,7 +1005,20 @@ export const scheduleCompletion = async (req: Request, res: Response): Promise<v
 // Controller function to handle the check-in action
 export const checkInAppointment = async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { username } = req.body;
+  const { username, prnNumber: rawPrn } = req.body;
+
+  // PRN entered in the check-in popup because the appointment was booked
+  // without one. Only sent in that case — see appointment-confirm.component.
+  let capturedPrn: number | null = null;
+  if (rawPrn !== undefined && rawPrn !== null && String(rawPrn).trim() !== '') {
+    const parsed = Number(String(rawPrn).trim());
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      res.status(400).json({ error: 'prnNumber must be a positive whole number' });
+      return;
+    }
+    capturedPrn = parsed;
+  }
+
   const usEasternTime = moment.tz("America/New_York");
 
   console.log(id, username)
@@ -1030,12 +1043,39 @@ export const checkInAppointment = async (req: Request, res: Response) => {
     // before this endpoint fires by the updateAppointment call from the popup.
     const isPaidType = (appointment.type ?? '').toLowerCase() === 'paid';
 
+    // PRN captured at check-in → correct the booking's name/age/gender from
+    // the registered patient record. Done here rather than in the popup
+    // because the UI PUTs the whole appointment object just before calling
+    // /checkin; an earlier sync would be overwritten by that stale copy.
+    // Blank values on the patient record never replace booking data. An
+    // unknown PRN is still saved, and check-in proceeds unchanged.
+    const demographics: { patientName?: string; age?: string; gender?: string } = {};
+    let patientRecordFound = false;
+    if (capturedPrn !== null) {
+      const patient = await prisma.patientDetails.findUnique({
+        where: { prn: capturedPrn },
+        select: { name: true, age: true, gender: true },
+      });
+      if (patient) {
+        patientRecordFound = true;
+        const nonBlank = (value: string | null) => (value && value.trim() ? value.trim() : undefined);
+        const name = nonBlank(patient.name);
+        const age = nonBlank(patient.age);
+        const gender = nonBlank(patient.gender);
+        if (name) demographics.patientName = name;
+        if (age) demographics.age = age;
+        if (gender) demographics.gender = gender;
+      }
+    }
+
     const updatedAppointment = await prisma.appointment.update({
       where: { id: Number(id) },
       data: {
         checkedIn: true,
         checkedInTime: new Date(),
         checkedInBy: username,
+        ...(capturedPrn !== null && { prnNumber: capturedPrn }),
+        ...demographics,
         ...(isPaidType && !appointment.paidAt && {
           paymentStatus: 'paid',
           paidAt: new Date(),
@@ -1051,7 +1091,20 @@ export const checkInAppointment = async (req: Request, res: Response) => {
       source: 'admin-panel',
       // `username` comes from the body on this endpoint (front-desk operator),
       // which can differ from the JWT holder — keep it.
-      payload: { checkedInBy: username, paymentStamped: isPaidType && !appointment.paidAt },
+      payload: {
+        checkedInBy: username,
+        paymentStamped: isPaidType && !appointment.paidAt,
+        ...(capturedPrn !== null && {
+          prnCapturedAtCheckin: capturedPrn,
+          patientRecordFound,
+          demographicsBefore: {
+            patientName: appointment.patientName,
+            age: appointment.age,
+            gender: appointment.gender,
+          },
+          demographicsApplied: demographics,
+        }),
+      },
     });
     notifyDoctor(appointment.doctorId);
     res.status(200).json({ message: 'Appointment checked in successfully', updatedAppointment });
@@ -1061,22 +1114,87 @@ export const checkInAppointment = async (req: Request, res: Response) => {
   }
 };
 
+// AppAuditLog key for a confirmed visit-summary WhatsApp send. The rows are the
+// send history: their count per appointment picks the initial vs "updated"
+// template, and they persist across redeploys with no migration.
+const VISIT_SUMMARY_SEND_AUDIT = {
+  module: 'opd-visit-summary',
+  action: 'WHATSAPP_SENT',
+  entityType: 'Appointment',
+} as const;
+
 // Send an OPD visit-summary PDF (built on the frontend with pdfmake) to the
 // patient over WhatsApp — mirrors the estimation flow: save the PDF bytes to
 // local storage, upload them to GoBuzz to get a media id, then send a template
 // message with a document header. The frontend passes the finished PDF as base64.
+//
+// The caller only chooses WHICH visit. The recipient's number and name come
+// from the appointment and the registered patient record, so a clinical
+// document can't be pointed at an arbitrary phone.
 export const sendVisitSummary = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { pdfBase64, patientPhoneNumber, patientName, filename, prn, date } = req.body;
-    if (!pdfBase64 || !patientPhoneNumber) {
-      res.status(400).json({ error: 'pdfBase64 and patientPhoneNumber are required' });
+    const { appointmentId: rawAppointmentId, pdfBase64 } = req.body;
+    const appointmentId = Number(rawAppointmentId);
+    if (!Number.isSafeInteger(appointmentId) || appointmentId <= 0 || !pdfBase64) {
+      res.status(400).json({ error: 'appointmentId and pdfBase64 are required' });
       return;
     }
 
-    // First send for this patient+visit-date uses the initial template; any later
-    // send that same day (updated notes) uses the "updated" template. Tracked in a
-    // small JSON store so no DB migration is needed.
-    const alreadySent = getSentCount(String(prn ?? ''), String(date ?? '')) > 0;
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      select: { id: true, prnNumber: true, patientName: true, phoneNumber: true, date: true, doctorName: true },
+    });
+    if (!appointment) {
+      res.status(404).json({ error: 'Appointment not found' });
+      return;
+    }
+    if (!appointment.prnNumber) {
+      res.status(400).json({ error: 'This appointment has no PRN — capture it before sending the visit summary' });
+      return;
+    }
+
+    const patient = await prisma.patientDetails.findUnique({
+      where: { prn: appointment.prnNumber },
+      select: { name: true, mobileNo: true },
+    });
+    const nonBlank = (value: string | null | undefined) => (value && value.trim() ? value.trim() : undefined);
+    // Registered number first — the booking number may be whoever phoned in.
+    const patientPhoneNumber = nonBlank(patient?.mobileNo) ?? nonBlank(appointment.phoneNumber);
+    const patientName = nonBlank(patient?.name) ?? nonBlank(appointment.patientName) ?? 'Patient';
+    if (!patientPhoneNumber) {
+      res.status(400).json({ error: 'No phone number on record for this patient' });
+      return;
+    }
+
+    // "…consultation note from {{Doctor_Name}}" — the doctor who wrote this
+    // visit's note, else the booked consultant. Sent exactly as stored: the
+    // template carries no "Dr." of its own.
+    const assessment = await prisma.oPDAssessment.findFirst({
+      where: { appointmentId: appointment.id },
+      orderBy: { id: 'desc' },
+      select: { doctorName: true, consultant: true },
+    });
+    const doctorName =
+      nonBlank(assessment?.doctorName) ?? nonBlank(assessment?.consultant) ?? nonBlank(appointment.doctorName);
+    if (!doctorName) {
+      res.status(400).json({ error: 'No doctor name on record for this visit' });
+      return;
+    }
+
+    // Accept a raw base64 string or a data: URI.
+    const base64 = String(pdfBase64).replace(/^data:application\/pdf;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+    if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      res.status(400).json({ error: 'pdfBase64 is not a PDF document' });
+      return;
+    }
+
+    // First send for this visit uses the initial template; any later send
+    // (updated notes) uses the "updated" template.
+    const previousSends = await prisma.appAuditLog.count({
+      where: { ...VISIT_SUMMARY_SEND_AUDIT, entityId: String(appointment.id) },
+    });
+    const alreadySent = previousSends > 0;
 
     const firstTemplate = process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME;
     const updateTemplate = process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_NAME;
@@ -1092,29 +1210,54 @@ export const sendVisitSummary = async (req: Request, res: Response): Promise<voi
       ? (process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_LANG || process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en')
       : (process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en');
 
-    // Accept a raw base64 string or a data: URI.
-    const base64 = String(pdfBase64).replace(/^data:application\/pdf;base64,/, '');
-    const buffer = Buffer.from(base64, 'base64');
-    const safeName = (filename && String(filename)) || `VisitSummary_${Date.now()}.pdf`;
-
-    const stored = saveBufferToStorage(buffer, 'opd-summaries', safeName);
+    // /files is served publicly (express.static + nginx alias), so the stored
+    // copy gets an unguessable name — `VisitSummary_<prn>_<date>.pdf` would let
+    // anyone enumerate patients' clinical notes. The patient sees the plain name.
+    const displayName = `VisitSummary_${appointment.date}.pdf`;
+    const storedName = `VisitSummary_${appointment.prnNumber}_${appointment.date}_${crypto.randomUUID()}.pdf`;
+    const stored = saveBufferToStorage(buffer, 'opd-summaries', storedName);
     const mediaId = await uploadMediaToGoBuzz(stored.filePath);
 
+    // Body variables in template order: patient name, doctor name. Sent
+    // positionally unless GOBUZZ_OPD_SUMMARY_PARAM_NAMES lists the template's
+    // named variables (e.g. "Patient_Name,Doctor_Name").
+    const bodyParamNames = (process.env.GOBUZZ_OPD_SUMMARY_PARAM_NAMES || '')
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
     const response = await sendDocumentTemplate({
       to: formatGoBuzzPhone(patientPhoneNumber),
       templateName,
       templateLang,
       mediaId,
-      filename: stored.fileName,
-      bodyParams: [patientName || 'Patient'],
+      filename: displayName,
+      bodyParams: [patientName, doctorName],
+      ...(bodyParamNames.length ? { bodyParamNames } : {}),
     });
 
-    if (response.data?.messages?.[0]?.id) {
-      // Only record on a confirmed send, so a failed first attempt still counts as "first".
-      recordSent(String(prn ?? ''), String(date ?? ''));
+    const messageId = response.data?.messages?.[0]?.id;
+    if (messageId) {
+      const sentTo = `******${patientPhoneNumber.replace(/\D/g, '').slice(-4)}`;
+      // Only recorded on a confirmed send, so a failed first attempt still
+      // counts as "first". auditLog never throws; if the row can't be written
+      // the next send simply reuses the initial template.
+      await auditLog(req, {
+        ...VISIT_SUMMARY_SEND_AUDIT,
+        entityId: appointment.id,
+        payload: {
+          prn: appointment.prnNumber,
+          date: appointment.date,
+          template: alreadySent ? 'updated' : 'initial',
+          templateName,
+          sentTo,
+          messageId,
+          storedFile: stored.relativeUrl,
+        },
+      });
       res.status(200).json({
         success: true,
         template: alreadySent ? 'updated' : 'initial',
+        sentTo,
         url: stored.relativeUrl,
         whatsapp: response.data,
       });
@@ -1123,6 +1266,16 @@ export const sendVisitSummary = async (req: Request, res: Response): Promise<voi
       res.status(502).json({ success: false, error: 'GoBuzz WhatsApp send failed', whatsapp: response.data });
     }
   } catch (error) {
+    // GoBuzz rejections arrive as axios errors whose useful part (e.g. a
+    // template-variable mismatch) is in the response body, not the message.
+    const gobuzz = (error as any)?.response?.data;
+    if (gobuzz) {
+      console.error('send-visit-summary GoBuzz rejection:', JSON.stringify(gobuzz));
+      const reason =
+        gobuzz?.error?.error_data?.details || gobuzz?.error?.message || gobuzz?.message || JSON.stringify(gobuzz);
+      res.status(502).json({ error: `WhatsApp send rejected: ${String(reason).slice(0, 300)}`, whatsapp: gobuzz });
+      return;
+    }
     console.error('send-visit-summary error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }

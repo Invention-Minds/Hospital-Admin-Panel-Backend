@@ -50,6 +50,8 @@ router.post('/get-details-by-prn', authenticateToken, (req, res) => patientContr
 router.post('/import-csv', authenticateToken, uploadCsv, importPatientsCsv);
 // Phase 9.23 — unified patient timeline. MUST be before /:prn and /:id.
 router.get('/timeline/:prn', authenticateToken, getPatientTimeline);
+// As-you-type PRN search for booking forms — must come before /:id catch-all.
+router.get('/search', authenticateToken, (req, res) => patientController.searchPatients(req, res));
 // Phase 1 — duplicate-check by phone, must come before /:id catch-all.
 router.get('/by-phone/:phone', authenticateToken, (req, res) => patientController.getPatientByPhone(req, res));
 router.put('/:prn', authenticateToken, (req, res) => patientController.updatePatientByPRN(req, res));

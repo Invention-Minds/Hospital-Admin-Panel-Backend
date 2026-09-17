@@ -253,6 +253,33 @@ export class PatientController {
     }
   }
 
+  /**
+   * As-you-type PRN search for booking forms: GET /api/patients/search?q=42.
+   * Returns at most `limit` (default 20, max 50) slim patient rows whose PRN
+   * contains the typed digits. Replaces loading the whole table client-side.
+   */
+  async searchPatients(req: Request, res: Response): Promise<void> {
+    try {
+      const q = String(req.query.q ?? '').trim();
+      if (!q) {
+        res.status(200).json([]);
+        return;
+      }
+      if (!/^\d{1,12}$/.test(q)) {
+        res.status(400).json({ message: 'q must be digits (PRN)' });
+        return;
+      }
+      const requested = Number(req.query.limit);
+      const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 50) : 20;
+
+      const patients = await this.patientRepository.searchByPrn(q, limit);
+      res.status(200).json(patients);
+    } catch (error) {
+      console.error('searchPatients failed:', error);
+      res.status(500).json({ message: 'Error searching patients', error });
+    }
+  }
+
   async updatePatient(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
