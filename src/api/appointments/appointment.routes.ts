@@ -39,10 +39,12 @@ import {
     sendVisitSummary,
     getAppointmentHistory,
     getAppointmentEventReport,
-    getAppointmentEventSummary
+    getAppointmentEventSummary,
+    undoCheckIn
 } from './appointment.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { optionalAuth } from '../../middleware/optional-auth';
+import { requireRole } from '../../middleware/require-role';
 import { requireClinicalActor } from '../../middleware/audit-guard';
 
 const router = Router();
@@ -96,6 +98,9 @@ router.put('/:id/lock', authenticateToken, lockAppointment);
 router.put('/:id/unlock', authenticateToken, unlockAppointment);
 router.put('/:id/schedule-completion', scheduleCompletion);
 router.put('/:id/checkin', authenticateToken, checkInAppointment);
+// Correction for a check-in on the wrong appointment. Reception (sub_admin)
+// and admin can both do it; super_admin passes by default. Doctors cannot.
+router.put('/:id/undo-checkin', authenticateToken, requireRole({ roles: ['admin', 'sub_admin'] }), undoCheckIn);
 router.put('/:id/waitingTime', updateExtraWaitingTime);
 router.get('/notifications', getAllNotifications);
 router.delete('/notifications/:id', deleteNotification);

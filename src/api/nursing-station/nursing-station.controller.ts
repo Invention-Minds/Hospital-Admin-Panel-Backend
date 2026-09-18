@@ -22,6 +22,8 @@ interface StationBody {
   type?: string;
   isActive?: boolean;
   wardIds?: string[];
+  /** OPD stations only — which departments this station's nurses cover. */
+  departmentIds?: number[];
 }
 
 // ─── List ────────────────────────────────────────────────────────────────
@@ -34,6 +36,9 @@ export const listStations = async (req: Request, res: Response): Promise<void> =
       include: {
         wardLinks: {
           select: { ward: { select: { id: true, wardName: true, wardCode: true } } },
+        },
+        departmentLinks: {
+          select: { department: { select: { id: true, name: true } } },
         },
         nurseLinks: {
           select: {
@@ -52,8 +57,11 @@ export const listStations = async (req: Request, res: Response): Promise<void> =
       type: s.type,
       isActive: s.isActive,
       wards: s.wardLinks.map((l) => l.ward),
+      departments: s.departmentLinks.map((l) => l.department),
       nurses: s.nurseLinks.map((l) => l.user),
       wardCount: s.wardLinks.length,
+      // 0 on an OPD station means "every department" — see setStationDepartments.
+      departmentCount: s.departmentLinks.length,
       nurseCount: s.nurseLinks.length,
     }));
     res.status(200).json({ data });
@@ -110,6 +118,9 @@ export const getStation = async (req: Request, res: Response): Promise<void> => 
         wardLinks: {
           select: { ward: { select: { id: true, wardName: true, wardCode: true, department: true } } },
         },
+        departmentLinks: {
+          select: { department: { select: { id: true, name: true } } },
+        },
         nurseLinks: {
           select: {
             user: { select: { id: true, username: true, fullName: true, employeeId: true, designation: true } },
@@ -130,6 +141,7 @@ export const getStation = async (req: Request, res: Response): Promise<void> => 
         type: s.type,
         isActive: s.isActive,
         wards: s.wardLinks.map((l) => l.ward),
+        departments: s.departmentLinks.map((l) => l.department),
         nurses: s.nurseLinks.map((l) => l.user),
       },
     });
@@ -163,8 +175,10 @@ export const createStation = async (req: Request, res: Response): Promise<void> 
       res.status(409).json({ message: 'A station with this code already exists' });
       return;
     }
-    // OPD stations don't use wards; ignore any ward selection for them.
+    // An IPD station is scoped by ward, an OPD station by department — ignore
+    // the selection that doesn't apply to the type being created.
     const wardIds = type === 'OPD' ? [] : await validWardIds(body.wardIds);
+    const departmentIds = type === 'OPD' ? await validDepartmentIds(body.departmentIds) : [];
 
     const station = await prisma.$transaction(async (tx) => {
       const created = await tx.nursingStation.create({
@@ -183,6 +197,12 @@ export const createStation = async (req: Request, res: Response): Promise<void> 
           skipDuplicates: true,
         });
       }
+      if (departmentIds.length > 0) {
+        await tx.nursingStationDepartment.createMany({
+          data: departmentIds.map((departmentId) => ({ stationId: created.id, departmentId })),
+          skipDuplicates: true,
+        });
+      }
       return created;
     });
 
@@ -191,7 +211,7 @@ export const createStation = async (req: Request, res: Response): Promise<void> 
       action: 'CREATE',
       entityType: 'NursingStation',
       entityId: station.id,
-      payload: { name: station.name, code: station.code, wardIds },
+      payload: { name: station.name, code: station.code, wardIds, departmentIds },
     });
     res.status(201).json({ data: station });
   } catch (error) {
@@ -386,3 +406,59 @@ async function validWardIds(input: string[] | undefined): Promise<string[]> {
   });
   return wards.map((w) => w.id);
 }
+
+/** Keep only department ids that actually exist; silently drop unknown ids. */
+async function validDepartmentIds(input: number[] | undefined): Promise<number[]> {
+  const ids = Array.from(new Set((input ?? []).map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0)));
+  if (ids.length === 0) return [];
+  const departments = await prisma.department.findMany({
+    where: { id: { in: ids } },
+    select: { id: true },
+  });
+  return departments.map((d) => d.id);
+}
+
+// ─── Set the station's OPD departments (replace the whole set) ─────────────
+//
+// The OPD counterpart to setStationWards. An empty list means "every
+// department" — that is the pre-existing unscoped behaviour, not "no access".
+export const setStationDepartments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const body = req.body as { departmentIds?: number[] };
+    const existing = await prisma.nursingStation.findUnique({
+      where: { id },
+      select: { id: true, type: true },
+    });
+    if (!existing) {
+      res.status(404).json({ message: 'Nursing station not found' });
+      return;
+    }
+    if (existing.type !== 'OPD') {
+      res.status(400).json({ message: 'Departments apply to OPD stations only; use wards for an IPD station' });
+      return;
+    }
+    const departmentIds = await validDepartmentIds(body.departmentIds);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.nursingStationDepartment.deleteMany({ where: { stationId: id } });
+      if (departmentIds.length > 0) {
+        await tx.nursingStationDepartment.createMany({
+          data: departmentIds.map((departmentId) => ({ stationId: id, departmentId })),
+          skipDuplicates: true,
+        });
+      }
+    });
+    await auditLog(req, {
+      module: 'nursing-station',
+      action: 'SET_DEPARTMENTS',
+      entityType: 'NursingStation',
+      entityId: id,
+      payload: { departmentIds },
+    });
+    res.status(200).json({ data: { id, departmentIds } });
+  } catch (error) {
+    console.error('[nursing-station] set departments failed:', error);
+    res.status(500).json({ message: 'Failed to set station departments' });
+  }
+};

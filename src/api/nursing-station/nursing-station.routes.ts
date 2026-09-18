@@ -10,6 +10,7 @@ import {
   updateStation,
   deleteStation,
   setStationWards,
+  setStationDepartments,
   assignNurses,
   unassignNurse,
 } from './nursing-station.controller';
@@ -29,6 +30,8 @@ router.post('/', authenticateToken, manage, createStation);
 router.patch('/:id', authenticateToken, manage, updateStation);
 router.delete('/:id', authenticateToken, manage, deleteStation);
 router.put('/:id/wards', authenticateToken, manage, setStationWards);
+// OPD counterpart — which departments an OPD station's nurses cover.
+router.put('/:id/departments', authenticateToken, manage, setStationDepartments);
 
 router.post('/:id/nurses', authenticateToken, manage, assignNurses);
 router.delete('/:id/nurses/:userId', authenticateToken, manage, unassignNurse);

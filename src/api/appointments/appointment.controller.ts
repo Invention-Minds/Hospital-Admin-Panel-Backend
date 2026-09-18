@@ -20,9 +20,27 @@ import {
   subjectSnapshot,
 } from '../../service/appointment-event';
 import { auditLog } from '../../service/app-audit';
+import { getNurseAllowedDepartments } from '../_shared/nursing-roles';
 
 const prisma = new PrismaClient();
 const templateLang = "en";
+
+// Why a check-in is being reversed. A closed list, not free text: the reason
+// decides what else happens (a cancellation is carried out here rather than
+// left to the operator), and it keeps the trail countable so a pattern of
+// "wrongly marked" hiding real cancellations is visible in the report.
+const UNDO_CHECKIN_REASONS = {
+  wrongly_marked: 'Checked in the wrong patient',
+  cancel: 'Appointment to be cancelled',
+  reschedule: 'Patient needs a different slot or doctor',
+} as const;
+type UndoCheckInReason = keyof typeof UNDO_CHECKIN_REASONS;
+
+// OPD vitals captured by the nursing station. Used to detect a correction to
+// already-recorded readings so the lifecycle trail can log who changed what.
+const VITAL_FIELDS = [
+  'BPs', 'BPd', 'pulse', 'RR', 'temp', 'spo2', 'height', 'weight', 'bloodGroup',
+] as const;
 
 let clients: Response[] = [];
 const resolver = new AppointmentResolver();
@@ -657,6 +675,10 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       rescheduleCount: _rescheduleCount, cancelledBy: _cancelledBy,
       cancelledById: _cancelledById, cancelledAt: _cancelledAt,
       cancelReason: _cancelReason, events: _events,
+      // Vitals attribution is stamped from the JWT below, never from the body —
+      // the nursing screen used to send a typed-in employee id that nothing
+      // verified.
+      arrivedBy: _arrivedBy, arrivedTime: _arrivedTime,
       ...updateData
     } = req.body;
     // Free-text reason the UI may send alongside a cancel/reschedule. Recorded
@@ -676,16 +698,17 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     // move/create cannot interleave with another concurrent update or create.
     // (Race-free fix still needs @@unique([doctorId,date,time]) on BookedSlot — DB change
     // deferred per ops constraint; this transaction narrows the window to near-zero.)
-    // Captured inside the transaction, read after it commits so the lifecycle
-    // trail can record the before/after slot without a second query.
-    let before: Awaited<ReturnType<typeof prisma.appointment.findUnique>> = null;
+    // Set inside the transaction when this PUT is the one that captured vitals.
+    let vitalsRecorded = false;
 
-    const result = await prisma.$transaction(async (tx) => {
+    // The transaction hands back BOTH rows: assigning `existing` to an outer
+    // variable instead would have TypeScript narrow it to `null`, since it
+    // can't see an assignment made inside the callback.
+    const txResult = await prisma.$transaction(async (tx) => {
       const existing = await tx.appointment.findUnique({ where: { id: appointmentId } });
       if (!existing) {
         throw new Error('APPT_NOT_FOUND');
       }
-      before = existing;
 
       const newDoctorId = updateData.doctorId ?? existing.doctorId;
       const newDate = updateData.date ?? existing.date;
@@ -718,6 +741,16 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
         if (conflictingAppt) {
           throw new Error('SLOT_TAKEN');
         }
+      }
+
+      // Vitals capture (nursing screen) stamps who recorded them, from the JWT.
+      // Only on the TRANSITION to arrived: the UI PUTs the whole appointment on
+      // every edit, so without this guard a later save would re-attribute the
+      // vitals to whoever edited last.
+      vitalsRecorded = updateData.arrived === true && existing.arrived !== true;
+      if (vitalsRecorded) {
+        updateData.arrivedBy = req.user?.username ?? null;
+        updateData.arrivedTime = new Date();
       }
 
       const updated = await tx.appointment.update({
@@ -759,8 +792,58 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
         }
       }
 
-      return updated;
+      return { updated, existing };
     });
+
+    const result = txResult.updated;
+    const before = txResult.existing;
+
+    // A correction to already-captured vitals. arrivedBy/arrivedTime keep
+    // pointing at the ORIGINAL capture (they're stripped from the body and only
+    // stamped on the transition), so this event is the only record of who
+    // changed what — without it a mis-keyed reading could be rewritten silently.
+    if (!vitalsRecorded && before && result && before.arrived === true) {
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      for (const field of VITAL_FIELDS) {
+        const from = (before as Record<string, any>)[field];
+        const to = (result as Record<string, any>)[field];
+        if (from !== to) changes[field] = { from, to };
+      }
+      if (Object.keys(changes).length > 0) {
+        await recordAppointmentEvent(req, {
+          appointmentId: result.id,
+          eventType: 'VITALS_UPDATED',
+          to: slotSnapshot(result),
+          subject: subjectSnapshot(result),
+          source: 'nursing-station',
+          payload: {
+            changes,
+            originallyRecordedBy: before.arrivedBy,
+            originallyRecordedAt: before.arrivedTime,
+          },
+        });
+      }
+    }
+
+    // Vitals capture gets its own row so the history answers "who took the
+    // vitals and when" — the readings go in the payload rather than the
+    // slot columns, which describe scheduling moves.
+    if (vitalsRecorded && result) {
+      await recordAppointmentEvent(req, {
+        appointmentId: result.id,
+        eventType: 'VITALS_RECORDED',
+        to: slotSnapshot(result),
+        subject: subjectSnapshot(result),
+        source: 'nursing-station',
+        payload: {
+          BPs: result.BPs, BPd: result.BPd, pulse: result.pulse, RR: result.RR,
+          temp: result.temp, spo2: result.spo2,
+          height: result.height, weight: result.weight,
+          bloodGroup: result.bloodGroup,
+          blockId: result.blockId,
+        },
+      });
+    }
 
     // Lifecycle trail. A generic PUT carries every field the popup holds, so
     // only slot/status moves are recorded — vitals, waiting time and payment
@@ -1094,6 +1177,10 @@ export const checkInAppointment = async (req: Request, res: Response) => {
       payload: {
         checkedInBy: username,
         paymentStamped: isPaidType && !appointment.paidAt,
+        // The visit type is picked in the check-in popup and saved by the PUT
+        // that runs just before this endpoint, so the row already carries it
+        // here. Recorded so undo-checkin can clear what this flow entered.
+        typeAtCheckin: appointment.type,
         ...(capturedPrn !== null && {
           prnCapturedAtCheckin: capturedPrn,
           patientRecordFound,
@@ -1717,10 +1804,18 @@ export const todayCheckedInAppointments = async (req: Request, res: Response): P
       res.status(400).json({ error: 'Date is required' });
       return;
     }
+
+    // OPD vitals scoping. This is the enforcement point, not the UI: the
+    // /nursing/:blockId route carries no authGuard, so a client-side filter
+    // would be decorative. null → caller sees everything (super_admin,
+    // superintendent, non-nurse, or a station with no department links).
+    const allowedDepartments = await getNurseAllowedDepartments(req.user?.id);
+
     const appointments = await prisma.appointment.findMany({
       where: {
         date: date as string,
         checkedIn: true,
+        ...(allowedDepartments && { department: { in: allowedDepartments } }),
       },
     });
     res.status(200).json(appointments);
@@ -1891,6 +1986,8 @@ export const completedAppointments = async (req: Request, res: Response):Promise
         checkedInBy: true,
         checkedInTime: true,
         rescheduleCount: true,
+        arrivedBy: true,
+        arrivedTime: true,
         user: {
           select: {
             username: true,
@@ -2593,6 +2690,240 @@ export const getAppointmentEventSummary = async (req: Request, res: Response): P
     res.status(200).json({ summaries });
   } catch (error) {
     console.error('[appointment-event-summary] fetch failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
+  }
+};
+
+/**
+ * PUT /appointments/:id/undo-checkin
+ * Body: { reason: string }
+ *
+ * Correction path for "reception checked in the wrong patient".
+ *
+ * Check-in is not just a flag — it also writes prnNumber and overwrites
+ * patientName/age/gender from the PRN's patient record, and stamps the payment
+ * fields for a 'paid' visit. Flipping `checkedIn` back on its own would leave
+ * the wrong patient's demographics permanently on this appointment, so this
+ * restores from the CHECKED_IN trail event instead of guessing.
+ *
+ * Deliberately does NOT check in the correct appointment as part of the same
+ * call: the normal /checkin endpoint owns PRN capture and the demographics
+ * sync, and duplicating half of it here would drift. Undo, then check in the
+ * right row through the usual popup.
+ */
+export const undoCheckIn = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentId = Number(req.params.id);
+    if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+      res.status(400).json({ error: 'Invalid appointment id' });
+      return;
+    }
+
+    // A fixed reason code rather than free text: the front desk was picking
+    // whatever wording avoided the most work, which made the trail useless for
+    // spotting a check-in being undone to dodge a cancellation.
+    const { reasonCode, note } = req.body as { reasonCode?: string; note?: string };
+    if (!reasonCode || !(reasonCode in UNDO_CHECKIN_REASONS)) {
+      res.status(400).json({
+        error: `reasonCode must be one of: ${Object.keys(UNDO_CHECKIN_REASONS).join(', ')}`,
+      });
+      return;
+    }
+    const reasonLabel = UNDO_CHECKIN_REASONS[reasonCode as UndoCheckInReason];
+    const trimmedNote = typeof note === 'string' ? note.trim() : '';
+    const trimmedReason = trimmedNote ? `${reasonLabel} — ${trimmedNote}` : reasonLabel;
+    const alsoCancel = reasonCode === 'cancel';
+
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment) {
+      res.status(404).json({ error: 'Appointment not found' });
+      return;
+    }
+    if (!appointment.checkedIn) {
+      res.status(409).json({ error: 'This appointment is not checked in' });
+      return;
+    }
+    // Once the visit has moved on, a silent reversal is worse than none —
+    // the front desk should cancel/close the consultation instead.
+    if (appointment.checkedOut || appointment.endConsultation) {
+      res.status(409).json({
+        error: 'The consultation has already been completed for this appointment, so the check-in can no longer be undone.',
+      });
+      return;
+    }
+
+    const [assessmentCount, ophthalmologyCount] = await Promise.all([
+      prisma.oPDAssessment.count({ where: { appointmentId } }),
+      prisma.ophthalmologyPrescription.count({ where: { appointmentId } }),
+    ]);
+    if (assessmentCount > 0 || ophthalmologyCount > 0) {
+      res.status(409).json({
+        error: 'The doctor has already recorded clinical notes for this visit, so the check-in can no longer be undone.',
+      });
+      return;
+    }
+
+    // The check-in event holds what was overwritten. Absent (a check-in from
+    // before the trail existed, or the HMIS payment webhook) we still clear the
+    // flag, but we can't restore demographics — the response says so.
+    const lastCheckIn = await prisma.appointmentEvent.findFirst({
+      where: { appointmentId, eventType: 'CHECKED_IN' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let payload: Record<string, any> | null = null;
+    if (lastCheckIn?.payload) {
+      try {
+        payload = JSON.parse(lastCheckIn.payload);
+      } catch {
+        payload = null;
+      }
+    }
+
+    const restore: Record<string, unknown> = {
+      checkedIn: false,
+      checkedInTime: null,
+      checkedInBy: null,
+    };
+
+    const demographicsBefore = payload?.demographicsBefore as
+      | { patientName?: string | null; age?: string | null; gender?: string | null }
+      | undefined;
+    let demographicsRestored = false;
+    if (demographicsBefore) {
+      restore.patientName = demographicsBefore.patientName ?? appointment.patientName;
+      restore.age = demographicsBefore.age ?? null;
+      restore.gender = demographicsBefore.gender ?? null;
+      demographicsRestored = true;
+    }
+
+    // The PRN and the visit type are both entered in the check-in popup and
+    // saved by the PUT that runs immediately before /checkin, so the row
+    // already carries them by the time check-in reads it — there is no real
+    // "previous" value to put back. Reversing the check-in clears what that
+    // flow entered. The old values live on in the reversal event below.
+    //
+    // The PRN popup only opens when the booking has none (see prnCheck in
+    // appointment-confirm), so a captured PRN is always one typed at check-in.
+    let prnCleared = false;
+    if (payload?.prnCapturedAtCheckin != null && appointment.prnNumber === payload.prnCapturedAtCheckin) {
+      restore.prnNumber = null;
+      prnCleared = true;
+    }
+
+    // Older events predate typeAtCheckin; clearing is still the right call
+    // because the popup sets the type on every check-in.
+    let typeCleared = false;
+    const typeAtCheckin = payload?.typeAtCheckin;
+    if (appointment.type && (typeAtCheckin === undefined || typeAtCheckin === appointment.type)) {
+      restore.type = null;
+      typeCleared = true;
+    }
+
+    // Money is never silently reversed. Only unwind the automatic stamp, and
+    // only while no receipt has been recorded against it.
+    let paymentReverted = false;
+    let paymentWarning: string | null = null;
+    if (payload?.paymentStamped === true) {
+      if (appointment.receiptNo) {
+        paymentWarning =
+          'Payment was left as paid because a receipt number is recorded against it. Please correct it in billing.';
+      } else {
+        restore.paymentStatus = 'unpaid';
+        restore.paidAt = null;
+        restore.paymentSource = null;
+        paymentReverted = true;
+      }
+    }
+
+    // Cancelling is carried out here, in the same transaction as the undo —
+    // never left to a follow-up click. Otherwise an operator could reverse the
+    // check-in, skip the cancellation, and leave a confirmed appointment
+    // sitting in the queue with nobody expecting it.
+    if (alsoCancel) {
+      restore.status = 'cancelled';
+      restore.cancelledBy = req.user?.username ?? 'unknown';
+      restore.cancelledById = req.user?.id ?? null;
+      restore.cancelledAt = new Date();
+      restore.cancelReason = trimmedReason;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: restore,
+      });
+      if (alsoCancel) {
+        // Free the slot so it can be re-booked, same as the cancel button does.
+        await tx.bookedSlot.deleteMany({
+          where: { doctorId: appointment.doctorId, date: appointment.date, time: appointment.time },
+        });
+      }
+      return row;
+    });
+
+    if (alsoCancel) {
+      await recordAppointmentEvent(req, {
+        appointmentId,
+        eventType: 'CANCELLED',
+        from: slotSnapshot(appointment),
+        to: { ...slotSnapshot(updated), status: 'cancelled' },
+        subject: subjectSnapshot(updated),
+        source: 'undo-checkin',
+        reason: trimmedReason,
+      });
+    }
+
+    await recordAppointmentEvent(req, {
+      appointmentId,
+      eventType: 'CHECKIN_REVERSED',
+      from: { ...slotSnapshot(appointment), status: appointment.status },
+      to: slotSnapshot(updated),
+      subject: subjectSnapshot(updated),
+      source: 'admin-panel',
+      reason: trimmedReason,
+      payload: {
+        reasonCode,
+        note: trimmedNote || null,
+        appointmentCancelled: alsoCancel,
+        originalCheckedInBy: appointment.checkedInBy,
+        originalCheckedInTime: appointment.checkedInTime,
+        demographicsRestored,
+        prnCleared,
+        prnClearedValue: prnCleared ? appointment.prnNumber : null,
+        typeCleared,
+        typeClearedValue: typeCleared ? appointment.type : null,
+        paymentReverted,
+        paymentWarning,
+      },
+    });
+
+    // Drop the patient off the doctor's queue / TV.
+    notifyDoctor(appointment.doctorId);
+
+    res.status(200).json({
+      message: alsoCancel ? 'Check-in reversed and appointment cancelled' : 'Check-in reversed',
+      updatedAppointment: updated,
+      reasonCode,
+      appointmentCancelled: alsoCancel,
+      // The reschedule path still reverses the check-in — the operator is told
+      // where to go next rather than being blocked here.
+      guidance: reasonCode === 'reschedule'
+        ? 'Check-in reversed. If the doctor has not started the consultation, reschedule this appointment from Confirmed Appointments. If the consultation has already started, ask the doctor to raise a transfer appointment.'
+        : null,
+      demographicsRestored,
+      prnCleared,
+      typeCleared,
+      paymentReverted,
+      // Only warn when there is genuinely no check-in event to restore from.
+      // An event with no `demographicsBefore` is the normal case — check-in
+      // only rewrites demographics when it captured a missing PRN, so there
+      // was nothing to put back and the reversal is clean.
+      warning: paymentWarning ?? (lastCheckIn ? null :
+        'No check-in record was found for this appointment, so patient name, age and gender could not be restored. Please verify them.'),
+    });
+  } catch (error) {
+    console.error('[undo-checkin] failed:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
   }
 };

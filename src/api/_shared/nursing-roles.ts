@@ -176,3 +176,61 @@ export const isIpdScopedNurse = async (
   });
   return count > 0;
 };
+
+/**
+ * OPD department scoping — the OPD counterpart to `getNurseAllowedWardIds`.
+ *
+ * An IPD station is scoped by ward; an OPD station is scoped by department, so
+ * a vitals nurse only works the appointments for the departments their
+ * station(s) cover.
+ *
+ * Returns `null` when the caller should see everything:
+ *   • super_admin / Nursing Superintendent  — unrestricted by design
+ *   • anyone who isn't a bedside nurse      — this helper imposes nurse scoping only
+ *   • a nurse whose OPD stations have NO department links — unscoped, which is
+ *     the behaviour that predates this join, so applying the migration doesn't
+ *     silently empty an existing nurse's worklist before links are configured
+ *
+ * Otherwise returns the department NAMES to filter on: `Appointment.department`
+ * stores a name, while the links are held by `Department.id`, so the ids are
+ * resolved here. A nurse mapped to several OPD stations gets the union.
+ */
+export const getNurseAllowedDepartments = async (
+  userId: number | undefined,
+): Promise<string[] | null> => {
+  if (typeof userId !== 'number' || Number.isNaN(userId)) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, subAdminType: true },
+  });
+  if (!user) return null;
+
+  if (user.role === 'super_admin' || isNursingSuperintendent(user.subAdminType)) return null;
+  if (!isNurse(user.subAdminType)) return null;
+
+  const assignments = await prisma.nurseStationAssignment.findMany({
+    where: { userId, station: { type: 'OPD', isActive: true } },
+    select: {
+      station: {
+        select: { departmentLinks: { select: { departmentId: true } } },
+      },
+    },
+  });
+
+  // No OPD station at all → not an OPD vitals nurse; leave them unscoped here
+  // and let the station/capability checks decide what they can reach.
+  if (assignments.length === 0) return null;
+
+  const departmentIds = new Set<number>();
+  for (const a of assignments) {
+    for (const link of a.station?.departmentLinks ?? []) departmentIds.add(link.departmentId);
+  }
+  if (departmentIds.size === 0) return null; // station configured for every department
+
+  const departments = await prisma.department.findMany({
+    where: { id: { in: Array.from(departmentIds) } },
+    select: { name: true },
+  });
+  return departments.map((d) => d.name);
+};

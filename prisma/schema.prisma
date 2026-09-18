@@ -27,6 +27,8 @@ model Department {
   // Phase 9.19 — ordered escalation chain for unacknowledged ER referrals.
   escalationSteps EscalationChainStep[]
   ophthalmologyExamOptions OphthalmologyExaminationOption[]
+  // Which OPD nursing stations cover this department (vitals scoping).
+  nursingStationLinks NursingStationDepartment[]
 }
 
 model Doctor {
@@ -5036,11 +5038,32 @@ model NursingStation {
   createdBy   String?
   updatedBy   String?
 
-  wardLinks  NursingStationWard[]
-  nurseLinks NurseStationAssignment[]
+  wardLinks       NursingStationWard[]
+  departmentLinks NursingStationDepartment[]
+  nurseLinks      NurseStationAssignment[]
 
   @@index([code])
   @@index([isActive])
+}
+
+// Join — which OPD departments belong to a station (many-to-many).
+//
+// The OPD counterpart to NursingStationWard: an IPD station is scoped by ward,
+// an OPD station by department, so a vitals nurse only sees the appointments
+// for the departments their station covers. A station with NO department links
+// stays unscoped (sees every OPD appointment) — that is the pre-existing
+// behaviour and keeps working accounts working until links are configured.
+model NursingStationDepartment {
+  id           String         @id @default(uuid())
+  stationId    String
+  station      NursingStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  departmentId Int
+  department   Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now())
+
+  @@unique([stationId, departmentId])
+  @@index([departmentId])
+  @@index([stationId])
 }
 
 // Join — which wards belong to a station (many-to-many).
