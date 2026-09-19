@@ -25,6 +25,20 @@ import { getNurseAllowedDepartments } from '../_shared/nursing-roles';
 const prisma = new PrismaClient();
 const templateLang = "en";
 
+/**
+ * Budget for the appointment transactions.
+ *
+ * Prisma's default interactive-transaction timeout is 5s. These transactions do
+ * five or six sequential queries and the database is remote (cross-region), so
+ * at a few hundred ms per round-trip the default sits right on the edge — a
+ * reschedule would intermittently fail with "Transaction already closed:
+ * Could not perform operation", rolling the whole update back while the
+ * WhatsApp/SMS sends (which run outside the transaction) still went out.
+ *
+ * maxWait is how long to wait for a connection from the pool before starting.
+ */
+const APPOINTMENT_TX_OPTIONS = { timeout: 20000, maxWait: 10000 } as const;
+
 // Why a check-in is being reversed. A closed list, not free text: the reason
 // decides what else happens (a cancellation is carried out here rather than
 // left to the operator), and it keeps the trail countable so a pattern of
@@ -301,12 +315,13 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
               time,
               complete: false,
               createdBy: String(userId ?? ''),
+              appointmentId: created.id,
             }
           });
         }
 
         return created;
-      }));
+      }, APPOINTMENT_TX_OPTIONS));
     } catch (txErr) {
       const msg = txErr instanceof Error ? txErr.message : 'An error occurred';
       if (msg === 'SLOT_TAKEN') {
@@ -326,7 +341,7 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
     // it's row 1 either way, so "this was the creation" isn't lost.
     await recordAppointmentEvent(req, {
       appointmentId: newAppointment.id,
-      eventType: newAppointment.status === 'confirmed' ? 'CONFIRMED' : 'BOOKED',
+      eventType: newAppointment.status === 'confirmed' ? 'CONFIRMED' : 'REQUESTED',
       to: slotSnapshot(newAppointment),
       subject: subjectSnapshot(newAppointment),
       source: requestVia ? String(requestVia) : 'admin-panel',
@@ -494,17 +509,10 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
             throw new Error('SLOT_TAKEN');
           }
 
-          await tx.bookedSlot.create({
-            data: {
-              doctorId,
-              date,
-              time,
-              complete: false,
-              createdBy: String(userId ?? ''),
-            }
-          });
-
-          return await tx.appointment.create({
+          // Appointment first so the slot can record which one owns it; both
+          // writes are in the same transaction, so the ordering is invisible
+          // to anyone else and the SLOT_TAKEN guards above still apply.
+          const createdAppointment = await tx.appointment.create({
             data: {
               patientName,
               phoneNumber,
@@ -529,11 +537,24 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
               patientType
             }
           });
-        }));
+
+          await tx.bookedSlot.create({
+            data: {
+              doctorId,
+              date,
+              time,
+              complete: false,
+              createdBy: String(userId ?? ''),
+              appointmentId: createdAppointment.id,
+            }
+          });
+
+          return createdAppointment;
+        }, APPOINTMENT_TX_OPTIONS));
 
         await recordAppointmentEvent(req, {
           appointmentId: created.id,
-          eventType: created.status === 'confirmed' ? 'CONFIRMED' : 'BOOKED',
+          eventType: created.status === 'confirmed' ? 'CONFIRMED' : 'REQUESTED',
           to: slotSnapshot(created),
           subject: subjectSnapshot(created),
           source: 'walk-in',
@@ -764,21 +785,39 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
       // (created e.g. by a separate booked-slots POST from the UI), we want it gone so
       // the old time becomes available again.
       if (slotChanged && existing.doctorId && existing.date && existing.time) {
+        // Release only THIS appointment's hold on the old slot. Matching on
+        // (doctorId, date, time) alone used to delete every row at that time,
+        // so rescheduling one patient freed another patient's confirmed slot.
+        // `appointmentId: null` covers rows written before the column existed
+        // and reservations the UI made before the appointment claimed them.
         const cleared = await tx.bookedSlot.deleteMany({
           where: {
             doctorId: existing.doctorId,
             date: existing.date,
             time: existing.time,
+            OR: [{ appointmentId: appointmentId }, { appointmentId: null }],
           }
         });
         console.log(`Booked slot deleteMany on reschedule: Doctor ${existing.doctorId}, ${existing.date} ${existing.time} — cleared ${cleared.count} row(s)`);
       }
       if (finalStatus === 'confirmed' && updated.doctorId && updated.date && updated.time) {
-        // Ensure a BookedSlot exists at the new (or unchanged) slot.
-        const existingNewSlot = await tx.bookedSlot.findFirst({
-          where: { doctorId: updated.doctorId, date: updated.date, time: updated.time }
+        // Ensure a BookedSlot exists at the new (or unchanged) slot, in two
+        // queries rather than three — this runs inside the transaction, and on
+        // a remote database every round-trip counts against the timeout.
+        //
+        // The updateMany both CLAIMS an ownerless reservation (the reschedule
+        // UI creates one via POST /doctors/booked-slots before this PUT) and
+        // no-ops harmlessly when this appointment already owns the row. A row
+        // owned by a DIFFERENT appointment is left alone and reports 0, but the
+        // conflicting-appointment check above has already rejected that case.
+        const claimed = await tx.bookedSlot.updateMany({
+          where: {
+            doctorId: updated.doctorId, date: updated.date, time: updated.time,
+            OR: [{ appointmentId: updated.id }, { appointmentId: null }],
+          },
+          data: { appointmentId: updated.id },
         });
-        if (!existingNewSlot) {
+        if (claimed.count === 0) {
           await tx.bookedSlot.create({
             data: {
               doctorId: updated.doctorId,
@@ -786,14 +825,17 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
               time: updated.time,
               complete: false,
               createdBy: String(userId ?? ''),
+              appointmentId: updated.id,
             }
           });
           console.log(`Booked slot created on confirmation: Doctor ${updated.doctorId}, ${updated.date} ${updated.time}`);
+        } else {
+          console.log(`Booked slot held by appointment ${updated.id}: Doctor ${updated.doctorId}, ${updated.date} ${updated.time} (${claimed.count} row(s))`);
         }
       }
 
       return { updated, existing };
-    });
+    }, APPOINTMENT_TX_OPTIONS);
 
     const result = txResult.updated;
     const before = txResult.existing;
@@ -1626,9 +1668,13 @@ export const bulkUpdateCancel = async (req: Request, res: Response): Promise<voi
 
       const { doctorId, date, time, phoneNumber, patientName, doctor, prefix } = existingAppointment;
 
-      // **Cancel the booked slot**
+      // **Cancel the booked slot** — this appointment's hold only, so a bulk
+      // cancel can't free a slot another patient still holds.
       await prisma.bookedSlot.deleteMany({
-        where: { doctorId, date, time },
+        where: {
+          doctorId, date, time,
+          OR: [{ appointmentId: appointment.id }, { appointmentId: null }],
+        },
       });
 
       console.log(`Slot cancelled for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
@@ -2662,7 +2708,11 @@ export const getAppointmentEventSummary = async (req: Request, res: Response): P
       const key = String(e.appointmentId);
       const row = summaries[key] ?? (summaries[key] = blank());
 
-      if ((e.eventType === 'BOOKED' || e.eventType === 'CONFIRMED') && row.bookedAt === null) {
+      // 'BOOKED' is the pre-rename spelling, still present on older rows.
+      if (
+        (e.eventType === 'REQUESTED' || e.eventType === 'BOOKED' || e.eventType === 'CONFIRMED') &&
+        row.bookedAt === null
+      ) {
         row.bookedBy = e.actorName;
         row.bookedByType = e.actorType;
         row.bookedAt = e.createdAt;
@@ -2855,12 +2905,16 @@ export const undoCheckIn = async (req: Request, res: Response): Promise<void> =>
       });
       if (alsoCancel) {
         // Free the slot so it can be re-booked, same as the cancel button does.
+        // Scoped to this appointment's own hold — see updateAppointment.
         await tx.bookedSlot.deleteMany({
-          where: { doctorId: appointment.doctorId, date: appointment.date, time: appointment.time },
+          where: {
+            doctorId: appointment.doctorId, date: appointment.date, time: appointment.time,
+            OR: [{ appointmentId: appointmentId }, { appointmentId: null }],
+          },
         });
       }
       return row;
-    });
+    }, APPOINTMENT_TX_OPTIONS);
 
     if (alsoCancel) {
       await recordAppointmentEvent(req, {

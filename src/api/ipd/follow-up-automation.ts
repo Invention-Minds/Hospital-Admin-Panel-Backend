@@ -234,7 +234,8 @@ export const createFollowUpAppointment = async (
     // appointment came from.
     await recordAppointmentEventSystem({
       appointmentId: appointment.id,
-      eventType: 'BOOKED',
+      // Created as 'pending' — a request for the scheduling desk, not a booking.
+      eventType: 'REQUESTED',
       to: slotSnapshot(appointment),
       subject: subjectSnapshot(appointment),
       source: 'followup-automation',

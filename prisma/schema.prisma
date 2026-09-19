@@ -318,9 +318,20 @@ model BookedSlot {
   complete  Boolean?  @default(false)
   createdBy String?
   updatedAt DateTime? @updatedAt
+  // Which appointment holds this slot. Without it a slot could only be matched
+  // on (doctorId, date, time), so releasing one appointment's slot deleted
+  // every row at that time — including another patient's, freeing a slot that
+  // was still confirmed.
+  //
+  // Nullable on purpose: rows written before this column existed have no owner,
+  // and POST /doctors/booked-slots reserves a slot before the appointment is
+  // updated, so it starts ownerless and is claimed by the following PUT. Delete
+  // paths therefore match "my appointmentId OR null".
+  appointmentId Int?
   doctor    Doctor?   @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "BookedSlot_doctorId_fkey")
+  @@index([appointmentId])
 }
 
 model UnavailableSlot {

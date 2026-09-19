@@ -39,6 +39,9 @@ import prisma from './prisma-client';
  */
 
 export type AppointmentEventType =
+  /** Created but not yet confirmed — online, WhatsApp bot, follow-up automation. */
+  | 'REQUESTED'
+  /** Pre-rename spelling of REQUESTED. Kept for rows written before the change. */
   | 'BOOKED'
   | 'CONFIRMED'
   | 'RESCHEDULED'

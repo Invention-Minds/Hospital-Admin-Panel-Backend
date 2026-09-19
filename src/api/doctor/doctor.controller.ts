@@ -1028,9 +1028,22 @@ export const getBookedSlots = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+/**
+ * Release a booked slot.
+ *
+ * `appointmentId` is optional but should be sent whenever the caller is
+ * releasing a slot on behalf of one appointment — the reschedule flow does
+ * exactly that with the OLD slot. Without it the delete can only match on
+ * (doctorId, date, time), which removes EVERY hold at that time, including
+ * another patient's confirmed slot; that is what left a confirmed appointment
+ * showing as an available slot in the grid.
+ *
+ * Omitting it keeps the original behaviour for genuine "free this slot
+ * outright" admin use.
+ */
 export const cancelBookedSlot = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { doctorId, date, time } = req.body;
+    const { doctorId, date, time, appointmentId } = req.body;
     console.log("Doctor ID:", req.body);
 
     // Validate the request parameters
@@ -1039,14 +1052,16 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
       return;
     }
 
+    const ownedBy = Number(appointmentId);
+    const scoped = Number.isInteger(ownedBy) && ownedBy > 0;
+    // `appointmentId: null` covers rows written before the column existed and
+    // reservations not yet claimed by their appointment.
+    const where = scoped
+      ? { doctorId, date, time, OR: [{ appointmentId: ownedBy }, { appointmentId: null }] }
+      : { doctorId, date, time };
+
     // Check if the slot is already canceled
-    const existingBooking = await prisma.bookedSlot.findMany({
-      where: {
-        doctorId,
-        date,
-        time,
-      },
-    });
+    const existingBooking = await prisma.bookedSlot.findMany({ where });
 
     if (!existingBooking) {
       res.status(404).json({ error: 'No booking found for the selected slot' });
@@ -1054,13 +1069,9 @@ export const cancelBookedSlot = async (req: Request, res: Response): Promise<voi
     }
     console.log("Existing Booking:", existingBooking);
     // Delete the booked slot from the BookedSlot table
-    await prisma.bookedSlot.deleteMany({
-      where: {
-        doctorId,
-        date,
-        time // Deleting by the unique ID of the booked slot
-      },
-    });
+    const removed = await prisma.bookedSlot.deleteMany({ where });
+    console.log(`cancel-booked-slot removed ${removed.count} row(s)` +
+      (scoped ? ` scoped to appointment ${ownedBy}` : ' (unscoped — no appointmentId sent)'));
 
     res.status(200).json({ message: 'Slot successfully canceled and is now available for rebooking.' });
   } catch (error) {

@@ -1912,9 +1912,13 @@ export const cancelExpiredAppointments = async () => {
   const cancelPromises = filteredAppointments.map(async (appointment) => {
     const { id, doctorId, date, time, phoneNumber, patientName, doctor } = appointment;
 
-    // **Step 2: Delete Booked Slot**
+    // **Step 2: Delete Booked Slot** — scoped to this appointment's own hold,
+    // so an auto-cancel can't free a slot another patient still holds.
     await prisma.bookedSlot.deleteMany({
-      where: { doctorId, date, time },
+      where: {
+        doctorId, date, time,
+        OR: [{ appointmentId: id }, { appointmentId: null }],
+      },
     });
     console.log(`🗑️ Deleted booked slot for Doctor ID: ${doctorId}, Date: ${date}, Time: ${time}`);
 

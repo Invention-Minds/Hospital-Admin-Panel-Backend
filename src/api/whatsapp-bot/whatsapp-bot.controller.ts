@@ -588,7 +588,8 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
     // WhatsApp and no staff member touched it.
     await recordAppointmentEventSystem({
       appointmentId: appt.id,
-      eventType: 'BOOKED',
+      // The bot creates as 'pending' — the teleconsultation team confirms it.
+      eventType: 'REQUESTED',
       to: slotSnapshot(appt),
       subject: subjectSnapshot(appt),
       actorType: 'bot',

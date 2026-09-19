@@ -1014,8 +1014,13 @@ export const individualComplete = async (req: Request, res: Response) => {
       });
 
       for (const appt of relatedAppointments) {
+        // Scoped to this appointment's own hold, so closing a service can't
+        // free a slot another patient still holds at the same time.
         await prisma.bookedSlot.deleteMany({
-          where: { doctorId: appt.doctorId, date: appt.date, time: appt.time },
+          where: {
+            doctorId: appt.doctorId, date: appt.date, time: appt.time,
+            OR: [{ appointmentId: appt.id }, { appointmentId: null }],
+          },
         });
 
         await prisma.appointment.update({
