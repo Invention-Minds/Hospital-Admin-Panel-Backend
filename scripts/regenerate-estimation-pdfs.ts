@@ -74,6 +74,15 @@ const ESTIMATION_DIR = path.join(STORAGE_DIR, 'estimations');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * The generator calls .toUpperCase() directly on several name fields, which are
+ * nullable in the database on older rows (gender, attender, approver…). The
+ * live app always posts strings, so this only bites when replaying old records.
+ * Empty string reproduces what the app renders for a blank field ("N/A"),
+ * whereas null throws.
+ */
+const text = (v: string | null | undefined) => v ?? '';
+
 /** The controller's own naming rule — keep in step with estimation.controller.ts. */
 const fileNameFor = (estimationId: string) =>
   `Estimation_${estimationId
@@ -84,8 +93,27 @@ const fileNameFor = (estimationId: string) =>
 /**
  * Calls the real handler with stand-in req/res objects and resolves once it
  * answers. Rejects on timeout so one bad row can't stall the whole run.
+ *
+ * The controller answers a bare {"error":"Internal Server Error"} and logs the
+ * real cause with console.error, so capture that while it runs — otherwise a
+ * failed row tells you nothing about why it failed.
  */
-const runGenerator = (body: any, timeoutMs = 120_000) =>
+const runGenerator = async (body: any, timeoutMs = 120_000) => {
+  const logged: string[] = [];
+  const realError = console.error;
+  console.error = (...args: any[]) => {
+    logged.push(args.map((a) => (a instanceof Error ? a.stack ?? a.message : String(a))).join(' '));
+  };
+
+  try {
+    const result = await runGeneratorInner(body, timeoutMs);
+    return { ...result, logged };
+  } finally {
+    console.error = realError;
+  }
+};
+
+const runGeneratorInner = (body: any, timeoutMs: number) =>
   new Promise<{ status: number; body: any }>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -178,10 +206,10 @@ async function main() {
       exclusions: row.exclusions.map((e) => e.description),
       updateFields: {
         patientUHID: row.patientUHID,
-        patientName: row.patientName,
+        patientName: text(row.patientName),
         ageOfPatient: row.ageOfPatient,
-        genderOfPatient: row.genderOfPatient,
-        consultantName: row.consultantName,
+        genderOfPatient: text(row.genderOfPatient),
+        consultantName: text(row.consultantName),
         estimationPreferredDate: row.estimationPreferredDate,
         estimationName: row.estimationName,
         icuStay: row.icuStay,
@@ -194,15 +222,15 @@ async function main() {
         patientSign: row.patientSign,
         employeeSign: row.employeeSign,
         approverSign: row.approverSign,
-        approverName: row.approverName,
-        employeeName: row.employeeName,
+        approverName: text(row.approverName),
+        employeeName: text(row.employeeName),
         patientPhoneNumber: row.patientPhoneNumber,
-        signatureOf: row.signatureOf,
+        signatureOf: text(row.signatureOf),
         implants: row.implants,
         procedures: row.procedures,
         instrumentals: row.instrumentals,
         surgeryPackage: row.surgeryPackage,
-        attenderName: row.attenderName,
+        attenderName: text(row.attenderName),
         patientRemarks: row.patientRemarks,
         multipleEstimationCost: row.multipleEstimationCost,
         costForGeneral: row.costForGeneral,
@@ -219,7 +247,11 @@ async function main() {
 
     try {
       const result = await runGenerator(body);
-      if (result.status >= 400) throw new Error(JSON.stringify(result.body));
+      if (result.status >= 400) {
+        // Prefer the cause the controller logged over its generic response body.
+        const cause = result.logged.find((l) => l.includes('Error generating PDF')) ?? result.logged[0];
+        throw new Error(cause ? cause.split('\n').slice(0, 2).join(' ') : JSON.stringify(result.body));
+      }
       if (!fs.existsSync(filePath)) {
         throw new Error(`generator reported success but ${fileName} is not on disk`);
       }
