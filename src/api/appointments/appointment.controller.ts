@@ -1877,15 +1877,21 @@ export const todayCheckedInAppointments = async (req: Request, res: Response): P
 // has any started or finished consultation today, with the patient breakdown.
 export const consultationSummary = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { date } = req.query;
-    if (!date) {
+    const { date, fromDate, toDate } = req.query as {
+      date?: string; fromDate?: string; toDate?: string;
+    };
+
+    // `date` is the single-day form the dashboard tile uses; fromDate/toDate is the range form.
+    const from = fromDate || date;
+    const to = toDate || fromDate || date;
+    if (!from || !to) {
       res.status(400).json({ error: 'Date is required' });
       return;
     }
 
     const appointments = await prisma.appointment.findMany({
       where: {
-        date: date as string,
+        date: { gte: from, lte: to },
         checkedIn: true,
       },
       include: { doctor: true },
@@ -1920,7 +1926,25 @@ export const consultationSummary = async (req: Request, res: Response): Promise<
         startedAt: a.checkedOutTime,
         finishedAt: a.endConsultationTime,
         state: finished ? 'Finished' : (started ? 'Ongoing' : 'Waiting'),
+        // Appointment detail — carried for the Excel export / range view.
+        date: a.date,
+        department: a.department || '',
+        doctorName: a.doctor?.name || a.doctorName || 'Unknown',
+        phoneNumber: a.phoneNumber || '',
+        age: a.age ?? '',
+        gender: a.gender ?? '',
+        type: a.type ?? '',
+        requestVia: a.requestVia ?? '',
+        checkedInTime: a.checkedInTime,
+        waitingTime: a.waitingTime ?? '',
       });
+    }
+
+    // Within a doctor, keep the appointments in chronological order for the export.
+    for (const entry of byDoctor.values()) {
+      entry.patients.sort((p: any, q: any) =>
+        p.date === q.date ? String(p.time).localeCompare(String(q.time)) : String(p.date).localeCompare(String(q.date))
+      );
     }
 
     const summary = Array.from(byDoctor.values())
