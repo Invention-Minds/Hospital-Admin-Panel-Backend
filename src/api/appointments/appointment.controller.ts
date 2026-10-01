@@ -10,6 +10,7 @@ import moment from 'moment-timezone';
 import axios from 'axios';
 import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import { sendConfirmedSMS } from '../sms/sms.controller';
+import { getArrivalsInRange } from '../attendance/attendance.store';
 import { saveBufferToStorage } from '../../service/local-file-store';
 import { uploadMediaToGoBuzz, sendDocumentTemplate, formatGoBuzzPhone } from '../../service/gobuzz-document';
 import { notifyAppointmentConfirmed, notifyAppointmentCancelled } from '../../service/whatsapp-notify.service';
@@ -1945,6 +1946,23 @@ export const consultationSummary = async (req: Request, res: Response): Promise<
       entry.patients.sort((p: any, q: any) =>
         p.date === q.date ? String(p.time).localeCompare(String(q.time)) : String(p.date).localeCompare(String(q.date))
       );
+    }
+
+    // When each doctor was marked arrived, so the analytics can show the gap
+    // between turning up and starting the first consultation. One query for
+    // the whole range rather than one per doctor per day.
+    const arrivals = await getArrivalsInRange(from, to);
+    for (const entry of byDoctor.values()) {
+      // Earliest arrival in the range, and the per-day times for the detail rows.
+      const perDay: { date: string; arrivedAt: Date }[] = [];
+      for (const p of entry.patients) {
+        const at = entry.doctorId !== null ? arrivals.get(`${entry.doctorId}|${p.date}`) : undefined;
+        p.doctorArrivedAt = at ?? null;
+        if (at && !perDay.some((d) => d.date === p.date)) perDay.push({ date: p.date, arrivedAt: at });
+      }
+      perDay.sort((a, b) => a.arrivedAt.getTime() - b.arrivedAt.getTime());
+      entry.arrivedAt = perDay.length ? perDay[0].arrivedAt : null;
+      entry.arrivalsByDate = perDay;
     }
 
     const summary = Array.from(byDoctor.values())
