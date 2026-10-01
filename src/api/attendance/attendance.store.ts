@@ -1,66 +1,100 @@
-import fs from 'fs';
-import path from 'path';
 import moment from 'moment-timezone';
+import prisma from '../../service/prisma-client';
 
-// Daily doctor-arrival state, persisted as a small JSON file (no DB / no Prisma).
-// Shape: { "YYYY-MM-DD": number[] }  -> arrived doctor ids per IST day.
-// Stored relative to the process working directory so it survives `npm run build`
-// (which cleans dist/) and process restarts.
-const STORE_PATH = path.join(process.cwd(), 'doctor-attendance.json');
+// Daily doctor-arrival state, held in DoctorAttendance (one row per doctor per
+// day). This used to be a JSON file beside the process, which recorded only a
+// list of ids for the current day and pruned every other day on each write —
+// no arrival time, and no history. The consultation analytics need both.
 
-type AttendanceMap = { [date: string]: number[] };
+type AttendanceEntry = { doctorId: number; arrivedAt: Date };
 
 // Date key in Asia/Kolkata so it matches updateDoctorAssignments' todayDate.
 export const todayKey = (): string => moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
 
-const readStore = (): AttendanceMap => {
+/** Ids of the doctors marked arrived on a day. Defaults to today. */
+export const getArrivedIds = async (date: string = todayKey()): Promise<number[]> => {
   try {
-    if (!fs.existsSync(STORE_PATH)) return {};
-    const raw = fs.readFileSync(STORE_PATH, 'utf-8');
-    return raw ? (JSON.parse(raw) as AttendanceMap) : {};
+    const rows = await prisma.doctorAttendance.findMany({
+      where: { date },
+      select: { doctorId: true },
+    });
+    return rows.map((r) => r.doctorId);
   } catch (error) {
-    console.error('Error reading attendance store:', error);
-    return {};
+    // Attendance only gates the TV display; a read failure must not take the
+    // OPD down with it.
+    console.error('Error reading doctor attendance:', error);
+    return [];
   }
 };
 
-const writeStore = (data: AttendanceMap): void => {
+/** Back-compat alias — the TV assignment job still asks for "today". */
+export const getTodayIds = (): Promise<number[]> => getArrivedIds();
+
+/** Arrival times for a day, for callers that need when and not just who. */
+export const getArrivals = async (date: string = todayKey()): Promise<AttendanceEntry[]> => {
   try {
-    fs.writeFileSync(STORE_PATH, JSON.stringify(data), 'utf-8');
+    const rows = await prisma.doctorAttendance.findMany({
+      where: { date },
+      select: { doctorId: true, arrivedAt: true },
+    });
+    return rows;
   } catch (error) {
-    console.error('Error writing attendance store:', error);
+    console.error('Error reading doctor attendance:', error);
+    return [];
   }
 };
 
-// Drop every date except today so the file doesn't grow unbounded.
-const pruneOldDates = (data: AttendanceMap): AttendanceMap => {
-  const today = todayKey();
-  if (Object.keys(data).length === 1 && data[today]) return data;
-  return data[today] ? { [today]: data[today] } : {};
+/**
+ * Arrival times for a date range, keyed "doctorId|date". Used by the
+ * consultation summary, which reports across a range and would otherwise need
+ * one query per day.
+ */
+export const getArrivalsInRange = async (
+  from: string,
+  to: string,
+): Promise<Map<string, Date>> => {
+  const map = new Map<string, Date>();
+  try {
+    const rows = await prisma.doctorAttendance.findMany({
+      where: { date: { gte: from, lte: to } },
+      select: { doctorId: true, date: true, arrivedAt: true },
+    });
+    for (const r of rows) map.set(`${r.doctorId}|${r.date}`, r.arrivedAt);
+  } catch (error) {
+    console.error('Error reading doctor attendance range:', error);
+  }
+  return map;
 };
 
-export const getTodayIds = (): number[] => {
-  const data = readStore();
-  return data[todayKey()] ?? [];
+export const isArrivedToday = async (doctorId: number): Promise<boolean> =>
+  (await getArrivedIds()).includes(doctorId);
+
+/**
+ * Mark a doctor arrived today. Idempotent: re-marking keeps the original
+ * arrival time rather than pushing it later, because the first mark is the one
+ * that reflects when they actually turned up.
+ */
+export const markArrived = async (doctorId: number, markedBy?: string): Promise<number[]> => {
+  const date = todayKey();
+  try {
+    await prisma.doctorAttendance.upsert({
+      where: { doctorId_date: { doctorId, date } },
+      create: { doctorId, date, arrivedAt: new Date(), markedBy: markedBy ?? null },
+      update: {}, // already arrived — leave arrivedAt alone
+    });
+  } catch (error) {
+    console.error('Error marking doctor arrived:', error);
+  }
+  return getArrivedIds(date);
 };
 
-export const isArrivedToday = (doctorId: number): boolean =>
-  getTodayIds().includes(doctorId);
-
-export const markArrived = (doctorId: number): number[] => {
-  const data = pruneOldDates(readStore());
-  const today = todayKey();
-  const ids = new Set(data[today] ?? []);
-  ids.add(doctorId);
-  data[today] = Array.from(ids);
-  writeStore(data);
-  return data[today];
-};
-
-export const unmarkArrived = (doctorId: number): number[] => {
-  const data = pruneOldDates(readStore());
-  const today = todayKey();
-  data[today] = (data[today] ?? []).filter((id) => id !== doctorId);
-  writeStore(data);
-  return data[today];
+/** Undo a mark made in error. Deletes the row, so no arrival time survives. */
+export const unmarkArrived = async (doctorId: number): Promise<number[]> => {
+  const date = todayKey();
+  try {
+    await prisma.doctorAttendance.deleteMany({ where: { doctorId, date } });
+  } catch (error) {
+    console.error('Error unmarking doctor arrived:', error);
+  }
+  return getArrivedIds(date);
 };

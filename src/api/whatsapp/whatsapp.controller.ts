@@ -2577,8 +2577,8 @@ async function runDoctorAssignments() {
   const todayDay = now.format("ddd").toLowerCase(); // Example: 'mon', 'tue'
   const currentTimeMinutes = now.hours() * 60 + now.minutes(); // Convert current time to minutes
 
-  // Doctors marked "came" today (no DB) — only these are eligible for the TV.
-  const arrivedToday = getTodayIds();
+  // Doctors marked "came" today — only these are eligible for the TV.
+  const arrivedToday = await getTodayIds();
 
   try {
     // ✅ Fetch all doctors with availability & unavailable dates

@@ -1,11 +1,18 @@
 import { Request, Response } from 'express';
-import { getTodayIds, markArrived, unmarkArrived, todayKey } from './attendance.store';
+import { getArrivedIds, getArrivals, markArrived, unmarkArrived, todayKey } from './attendance.store';
 import { notifyDoctorAttendance } from '../appointments/appointment.controller';
 import { updateDoctorAssignments } from '../whatsapp/whatsapp.controller';
 
-// GET /api/attendance/today -> doctors marked "came" for the current IST day.
-export const getTodayAttendance = (req: Request, res: Response): void => {
-  res.status(200).json({ date: todayKey(), doctorIds: getTodayIds() });
+// GET /api/attendance/today?date=YYYY-MM-DD -> doctors marked "came" that day.
+// `doctorIds` is kept for the existing callers; `arrivals` carries the times.
+export const getTodayAttendance = async (req: Request, res: Response): Promise<void> => {
+  const date = (req.query?.date as string) || todayKey();
+  const arrivals = await getArrivals(date);
+  res.status(200).json({
+    date,
+    doctorIds: arrivals.map((a) => a.doctorId),
+    arrivals,
+  });
 };
 
 // POST /api/attendance/mark { doctorId }
@@ -16,7 +23,8 @@ export const markDoctorArrived = async (req: Request, res: Response): Promise<vo
     return;
   }
 
-  const doctorIds = markArrived(doctorId);
+  const markedBy = (req as any)?.user?.username ?? (req.body?.markedBy as string) ?? undefined;
+  const doctorIds = await markArrived(doctorId, markedBy);
 
   // Respond immediately — the arrival is already saved. Rebuild the channel
   // assignments and nudge the TVs in the background so the admin UI isn't
@@ -36,7 +44,7 @@ export const unmarkDoctorArrived = async (req: Request, res: Response): Promise<
     return;
   }
 
-  const doctorIds = unmarkArrived(doctorId);
+  const doctorIds = await unmarkArrived(doctorId);
 
   // Respond immediately; rebuild assignments + notify TVs in the background.
   res.status(200).json({ date: todayKey(), doctorIds });

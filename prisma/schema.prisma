@@ -17,67 +17,102 @@ model Hospital {
 }
 
 model Department {
-  id         Int          @id @default(autoincrement())
-  name       String       @unique
-  createdAt  DateTime?    @default(now())
-  updatedAt  DateTime?    @updatedAt
-  userId     Int?
-  doctors    Doctor[]
-  Estimation Estimation[]
+  id                       Int                              @id @default(autoincrement())
+  name                     String                           @unique
+  createdAt                DateTime?                        @default(now())
+  updatedAt                DateTime?                        @updatedAt
+  userId                   Int?
+  doctors                  Doctor[]
+  Estimation               Estimation[]
   // Phase 9.19 — ordered escalation chain for unacknowledged ER referrals.
-  escalationSteps EscalationChainStep[]
+  escalationSteps          EscalationChainStep[]
   ophthalmologyExamOptions OphthalmologyExaminationOption[]
   // Which OPD nursing stations cover this department (vitals scoping).
-  nursingStationLinks NursingStationDepartment[]
+  nursingStationLinks      NursingStationDepartment[]
 }
 
 model Doctor {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  email              String
-  phone_number       String
-  qualification      String
-  departmentId       Int
-  departmentName     String               @default("Unknown")
-  userId             Int?
-  availableFrom      String?
-  slotDuration       Int?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  doctorType         String?              @default("Regular")
-  roomNo             String?
-  kmcNumber          String?
-  createdBy          String?
-  updatedBy          String?
-  isActive           Boolean?             @default(true)
-  signUrl            String?
-  bookedSlots        BookedSlot[]         @relation("DoctorToBookedSlot")
-  Channel            Channel[]
-  department         Department           @relation(fields: [departmentId], references: [id])
-  user               User?                @relation("DoctorUser", fields: [userId], references: [id])
-  DoctorAssignment   DoctorAssignment[]
-  availability       DoctorAvailability[] @relation("DoctorToAvailability")
-  Estimation         Estimation[]
-  extraSlots         ExtraSlot[]          @relation("DoctorToExtraSlot")
-  ExtraSlotCount     ExtraSlotCount[]
-  LeaveDates         LeaveDates[]
-  unavailableDates   UnavailableDates[]   @relation("DoctorToUnavailableDate")
-  unavailableSlots   UnavailableSlot[]    @relation("DoctorToUnavailableSlot")
-  appointments       Appointment[]        @relation("DoctorAppointments")
-  SentMessage        SentMessage[]
-  TherapyAppointment TherapyAppointment[]
-  therapyCourses     TherapyCourse[]
+  id                         Int                              @id @default(autoincrement())
+  name                       String
+  email                      String
+  phone_number               String
+  qualification              String
+  departmentId               Int
+  departmentName             String                           @default("Unknown")
+  userId                     Int?
+  availableFrom              String?
+  slotDuration               Int?
+  createdAt                  DateTime                         @default(now())
+  updatedAt                  DateTime                         @updatedAt
+  doctorType                 String?                          @default("Regular")
+  roomNo                     String?
+  kmcNumber                  String?
+  createdBy                  String?
+  updatedBy                  String?
+  isActive                   Boolean?                         @default(true)
+  signUrl                    String?
+  bookedSlots                BookedSlot[]                     @relation("DoctorToBookedSlot")
+  Channel                    Channel[]
+  department                 Department                       @relation(fields: [departmentId], references: [id])
+  user                       User?                            @relation("DoctorUser", fields: [userId], references: [id])
+  DoctorAssignment           DoctorAssignment[]
+  availability               DoctorAvailability[]             @relation("DoctorToAvailability")
+  Estimation                 Estimation[]
+  extraSlots                 ExtraSlot[]                      @relation("DoctorToExtraSlot")
+  ExtraSlotCount             ExtraSlotCount[]
+  LeaveDates                 LeaveDates[]
+  unavailableDates           UnavailableDates[]               @relation("DoctorToUnavailableDate")
+  unavailableSlots           UnavailableSlot[]                @relation("DoctorToUnavailableSlot")
+  appointments               Appointment[]                    @relation("DoctorAppointments")
+  SentMessage                SentMessage[]
+  TherapyAppointment         TherapyAppointment[]
+  therapyCourses             TherapyCourse[]
   // Phase 9.19 — ER referral acknowledgment + escalation chain.
-  emergencyReferrals EmergencyReferral[]   @relation("DoctorEmergencyReferrals")
-  escalationSteps    EscalationChainStep[] @relation("DoctorEscalationSteps")
+  emergencyReferrals         EmergencyReferral[]              @relation("DoctorEmergencyReferrals")
+  escalationSteps            EscalationChainStep[]            @relation("DoctorEscalationSteps")
   // Phase 9.21 — personal (doctor-scoped) note templates.
-  noteTemplates      NoteTemplate[]        @relation("DoctorNoteTemplates")
+  noteTemplates              NoteTemplate[]                   @relation("DoctorNoteTemplates")
   // Ophthalmology department prescriptions + doctor-added exam option values.
   ophthalmologyPrescriptions OphthalmologyPrescription[]
   ophthalmologyExamOptions   OphthalmologyExaminationOption[]
 
+  // Daily arrival, marked from Doctor Availability.
+  attendance DoctorAttendance[]
+
   @@index([departmentId], map: "Doctor_departmentId_fkey")
   @@index([userId], map: "Doctor_userId_fkey")
+}
+
+/// One row per doctor per day, written when the front desk marks a doctor as
+/// arrived in Doctor Availability.
+///
+/// Replaces doctor-attendance.json, which held only a list of ids for the
+/// current day: no arrival time, and pruned to today on every write. Both are
+/// needed here — the consultation analytics show when a doctor arrived and
+/// compare it with their first consultation, over an arbitrary date range.
+model DoctorAttendance {
+  id       Int    @id @default(autoincrement())
+  doctorId Int
+  doctor   Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  /// IST calendar day as "YYYY-MM-DD", matching Appointment.date so the two
+  /// can be filtered and joined on the same key.
+  date String
+
+  /// When the doctor was marked arrived.
+  arrivedAt DateTime @default(now())
+
+  /// Username of whoever marked it — arrival is entered by the front desk,
+  /// not by the doctor, so the record needs to say who.
+  markedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One arrival per doctor per day; unmarking deletes the row rather than
+  // adding a second one.
+  @@unique([doctorId, date])
+  @@index([date])
 }
 
 model User {
@@ -109,15 +144,15 @@ model User {
   joiningDate   DateTime?
   dateOfBirth   DateTime?
 
-  doctors             Doctor[]               @relation("DoctorUser")
+  doctors             Doctor[]                 @relation("DoctorUser")
   Notification        Notification[]
   activeTokens        ActiveToken[]
   mobileRefreshTokens MobileRefreshToken[]
-  appointments        Appointment[]          @relation("UserAppointments")
+  appointments        Appointment[]            @relation("UserAppointments")
   Therapist           Therapist[]
   shiftAssignments    StaffShiftAssignment[]
   dutyAcks            DutyAcknowledgement[]
-  otStaffMasters      OtStaffMaster[]        @relation(name: "UserOtStaff")
+  otStaffMasters      OtStaffMaster[]          @relation(name: "UserOtStaff")
   // Nursing Stations (Phase NS-1) — stations this nurse is mapped to (m:n).
   stationAssignments  NurseStationAssignment[]
 
@@ -157,92 +192,92 @@ model UnavailableDates {
 }
 
 model Appointment {
-  id                  Int               @id @default(autoincrement())
-  patientName         String
-  phoneNumber         String
-  email               String
-  doctorId            Int?
-  doctorName          String
-  department          String
-  date                String
-  time                String
-  requestVia          String?
-  smsSent             Boolean?          @default(false)
-  emailSent           Boolean?          @default(false)
-  status              AppointmentStatus @default(pending)
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
-  userId              Int?
-  lockedBy            Int?
-  lockExpiresAt       DateTime?
-  patientId           Int?
-  prnNumber           Int?
-  checkedIn           Boolean?          @default(false)
-  remainder1Sent      Boolean?          @default(false)
-  remainder2Sent      Boolean?          @default(false)
-  messageSent         Boolean?          @default(false)
-  checkedOut          Boolean?          @default(false)
-  checkedInTime       DateTime?
-  checkedOutTime      DateTime?
-  waitingTime         String?
-  endConsultation     Boolean?
-  postPond            Boolean?
-  endConsultationTime DateTime?
-  checkedInBy         String?
-  extraWaitingTime    Int?
-  isTransfer          Boolean?
-  isAcceptedCloseTime DateTime?
-  isCloseOPD          Boolean?
-  isCloseOPDTime      DateTime?
-  timeGap             String?
-  isAccepted          Boolean?
-  type                String?
-  age                 String?
-  gender              String?
-  serviceId           Int?
-  nameChangedBy       String?
-  referredDept        String?
-  referredDeptId      Int?
-  referredDoc         String?
-  referredDocId       Int?
-  isReferred          Boolean?
-  isNew               Boolean?
-  prefix              String?
-  patientType         String?
-  isFollowupTime      DateTime?
-  isfollowup          Boolean?
-  BPd                 String?
-  BPs                 String?
-  RR                  String?
-  bloodGroup          String?
-  height              String?
-  pulse               String?
-  spo2                String?
-  temp                String?
-  weight              String?
-  arrived             Boolean?
-  arrivedBy           String?
-  arrivedTime         DateTime?
-  blockId             String?
+  id                         Int                         @id @default(autoincrement())
+  patientName                String
+  phoneNumber                String
+  email                      String
+  doctorId                   Int?
+  doctorName                 String
+  department                 String
+  date                       String
+  time                       String
+  requestVia                 String?
+  smsSent                    Boolean?                    @default(false)
+  emailSent                  Boolean?                    @default(false)
+  status                     AppointmentStatus           @default(pending)
+  created_at                 DateTime                    @default(now())
+  updated_at                 DateTime                    @updatedAt
+  userId                     Int?
+  lockedBy                   Int?
+  lockExpiresAt              DateTime?
+  patientId                  Int?
+  prnNumber                  Int?
+  checkedIn                  Boolean?                    @default(false)
+  remainder1Sent             Boolean?                    @default(false)
+  remainder2Sent             Boolean?                    @default(false)
+  messageSent                Boolean?                    @default(false)
+  checkedOut                 Boolean?                    @default(false)
+  checkedInTime              DateTime?
+  checkedOutTime             DateTime?
+  waitingTime                String?
+  endConsultation            Boolean?
+  postPond                   Boolean?
+  endConsultationTime        DateTime?
+  checkedInBy                String?
+  extraWaitingTime           Int?
+  isTransfer                 Boolean?
+  isAcceptedCloseTime        DateTime?
+  isCloseOPD                 Boolean?
+  isCloseOPDTime             DateTime?
+  timeGap                    String?
+  isAccepted                 Boolean?
+  type                       String?
+  age                        String?
+  gender                     String?
+  serviceId                  Int?
+  nameChangedBy              String?
+  referredDept               String?
+  referredDeptId             Int?
+  referredDoc                String?
+  referredDocId              Int?
+  isReferred                 Boolean?
+  isNew                      Boolean?
+  prefix                     String?
+  patientType                String?
+  isFollowupTime             DateTime?
+  isfollowup                 Boolean?
+  BPd                        String?
+  BPs                        String?
+  RR                         String?
+  bloodGroup                 String?
+  height                     String?
+  pulse                      String?
+  spo2                       String?
+  temp                       String?
+  weight                     String?
+  arrived                    Boolean?
+  arrivedBy                  String?
+  arrivedTime                DateTime?
+  blockId                    String?
   // Phase 2.5 / WF-1 — payment-confirmation gate before prescription / investigation.
-  paymentStatus       String?           @default("unpaid") // "unpaid" | "paid" | "partial" | "waived"
-  paidAmount          Float?
-  paidAt              DateTime?
-  receiptNo           String?
-  paymentSource       String? // "cash" | "card" | "upi" | "insurance" | "scheme"
+  paymentStatus              String?                     @default("unpaid") // "unpaid" | "paid" | "partial" | "waived"
+  paidAmount                 Float?
+  paidAt                     DateTime?
+  receiptNo                  String?
+  paymentSource              String? // "cash" | "card" | "upi" | "insurance" | "scheme"
   // Appointment lifecycle trail — denormalised counters + cancel attribution so
   // list screens don't need a subquery over AppointmentEvent. The full
   // who/when/from/to history lives in AppointmentEvent (see below).
-  rescheduleCount     Int               @default(0)
-  cancelledBy         String? // actor display name; "system" for cron-driven cancels
-  cancelledById       Int? // User.id when a logged-in user cancelled
-  cancelledAt         DateTime?
-  cancelReason        String?           @db.Text
-  doctor              Doctor?           @relation("DoctorAppointments", fields: [doctorId], references: [id])
-  patient             Patient?          @relation("AppointmentToPatient", fields: [patientId], references: [id])
-  user                User?             @relation("UserAppointments", fields: [userId], references: [id])
+  rescheduleCount            Int                         @default(0)
+  cancelledBy                String? // actor display name; "system" for cron-driven cancels
+  cancelledById              Int? // User.id when a logged-in user cancelled
+  cancelledAt                DateTime?
+  cancelReason               String?                     @db.Text
+  doctor                     Doctor?                     @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  patient                    Patient?                    @relation("AppointmentToPatient", fields: [patientId], references: [id])
+  user                       User?                       @relation("UserAppointments", fields: [userId], references: [id])
   ophthalmologyPrescriptions OphthalmologyPrescription[]
-  events              AppointmentEvent[] @relation("AppointmentToEvent")
+  events                     AppointmentEvent[]          @relation("AppointmentToEvent")
 
   @@index([doctorId], map: "appointments_doctorId_fkey")
   @@index([patientId], map: "appointments_patientId_fkey")
@@ -261,7 +296,7 @@ model Appointment {
 // instead of JSON digging. Writes are fire-and-forget via
 // service/appointment-event.ts — a logging failure never blocks a booking.
 model AppointmentEvent {
-  id            String   @id @default(uuid())
+  id            String @id @default(uuid())
   appointmentId Int
   // BOOKED | CONFIRMED | RESCHEDULED | CANCELLED | STATUS_CHANGE | CHECKED_IN |
   // CHECKED_OUT | COMPLETED | OPD_CLOSED | DELETED
@@ -310,14 +345,14 @@ model AppointmentEvent {
 }
 
 model BookedSlot {
-  id        Int       @id @default(autoincrement())
-  doctorId  Int?
-  date      String
-  time      String
-  createdAt DateTime  @default(now())
-  complete  Boolean?  @default(false)
-  createdBy String?
-  updatedAt DateTime? @updatedAt
+  id            Int       @id @default(autoincrement())
+  doctorId      Int?
+  date          String
+  time          String
+  createdAt     DateTime  @default(now())
+  complete      Boolean?  @default(false)
+  createdBy     String?
+  updatedAt     DateTime? @updatedAt
   // Which appointment holds this slot. Without it a slot could only be matched
   // on (doctorId, date, time), so releasing one appointment's slot deleted
   // every row at that time — including another patient's, freeing a slot that
@@ -328,7 +363,7 @@ model BookedSlot {
   // updated, so it starts ownerless and is claimed by the following PUT. Delete
   // paths therefore match "my appointmentId OR null".
   appointmentId Int?
-  doctor    Doctor?   @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
+  doctor        Doctor?   @relation("DoctorToBookedSlot", fields: [doctorId], references: [id])
 
   @@index([doctorId], map: "BookedSlot_doctorId_fkey")
   @@index([appointmentId])
@@ -900,17 +935,17 @@ model BloodGroupRepeatedDate {
 }
 
 model Prescription {
-  id              Int      @id @default(autoincrement())
-  prescriptionId  String   @unique
-  prescribedBy    String
-  prescribedDate  String
-  prn             String
-  patientName     String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  prescribedById  String?
-  prescribedByKMC String?
-  tablets         Tablet[] @relation("PrescriptionTablets")
+  id                         Int                         @id @default(autoincrement())
+  prescriptionId             String                      @unique
+  prescribedBy               String
+  prescribedDate             String
+  prn                        String
+  patientName                String
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  prescribedById             String?
+  prescribedByKMC            String?
+  tablets                    Tablet[]                    @relation("PrescriptionTablets")
   ophthalmologyPrescriptions OphthalmologyPrescription[]
 }
 
@@ -1032,33 +1067,33 @@ model Radiology {
 }
 
 model InvestigationOrder {
-  id             Int                   @id @default(autoincrement())
-  prn            String
-  date           String
-  doctorId       Int
-  doctorName     String
-  remarks        String?
+  id                  Int                   @id @default(autoincrement())
+  prn                 String
+  date                String
+  doctorId            Int
+  doctorName          String
+  remarks             String?
   // Radiology safety-screening block (paper RADIOLOGY REQUEST FORM). All
   // nullable — populated only when the order includes a radiology study.
   // radComorbidities is comma-joined (e.g. 'Asthma,Diabetes,HTN').
   radPriority         String?
-  radClinicalDetails  String?  @db.Text
+  radClinicalDetails  String?               @db.Text
   radSerumCreatinine  String?
   radCreatinineDoneOn String?
   radWeightKg         String?
   radPregnancy        Boolean?
   radLmp              String?
-  radAllergyHistory   String?  @db.Text
+  radAllergyHistory   String?               @db.Text
   radComorbidities    String?
   radConsentGiven     Boolean?
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-  labTests       Lab[]                 @relation("InvestigationOrderToLab")
-  packages       Package[]             @relation("InvestigationOrderToPackage")
-  radiologyTests Radiology[]           @relation("InvestigationOrderToRadiology")
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  labTests            Lab[]                 @relation("InvestigationOrderToLab")
+  packages            Package[]             @relation("InvestigationOrderToPackage")
+  radiologyTests      Radiology[]           @relation("InvestigationOrderToRadiology")
   // Phase 9.11 — uploaded results / reports for this order. One order can
   // accumulate multiple result rows (per-test partials → final).
-  results        InvestigationResult[]
+  results             InvestigationResult[]
 }
 
 model SystemLock {
@@ -1257,18 +1292,18 @@ model Therapy {
 }
 
 model Therapist {
-  id            Int                           @id @default(autoincrement())
-  name          String
-  phoneNumber   String
-  email         String?                       @unique
-  qualification String?
-  isActive      Boolean                       @default(true)
-  userId        Int? // ✅ link to User
-  gender        String?
-  user          User?                         @relation(fields: [userId], references: [id])
-  createdAt     DateTime                      @default(now())
-  updatedAt     DateTime                      @updatedAt
-  appointments  TherapyAppointmentTherapist[]
+  id               Int                           @id @default(autoincrement())
+  name             String
+  phoneNumber      String
+  email            String?                       @unique
+  qualification    String?
+  isActive         Boolean                       @default(true)
+  userId           Int? // ✅ link to User
+  gender           String?
+  user             User?                         @relation(fields: [userId], references: [id])
+  createdAt        DateTime                      @default(now())
+  updatedAt        DateTime                      @updatedAt
+  appointments     TherapyAppointmentTherapist[]
   unavailableDates TherapistUnavailableDates[]
   unavailableSlots TherapistUnavailableSlot[]
 }
@@ -1360,8 +1395,8 @@ model TherapyAppointment {
 
   therapies TherapyAppointmentTherapy[]
 
-  course  TherapyCourse?         @relation(fields: [courseId], references: [id])
-  planDay TherapyCoursePlanDay?  @relation("PlanDayAppointment")
+  course  TherapyCourse?        @relation(fields: [courseId], references: [id])
+  planDay TherapyCoursePlanDay? @relation("PlanDayAppointment")
 
   // Prevent same room being double-booked
   @@unique([roomNumber, date, time], map: "unique_therapy_room_slot")
@@ -1795,7 +1830,7 @@ model MlcCase {
   createdById Int? // Sprint 4a — MRD audit typed creator
   updatedById Int? // Sprint 4b — MRD audit typed updater
 
-  emergency       Emergency    @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  emergency       Emergency   @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
   injuries_detail MlcInjury[] // NABH MRD.2 — per-injury documentation (distinct from `injuries` free-text)
 
   @@index([mlcNo])
@@ -1822,8 +1857,8 @@ model MlcInjury {
 }
 
 model LamaRecord {
-  id          Int  @id @default(autoincrement())
-  emergencyId Int? @unique // nullable — record links to EITHER an emergency OR an IPD admission
+  id          Int     @id @default(autoincrement())
+  emergencyId Int?    @unique // nullable — record links to EITHER an emergency OR an IPD admission
   admissionId String? // IPD/post-op source (mutually exclusive with emergencyId)
 
   lamaTime         DateTime
@@ -1852,8 +1887,8 @@ model LamaRecord {
 }
 
 model DamaRecord {
-  id          Int  @id @default(autoincrement())
-  emergencyId Int? @unique // nullable — record links to EITHER an emergency OR an IPD admission
+  id          Int     @id @default(autoincrement())
+  emergencyId Int?    @unique // nullable — record links to EITHER an emergency OR an IPD admission
   admissionId String? // IPD/post-op source (mutually exclusive with emergencyId)
 
   dischargeTime         DateTime
@@ -2413,30 +2448,30 @@ model OtPreOpChecklist {
   scheduleId String     @unique
   schedule   OtSchedule @relation(name: "ScheduleToPreOp", fields: [scheduleId], references: [id], onDelete: Cascade)
 
-  fasting             Boolean   @default(false)
-  fastingHours        Int?
-  consentSignatureId  String? // FK to ConsentSignature for the surgical consent
-  groupTyped          Boolean   @default(false)
-  crossMatched        Boolean   @default(false)
-  bloodReservedUnits  Int? // total reserved (kept as internal + external sum)
-  internalUnitsReserved Int? // units reserved from in-house blood bank
-  externalUnitsReserved Int? // units arranged from an external/outside blood bank
-  preOpHemoglobin     Float? // pre-op Hb (g/dL)
-  surgeryClass        String? // 'minor' | 'intermediate' | 'major'
+  fasting                Boolean   @default(false)
+  fastingHours           Int?
+  consentSignatureId     String? // FK to ConsentSignature for the surgical consent
+  groupTyped             Boolean   @default(false)
+  crossMatched           Boolean   @default(false)
+  bloodReservedUnits     Int? // total reserved (kept as internal + external sum)
+  internalUnitsReserved  Int? // units reserved from in-house blood bank
+  externalUnitsReserved  Int? // units arranged from an external/outside blood bank
+  preOpHemoglobin        Float? // pre-op Hb (g/dL)
+  surgeryClass           String? // 'minor' | 'intermediate' | 'major'
   anticipatedBloodLossMl Int? // expected blood loss (ml) — justifies the reservation; actual is on OtIntraOpNote
-  antibioticPlanned   Boolean   @default(false)
-  antibioticName      String?
-  prophylaxisGiven    Boolean   @default(false)
-  surgicalSiteMarked  Boolean   @default(false)
-  allergiesReviewed   Boolean   @default(false)
-  allergiesNote       String?   @db.Text
-  fitnessCleared      Boolean   @default(false)
-  fitnessClearedBy    String?
-  preAnaesthesiaNotes String?   @db.Text
-  signedAt            DateTime?
-  signedBy            String?
-  signedById          Int?
-  signatureId         String? // SignatureBlob FK — anaesthesiologist sign-off
+  antibioticPlanned      Boolean   @default(false)
+  antibioticName         String?
+  prophylaxisGiven       Boolean   @default(false)
+  surgicalSiteMarked     Boolean   @default(false)
+  allergiesReviewed      Boolean   @default(false)
+  allergiesNote          String?   @db.Text
+  fitnessCleared         Boolean   @default(false)
+  fitnessClearedBy       String?
+  preAnaesthesiaNotes    String?   @db.Text
+  signedAt               DateTime?
+  signedBy               String?
+  signedById             Int?
+  signatureId            String? // SignatureBlob FK — anaesthesiologist sign-off
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2990,27 +3025,27 @@ model IpdBed {
 
 // IPD Admission
 model IpdAdmission {
-  id                  String   @id @default(uuid())
-  admissionNo         String   @unique
-  prn                 String
-  admissionDate       DateTime
-  admissionTime       String
-  admissionType       String // elective | emergency | transfer
-  sourceModule        String // opd | emergency | direct
-  referralOpdId       String?
-  referralEmergencyId String?
-  referralMlcId       String?
+  id                   String   @id @default(uuid())
+  admissionNo          String   @unique
+  prn                  String
+  admissionDate        DateTime
+  admissionTime        String
+  admissionType        String // elective | emergency | transfer
+  sourceModule         String // opd | emergency | direct
+  referralOpdId        String?
+  referralEmergencyId  String?
+  referralMlcId        String?
   referralEstimationId String? // set when admission proposed from a confirmed estimation
-  referringDoctor     String?
-  admittingDoctor     String
-  department          String
+  referringDoctor      String?
+  admittingDoctor      String
+  department           String
   // Phase 3 — wardId/bedId are nullable to support PROPOSED state (bed not
   // yet assigned). Once status flips to BED_ACCEPTED or 'admitted', both
   // are required by application-level guards.
-  wardId              String?
-  bedId               String?
-  roomType            String // general | semi-private | private | ICU | HDU
-  diagnosis           String   @db.LongText
+  wardId               String?
+  bedId                String?
+  roomType             String // general | semi-private | private | ICU | HDU
+  diagnosis            String   @db.LongText
   // Phase 3 — extended status flow (WF-2 handshake).
   // Pre-existing values "admitted | transferred | discharged | LAMA | DAMA | expired"
   // continue to work. New pre-admission states:
@@ -3018,9 +3053,9 @@ model IpdAdmission {
   //   BED_REQUESTED — request raised to nursing station
   //   BED_ACCEPTED — NS accepted, awaiting bedside consent + facility acceptance
   //   admitted — handshake closed; patient occupies the bed
-  status              String   @default("PROPOSED")
-  hmisAdmissionId     String?
-  hmisTransferId      String?
+  status               String   @default("PROPOSED")
+  hmisAdmissionId      String?
+  hmisTransferId       String?
 
   // Phase 3 — handshake artefact snapshots (FKs to SignatureBlob).
   nsAcceptanceSignatureId               String? // NS nurse signs "bed ready, equipment verified"
@@ -3088,12 +3123,12 @@ model IpdAdmission {
   acuityEscalations AcuityEscalation[]
 
   // Phase 9.14 — Insulin Infusion Chart
-  insulinInfusions  IpdInsulinInfusion[]
+  insulinInfusions IpdInsulinInfusion[]
 
   // Phase 9.16 — ICU Nurses Care Record
-  icuInvasiveLines  IcuInvasiveLine[]
+  icuInvasiveLines    IcuInvasiveLine[]
   icuNursingCarePlans IcuNursingCarePlan[]
-  icuNurseNotes     IcuNurseNote[]
+  icuNurseNotes       IcuNurseNote[]
 
   // ─── Phase D — Discharge clearance chain ─────────────────────────────
   // dischargeReadyAt: ward doctor flips this when the patient is clinically
@@ -3104,8 +3139,8 @@ model IpdAdmission {
   dischargeReadyAt              DateTime?
   dischargeReadyBy              String?
   dischargeReadyById            Int?
-  dischargeChainAbandoned       Boolean   @default(false)
-  dischargeChainAbandonedReason String?   @db.Text
+  dischargeChainAbandoned       Boolean              @default(false)
+  dischargeChainAbandonedReason String?              @db.Text
   dischargeChainAbandonedAt     DateTime?
   dischargeChainAbandonedBy     String?
   dischargeClearances           DischargeClearance[]
@@ -3594,12 +3629,12 @@ model IpdDischarge {
 // "stat report awaited") so the discharge board surfaces the actual blocker
 // instead of an opaque pending state.
 model DischargeClearance {
-  id           String   @id @default(uuid())
-  admissionId  String
-  department   String // 'OT' | 'BILLING' | 'NURSING' | 'PHARMACY' | 'LAB_RAD' | 'DIET' | 'MLC'
-  status       String   @default("pending") // 'pending' | 'cleared' | 'rejected'
+  id          String @id @default(uuid())
+  admissionId String
+  department  String // 'OT' | 'BILLING' | 'NURSING' | 'PHARMACY' | 'LAB_RAD' | 'DIET' | 'MLC'
+  status      String @default("pending") // 'pending' | 'cleared' | 'rejected'
 
-  blockingReason String? @db.Text
+  blockingReason String?   @db.Text
   rejectedAt     DateTime?
   rejectedBy     String?
   rejectedById   Int?
@@ -3607,8 +3642,8 @@ model DischargeClearance {
   clearedAt          DateTime?
   clearedBy          String?
   clearedById        Int?
-  clearedNotes       String?  @db.Text
-  clearedSignatureId String?  // FK-by-id to SignatureBlob (optional)
+  clearedNotes       String?   @db.Text
+  clearedSignatureId String? // FK-by-id to SignatureBlob (optional)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3678,40 +3713,40 @@ model IpdPrescription {
   // on-call pharmacist directly via in-app notification.
   // dispensedQty supports partial dispense (e.g. 2 of 5 strips) — nurses
   // ack per remaining-quantity so the doctor view shows true outstanding.
-  sentToPharmacyAt        DateTime?
-  isStatBypass            Boolean   @default(false)
-  pharmacyAckAt           DateTime?
-  pharmacyAckBy           String?
-  pharmacyAckById         Int?
-  pharmacyRejectedAt      DateTime?
-  pharmacyRejectedBy      String?
-  pharmacyRejectedById    Int?
-  pharmacyRejectedReason  String?   @db.Text
-  dispensedAt             DateTime?
-  dispensedBy             String?
-  dispensedById           Int?
-  dispensedQty            Int? // partial dispense: total dispensed so far (<= quantity)
-  substitutedBrand        String? // logged when pharmacy fills with a different brand
-  substitutedReason       String?   @db.Text
-  nurseCollectedAt        DateTime?
-  nurseCollectedBy        String?
-  nurseCollectedById      Int?
-  nurseCollectedQty       Int? // partial: nurse acknowledges only what was actually handed over
-  nurseReturnedAt         DateTime?
-  nurseReturnedBy         String?
-  nurseReturnedById       Int?
-  nurseReturnReason       String?   @db.Text
+  sentToPharmacyAt       DateTime?
+  isStatBypass           Boolean   @default(false)
+  pharmacyAckAt          DateTime?
+  pharmacyAckBy          String?
+  pharmacyAckById        Int?
+  pharmacyRejectedAt     DateTime?
+  pharmacyRejectedBy     String?
+  pharmacyRejectedById   Int?
+  pharmacyRejectedReason String?   @db.Text
+  dispensedAt            DateTime?
+  dispensedBy            String?
+  dispensedById          Int?
+  dispensedQty           Int? // partial dispense: total dispensed so far (<= quantity)
+  substitutedBrand       String? // logged when pharmacy fills with a different brand
+  substitutedReason      String?   @db.Text
+  nurseCollectedAt       DateTime?
+  nurseCollectedBy       String?
+  nurseCollectedById     Int?
+  nurseCollectedQty      Int? // partial: nurse acknowledges only what was actually handed over
+  nurseReturnedAt        DateTime?
+  nurseReturnedBy        String?
+  nurseReturnedById      Int?
+  nurseReturnReason      String?   @db.Text
   // HMIS stock probe — captured at save time so we know what the doctor saw.
   // stockProbeJson is the raw probe response (qty available + brand list);
   // stockProbeAt lets us flag the probe as stale on later display.
-  stockProbeJson          String?   @db.Text
-  stockProbeAt            DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  createdBy            String?
-  updatedBy            String?
-  createdById          Int? // Sprint 4a — MRD audit typed creator
-  updatedById          Int? // Sprint 4b — MRD audit typed updater
+  stockProbeJson         String?   @db.Text
+  stockProbeAt           DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  createdBy              String?
+  updatedBy              String?
+  createdById            Int? // Sprint 4a — MRD audit typed creator
+  updatedById            Int? // Sprint 4b — MRD audit typed updater
 
   admission IpdAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
 
@@ -4272,20 +4307,20 @@ model IcuNursingCarePlan {
   shift    String? // 'M' | 'E' | 'N'
 
   // Nursing Intervention / Goals checklist
-  goalPatentAirway        Boolean @default(false)
-  goalAdequateOxygenation Boolean @default(false)
-  goalTissuePerfusion     Boolean @default(false)
-  goalFluidBalance        Boolean @default(false)
-  goalPainRelief          Boolean @default(false)
-  goalNutrition           Boolean @default(false)
-  goalPreventDvt          Boolean @default(false)
-  goalSkinIntegrity       Boolean @default(false)
-  goalActivityTolerance   Boolean @default(false)
-  goalPersonalHygiene     Boolean @default(false)
-  goalEliminationNeed     Boolean @default(false)
-  goalSafety              Boolean @default(false)
-  goalReduceAnxiety       Boolean @default(false)
-  goalCommunication       Boolean @default(false)
+  goalPatentAirway           Boolean @default(false)
+  goalAdequateOxygenation    Boolean @default(false)
+  goalTissuePerfusion        Boolean @default(false)
+  goalFluidBalance           Boolean @default(false)
+  goalPainRelief             Boolean @default(false)
+  goalNutrition              Boolean @default(false)
+  goalPreventDvt             Boolean @default(false)
+  goalSkinIntegrity          Boolean @default(false)
+  goalActivityTolerance      Boolean @default(false)
+  goalPersonalHygiene        Boolean @default(false)
+  goalEliminationNeed        Boolean @default(false)
+  goalSafety                 Boolean @default(false)
+  goalReduceAnxiety          Boolean @default(false)
+  goalCommunication          Boolean @default(false)
   goalPatientFamilyEducation Boolean @default(false)
 
   // GOAL / PLANNING / IMPLEMENTATION / OUTCOME — JSON array of
@@ -5373,16 +5408,16 @@ model PatientAcuitySnapshot {
   admissionId String
   admission   IpdAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
 
-  source          String // 'IPD' | 'ICU' — which vitals stream drove the score
-  ewsScore        Int // NEWS2 aggregate 0..20
-  ewsBand         String // 'low' | 'low-medium' | 'medium' | 'high'
-  componentScores String?   @db.Text // JSON — per-parameter NEWS2 sub-scores
-  trend           String? // 'improving' | 'stable' | 'worsening' (vs prior snapshot)
+  source           String // 'IPD' | 'ICU' — which vitals stream drove the score
+  ewsScore         Int // NEWS2 aggregate 0..20
+  ewsBand          String // 'low' | 'low-medium' | 'medium' | 'high'
+  componentScores  String?   @db.Text // JSON — per-parameter NEWS2 sub-scores
+  trend            String? // 'improving' | 'stable' | 'worsening' (vs prior snapshot)
   // Phase 9.13 (Phase C) — true when score rose across 3 consecutive readings.
-  risingStreak    Boolean   @default(false)
-  vitalsReadingId String? // FK-ish — the IpdVitalsReading / IcuVitalsReading id
+  risingStreak     Boolean   @default(false)
+  vitalsReadingId  String? // FK-ish — the IpdVitalsReading / IcuVitalsReading id
   vitalsRecordedAt DateTime?
-  computedAt      DateTime  @default(now())
+  computedAt       DateTime  @default(now())
 
   @@index([admissionId, computedAt])
   @@index([ewsBand])
@@ -5868,20 +5903,20 @@ model ReferralSlaConfig {
 // Patient/admission links are kept loose (no FK) like other cross-module ids.
 
 model CodeActivation {
-  id          Int    @id @default(autoincrement())
-  code        String // 'blue' | 'red' | 'pink' | 'violet' | 'yellow' | 'orange' | 'black'
-  situation   String // snapshot label, e.g. 'Cardiac arrest / medical emergency'
-  dialNumber  String // '3111'
-  location    String // ward/bed or free text — announced with the code
+  id         Int    @id @default(autoincrement())
+  code       String // 'blue' | 'red' | 'pink' | 'violet' | 'yellow' | 'orange' | 'black'
+  situation  String // snapshot label, e.g. 'Cardiac arrest / medical emergency'
+  dialNumber String // '3111'
+  location   String // ward/bed or free text — announced with the code
 
   // Optional clinical context (Code Blue raised for a specific patient).
   admissionId String?
   emergencyId Int?
   patientName String?
 
-  status        String    @default("active") // active | resolved
-  autoSuggested Boolean   @default(false) // true if it came from the suggestion engine
-  note          String?   @db.Text
+  status        String  @default("active") // active | resolved
+  autoSuggested Boolean @default(false) // true if it came from the suggestion engine
+  note          String? @db.Text
 
   triggeredByName String?
   triggeredById   Int?
@@ -5920,10 +5955,10 @@ model Incident {
   id   String @id @default(uuid())
   code String @unique // INC-YYYY-NNNN (human-readable, year-scoped sequence)
 
-  category        String // 'clinical' | 'medication' | 'documentation' | 'fall' | 'infection' | 'equipment' | 'behavioural' | 'security' | 'other'
-  severity        String // 'near_miss' | 'minor' | 'moderate' | 'major' | 'sentinel'
-  source          String // 'auto-rule' | 'manual'
-  ruleKey         String? // set when source = 'auto-rule' — links back to IncidentRule.key
+  category String // 'clinical' | 'medication' | 'documentation' | 'fall' | 'infection' | 'equipment' | 'behavioural' | 'security' | 'other'
+  severity String // 'near_miss' | 'minor' | 'moderate' | 'major' | 'sentinel'
+  source   String // 'auto-rule' | 'manual'
+  ruleKey  String? // set when source = 'auto-rule' — links back to IncidentRule.key
 
   title       String
   description String @db.LongText
@@ -6055,14 +6090,14 @@ model FeedbackSurvey {
   // Phase 9.25 / Phase 6d — one-shot follow-up dedupe. Set by
   // feedback-reminder.cron when a "still pending after 72h" bell fires so
   // the cron doesn't spam on every tick. Null = never reminded.
-  lastReminderAt   DateTime?
+  lastReminderAt DateTime?
 
-  npsScore             Int? // 0-10 (Net Promoter)
-  satisfactionScores   String? @db.LongText // JSON { categoryKey: 1..5 }
-  comments             String? @db.Text
-  complaintFlag        Boolean @default(false)
+  npsScore           Int? // 0-10 (Net Promoter)
+  satisfactionScores String? @db.LongText // JSON { categoryKey: 1..5 }
+  comments           String? @db.Text
+  complaintFlag      Boolean @default(false)
 
-  status    String   @default("pending") // 'pending' | 'sent' | 'completed' | 'expired'
+  status    String    @default("pending") // 'pending' | 'sent' | 'completed' | 'expired'
   expiresAt DateTime?
 
   complaints Complaint[]
@@ -6083,8 +6118,8 @@ model Complaint {
   patientName String?
   raisedAt    DateTime @default(now())
 
-  channel  String // 'sms' | 'whatsapp' | 'kiosk' | 'phone' | 'in-person' | 'survey-auto'
-  source   String // 'survey' | 'manual'
+  channel          String // 'sms' | 'whatsapp' | 'kiosk' | 'phone' | 'in-person' | 'survey-auto'
+  source           String // 'survey' | 'manual'
   feedbackSurveyId String?
   feedbackSurvey   FeedbackSurvey? @relation(fields: [feedbackSurveyId], references: [id])
 
@@ -6105,8 +6140,8 @@ model Complaint {
   assignedTo   String?
   assignedToId Int?
 
-  status          String  @default("open") // 'open' | 'acknowledged' | 'resolved' | 'escalated'
-  resolutionNotes String? @db.Text
+  status          String    @default("open") // 'open' | 'acknowledged' | 'resolved' | 'escalated'
+  resolutionNotes String?   @db.Text
   slaDueAt        DateTime?
   resolvedAt      DateTime?
   resolvedBy      String?
@@ -6141,21 +6176,21 @@ model QualityIndicator {
   id     Int    @id @default(autoincrement())
   qiCode String @unique // e.g. 'PSQ-001', 'ICO-006'
 
-  chapter      String // 'PSQ' | 'ICO' | 'OT' | 'LAB' | 'RAD' | 'PRE' | 'MRD' | 'HR' | 'FMS' | 'OPS'
-  nabhRef      String // 'PSQ 3a' | 'NABH Clinical QI' | 'PRE / Patient Rights QI' …
-  department   String // 'IPD' | 'Laboratory' | 'Radiology' | 'OPD' | …
-  name         String
+  chapter       String // 'PSQ' | 'ICO' | 'OT' | 'LAB' | 'RAD' | 'PRE' | 'MRD' | 'HR' | 'FMS' | 'OPS'
+  nabhRef       String // 'PSQ 3a' | 'NABH Clinical QI' | 'PRE / Patient Rights QI' …
+  department    String // 'IPD' | 'Laboratory' | 'Radiology' | 'OPD' | …
+  name          String
   indicatorType String // 'Process' | 'Outcome' | 'Process/Outcome' | 'Structure'
 
-  numeratorDef   String  @db.Text
-  denominatorDef String  @db.Text
+  numeratorDef   String @db.Text
+  denominatorDef String @db.Text
   multiplier     String // 'NA' | '100' | '1000' — stored as string to match spec
   unit           String // 'Minutes' | '%' | 'Falls / 1000 patient days' | …
   frequency      String // 'Monthly' | 'Monthly / Daily dashboard' | 'Monthly / Event-based' | 'Monthly / Quarterly'
 
   direction         String // 'higher-is-bad' | 'lower-is-bad' | 'target-range'
   defaultBenchmark  Float? // null when spec says 'Hospital defined'
-  amberThresholdPct Float  @default(80) // amber band — 80% of breach per NABH spec
+  amberThresholdPct Float   @default(80) // amber band — 80% of breach per NABH spec
   isCritical        Boolean @default(false) // zero-tolerance / sentinel-class
   criticalRule      String? @db.Text // text describing the critical trigger
 
@@ -6185,12 +6220,12 @@ model QualityIndicatorRecord {
   indicator   QualityIndicator @relation(fields: [indicatorId], references: [id], onDelete: Cascade)
   qiCode      String // denormalised for quick lookups / scorecard joins
 
-  period   String // 'YYYY-MM' for monthly, 'YYYY-MM-DD' when daily, or event-stamped
+  period      String // 'YYYY-MM' for monthly, 'YYYY-MM-DD' when daily, or event-stamped
   periodStart DateTime
   periodEnd   DateTime
 
-  numerator   Float
-  denominator Float
+  numerator       Float
+  denominator     Float
   calculatedValue Float // (numerator / denominator) * multiplier — engine-filled
 
   benchmarkUsed Float? // copy of benchmark at time of capture (audit trail)
@@ -6215,8 +6250,8 @@ model QualityIndicatorRecord {
 }
 
 model QualityIndicatorRca {
-  id       Int    @id @default(autoincrement())
-  recordId Int    @unique
+  id       Int                    @id @default(autoincrement())
+  recordId Int                    @unique
   record   QualityIndicatorRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
 
   immediateActions String? @db.LongText
@@ -6259,7 +6294,7 @@ model QualityAuditObservation {
   qiCode String // FK-by-convention to QualityIndicator.qiCode
 
   observedAt DateTime @default(now())
-  period     String   // YYYY-MM, derived from observedAt at write time
+  period     String // YYYY-MM, derived from observedAt at write time
 
   location        String? // free-text — ward / dept / OT room / etc.
   checkpointKey   String? // optional sub-checkpoint slug for finer rollups
@@ -6268,8 +6303,8 @@ model QualityAuditObservation {
   compliant Boolean
   notes     String? @db.Text
 
-  auditor     String?
-  auditorId   Int?
+  auditor   String?
+  auditorId Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -6291,7 +6326,7 @@ model QualityAuditObservation {
 model QualityMonthlyDenominator {
   id     Int    @id @default(autoincrement())
   qiCode String
-  period String  // YYYY-MM
+  period String // YYYY-MM
 
   value Float
   notes String? @db.Text
@@ -6321,14 +6356,14 @@ model QualitySurveillanceEvent {
   id   Int    @id @default(autoincrement())
   type String // 'HAI' | 'SSI' | 'VAP' | 'CAUTI' | 'CLABSI' | 'NSI'
 
-  patientPrn   String?
-  admissionId  String?
-  ward         String?
-  organism     String?
+  patientPrn    String?
+  admissionId   String?
+  ward          String?
+  organism      String?
   deviceRelated Boolean @default(false)
 
   observedAt DateTime @default(now())
-  period     String   // YYYY-MM, derived at write time
+  period     String // YYYY-MM, derived at write time
 
   notes String? @db.Text
 
@@ -6348,7 +6383,7 @@ model QualityDeviceDayCount {
 
   date       DateTime
   ward       String
-  deviceType String   // 'ventilator' | 'urinary_catheter' | 'central_line'
+  deviceType String // 'ventilator' | 'urinary_catheter' | 'central_line'
   count      Int
 
   capturedBy   String?
@@ -6365,10 +6400,10 @@ model QualityDeviceDayCount {
 model QualitySterilizationCycle {
   id Int @id @default(autoincrement())
 
-  batchCode      String?
-  runAt          DateTime @default(now())
-  passed         Boolean
-  failureReason  String?  @db.Text
+  batchCode     String?
+  runAt         DateTime @default(now())
+  passed        Boolean
+  failureReason String?  @db.Text
 
   capturedBy   String?
   capturedById Int?
@@ -6407,15 +6442,15 @@ model FacilityEquipment {
 }
 
 model FacilityEquipmentEvent {
-  id          Int    @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   equipmentId String
   equipment   FacilityEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
-  eventType   String // 'pm' | 'calibration' | 'breakdown'
+  eventType String // 'pm' | 'calibration' | 'breakdown'
 
-  dueAt       DateTime?  // for pm/calibration — when it was due
-  occurredAt  DateTime   @default(now()) // for breakdown / completion timestamp
-  resolvedAt  DateTime?  // when the breakdown was fixed
+  dueAt      DateTime? // for pm/calibration — when it was due
+  occurredAt DateTime  @default(now()) // for breakdown / completion timestamp
+  resolvedAt DateTime? // when the breakdown was fixed
 
   performedBy   String?
   performedById Int?
@@ -6435,8 +6470,8 @@ model FacilityUtilityFailure {
   utilityType     String // 'power' | 'water' | 'gas' | 'oxygen' | 'medical_gas' | 'hvac' | 'other'
   occurredAt      DateTime @default(now())
   durationMinutes Int?
-  affectedAreas   String? @db.Text
-  notes           String? @db.Text
+  affectedAreas   String?  @db.Text
+  notes           String?  @db.Text
 
   reporter   String?
   reporterId Int?
@@ -6458,7 +6493,7 @@ model FacilityAmbulanceCall {
   // Computed at write-time against the hospital target (default 8 min).
   // Storing the boolean lets historical reports stay stable if the target
   // is tuned later — FMS-008 just counts withinTarget=true.
-  withinTarget Boolean
+  withinTarget        Boolean
 
   notes      String? @db.Text
   reporter   String?
@@ -6478,9 +6513,9 @@ model FacilityMaintenanceComplaint {
   location String?
   notes    String? @db.Text
 
-  raisedAt   DateTime @default(now())
+  raisedAt   DateTime  @default(now())
   slaDueAt   DateTime
-  status     String   @default("open") // 'open' | 'in_progress' | 'closed'
+  status     String    @default("open") // 'open' | 'in_progress' | 'closed'
   closedAt   DateTime?
   closedBy   String?
   closedById Int?
@@ -6516,7 +6551,7 @@ model QualityLabRadEvent {
   eventType String // 'lab_amended' | 'rad_amended' | 'lab_sample_rejected' | 'rad_repeat'
 
   observedAt DateTime @default(now())
-  period     String   // YYYY-MM derived at write time
+  period     String // YYYY-MM derived at write time
 
   // Optional context — patient + test, if known.
   prn      String?
@@ -6560,8 +6595,8 @@ model PharmacyStockEvent {
   drugCodeSnapshot String?
   drugNameSnapshot String?
 
-  eventType   String // 'stock_out' | 'expired'
-  occurredAt  DateTime @default(now())
+  eventType  String // 'stock_out' | 'expired'
+  occurredAt DateTime @default(now())
 
   batchCode  String?
   expiryDate DateTime?
@@ -6597,11 +6632,11 @@ model PharmacyStockEvent {
 // alias when no row exists — zero regression risk if seeding is delayed.
 
 model RoleAlias {
-  id     Int    @id @default(autoincrement())
-  alias  String @unique // spec name, e.g. 'Quality Manager'
-  targetRole String  // UserRole enum value OR User.subAdminType string
-  isActive Boolean @default(true)
-  notes    String? @db.Text
+  id         Int     @id @default(autoincrement())
+  alias      String  @unique // spec name, e.g. 'Quality Manager'
+  targetRole String // UserRole enum value OR User.subAdminType string
+  isActive   Boolean @default(true)
+  notes      String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -6613,10 +6648,10 @@ model QualityTatEvent {
   id     Int    @id @default(autoincrement())
   qiCode String
 
-  startedAt        DateTime
-  endedAt          DateTime
-  durationMinutes  Int      // (endedAt - startedAt) / 60_000, rounded
-  withinTarget     Boolean? // null when the indicator has no compliance target (avg-style)
+  startedAt       DateTime
+  endedAt         DateTime
+  durationMinutes Int // (endedAt - startedAt) / 60_000, rounded
+  withinTarget    Boolean? // null when the indicator has no compliance target (avg-style)
 
   location String?
   notes    String? @db.Text
@@ -6637,25 +6672,25 @@ model QualityTatEvent {
 // Appointment stores doctorName/prnNumber as plain fields.
 
 model WhatsappBotSession {
-  id            Int      @id @default(autoincrement())
-  phone         String   @unique
-  state         String   @default("AWAITING_PRN") // AWAITING_PRN | AWAITING_DOCTOR | AWAITING_QUESTION | IN_CONVERSATION
+  id            Int       @id @default(autoincrement())
+  phone         String    @unique
+  state         String    @default("AWAITING_PRN") // AWAITING_PRN | AWAITING_DOCTOR | AWAITING_QUESTION | IN_CONVERSATION
   prn           Int?
   doctorId      Int?
   doctorName    String?
   activeQueryId Int?
-  prnAttempts   Int      @default(0) // wrong-PRN counter for abuse throttling
-  flow          String?  // active menu branch: APPT | DOORSTEP | ENQUIRY | OTHERS | REPORT
-  scratch       String?  @db.Text // JSON blob of fields being collected in the current flow
-  otpCode       String?  // last OTP issued (cleared after verify)
+  prnAttempts   Int       @default(0) // wrong-PRN counter for abuse throttling
+  flow          String? // active menu branch: APPT | DOORSTEP | ENQUIRY | OTHERS | REPORT
+  scratch       String?   @db.Text // JSON blob of fields being collected in the current flow
+  otpCode       String? // last OTP issued (cleared after verify)
   otpExpiresAt  DateTime?
   consentAt     DateTime? // when the user accepted the consent disclaimer
-  verifiedPrn   Int?      // PRN this session is OTP-verified for (record access)
+  verifiedPrn   Int? // PRN this session is OTP-verified for (record access)
   verifiedUntil DateTime? // verification expiry — short-lived
-  lastInboundAt DateTime @default(now())
+  lastInboundAt DateTime  @default(now())
   expiresAt     DateTime
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 }
 
 model WhatsappQuery {
@@ -6679,13 +6714,13 @@ model WhatsappQuery {
 model WhatsappQueryMessage {
   id         Int           @id @default(autoincrement())
   queryId    Int
-  direction  String        // IN | OUT
+  direction  String // IN | OUT
   body       String        @db.Text // text / caption ("" if media-only)
-  sender     String?       // patient name (IN) or doctor name (OUT)
-  mediaUrl   String?       // e.g. /files/whatsapp/<file> (served by /files static)
-  mediaType  String?       // image | document | video | audio
-  mediaMime  String?       // e.g. application/pdf, image/jpeg
-  fileName   String?       // original filename for documents
+  sender     String? // patient name (IN) or doctor name (OUT)
+  mediaUrl   String? // e.g. /files/whatsapp/<file> (served by /files static)
+  mediaType  String? // image | document | video | audio
+  mediaMime  String? // e.g. application/pdf, image/jpeg
+  fileName   String? // original filename for documents
   created_at DateTime      @default(now())
   query      WhatsappQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
 
@@ -6739,17 +6774,17 @@ model Surgeon {
 // through /p/:token, which expires. Every access is audited.
 
 model SecureLink {
-  id         Int       @id @default(autoincrement())
-  token      String    @unique
-  prn        Int
-  kind       String // report | opd_note | prescription | discharge_summary | bill
-  refId      String?
-  filePath   String    @db.Text // absolute path on disk (private storage)
-  fileName   String
-  mimeType   String    @default("application/pdf")
-  expiresAt  DateTime
+  id          Int       @id @default(autoincrement())
+  token       String    @unique
+  prn         Int
+  kind        String // report | opd_note | prescription | discharge_summary | bill
+  refId       String?
+  filePath    String    @db.Text // absolute path on disk (private storage)
+  fileName    String
+  mimeType    String    @default("application/pdf")
+  expiresAt   DateTime
   firstUsedAt DateTime?
-  created_at DateTime  @default(now())
+  created_at  DateTime  @default(now())
 
   @@index([expiresAt])
   @@index([prn])
@@ -6997,7 +7032,7 @@ model OphthalmologyDropAdministration {
 
   drugName  String
   eye       String // OD | OS | OU
-  dropCount Int    @default(1)
+  dropCount Int     @default(1)
   purpose   String? // dilation | anaesthesia | diagnostic | treatment
 
   instilledAt   DateTime @default(now())
