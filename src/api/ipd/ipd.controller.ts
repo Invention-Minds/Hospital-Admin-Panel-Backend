@@ -11,6 +11,7 @@ import { generateAndStreamDischargePDF } from './discharge-pdf-generator';
 import { createFollowUpAppointment, FollowUpResult } from './follow-up-automation';
 import { getClinicalActor } from '../../middleware/audit-guard';
 import { getNurseAllowedWardIds } from '../_shared/nursing-roles';
+import { closeDietOnDischarge, raiseDietAlert, onAdmissionTransferred } from '../dietetics/diet-lifecycle';
 
 /** Sprint 4a Phase 1c — concise human-readable summary for the discharge response. */
 const summarizeFollowUp = (r: FollowUpResult): string => {
@@ -271,6 +272,9 @@ export const createIpdAdmission = async (
       where: { id: bedId },
       data: { status: 'occupied' },
     });
+
+    // Tell Dietary (new patient in a bed — never serve the previous diet). Never throws.
+    await raiseDietAlert('ADMISSION', admission.id);
 
     // Push to HMIS ADT via the audit-wrapped pipeline.
     // Wrapper writes success AND failure audit logs; swallowErrors defaults to true
@@ -720,6 +724,9 @@ export const createDischarge = async (
       });
     }
 
+    // End the diet plan + skip trays not yet plated (never throws).
+    await closeDietOnDischarge(admissionId);
+
     // Push to HMIS ADT via the audit-wrapped pipeline (inline-await per Sprint 2 latency policy).
     // Wrapper writes success AND failure audit logs; swallowErrors defaults to true because
     // the discharge side-effects (status flip + bed freed) are already committed.
@@ -891,6 +898,9 @@ export const transferPatient = async (
       });
       return updatedAdmission;
     });
+
+    // Re-stamp pending trays with the new bed + alert Dietary. Never throws.
+    await onAdmissionTransferred(admissionId, fromBedId);
 
     // Push to HMIS ADT via the audit-wrapped pipeline (inline-await per Sprint 2 latency policy).
     // Local transaction already committed; HMIS failure does not roll back bed state.

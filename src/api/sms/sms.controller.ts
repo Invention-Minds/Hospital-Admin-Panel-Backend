@@ -57,7 +57,8 @@ export const sendSMS = async (req: Request, res: Response): Promise<void> => {
 
         if (status === 'received') {
             // let receive_message = `Hi ${patientName}, We have received your appointment request with ${doctorName}. Our team will process it and get back to you shortly. If you have any immediate questions, please reach out to us at 97420 20123. Thank you!`;
-            let receive_message = `Namaste ${patientName}, We have received your appointment request with ${doctorName}. Our team will process it and get back to you shortly. Please contact 080 6923 9999 for any further assistance. Regards, Team Rashtrotthana
+            let receive_message = `Namaste ${patientName},Thank you for choosing ${doctorName}. We have received your appointment request. Please note that appointments depend on the doctor's availability. If there are any changes to your appointment, we request your understanding. Our team will inform you and help you with the next available slot.
+For any assistance, please contact us at 080 6923 9999.
 `
             const dltTemplateIdforreceived = process.env.SMS_DLT_TE_ID_FOR_RECEIVED;
             const urlforreceived = `${apiUrl}/${sender}/${patientPhoneNumber}/${encodeURIComponent(receive_message)}/TXT?apikey=${apiKey}&dltentityid=${process.env.DLT_ENTITY_ID}&dlttempid=${dltTemplateIdforreceived}`;

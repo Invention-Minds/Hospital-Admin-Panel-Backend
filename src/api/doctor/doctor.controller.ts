@@ -66,6 +66,26 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // Reject duplicates: phone is stored with or without the 91 prefix, so match on the last 10 digits.
+    const last10 = String(phone_number).replace(/\D/g, '').slice(-10);
+    const trimmedEmail = typeof email === 'string' ? email.trim() : '';
+    const duplicate = await prisma.doctor.findFirst({
+      where: {
+        OR: [
+          { phone_number: last10 },
+          { phone_number: `91${last10}` },
+          ...(trimmedEmail ? [{ email: trimmedEmail }] : []),
+        ],
+      },
+      select: { name: true, phone_number: true, email: true, isActive: true },
+    });
+    if (duplicate) {
+      const field = duplicate.phone_number.slice(-10) === last10 ? 'mobile number' : 'email';
+      const inactiveHint = duplicate.isActive === false ? ' (inactive — reactivate them from Inactive Doctors)' : '';
+      res.status(409).json({ error: `A doctor with this ${field} already exists: ${duplicate.name}${inactiveHint}.` });
+      return;
+    }
+
     // Map through the availabilityDays object and create an array of available days
     // const availableDaysArray = Object.keys(availabilityDays).filter(day => availabilityDays[day]);
     // const availability = Object.entries(availabilityDays)
@@ -468,6 +488,141 @@ export const getDoctorDetails = async (req: Request, res: Response) => {
     // console.log("Filtered Doctors:", filteredDoctors, "Requested Date:", requestedDate);
 
     res.json(doctors);
+  } catch (error: any) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+}
+
+// Paged version of getDoctorDetails for the Doctor Availability board.
+// Same date rules and includes, but the heavy includes are loaded only for the requested page.
+export const getDoctorDetailsPaged = async (req: Request, res: Response) => {
+  try {
+    const usEasternTime = moment().tz('America/New_York');
+    const indianTime = usEasternTime.clone().tz("Asia/Kolkata");
+
+    const indianDate = indianTime.toDate();
+    const requestedDate = req.query.date && typeof req.query.date === 'string' ? new Date(req.query.date) : indianDate
+    const formattedDate = requestedDate.toISOString().split('T')[0]; // Convert to "YYYY-MM-DD"
+
+    const isToday = requestedDate.toDateString() === indianDate.toDateString();
+    const isFuture = requestedDate > indianDate
+    const today = new Date();
+    const startOfToday = new Date(today.setHours(0, 0, 0, 0));
+    const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+    const isPast = requestedDate < startOfToday;
+
+    const limit = Math.max(1, parseInt(req.query.limit as string) || 10);
+    const departmentQuery = typeof req.query.department === 'string' ? req.query.department.trim().toLowerCase() : '';
+    const searchQuery = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
+
+    // Step 1: light list (no includes) to filter, sort and count
+    const lightDoctors = await prisma.doctor.findMany({
+      where: isPast ? {} : { isActive: true },
+      select: { id: true, name: true, departmentName: true },
+    });
+
+    const stripPrefix = (name: string) => name.replace(/^(Dr\.|Ms\.|Mr\.|Mrs\.)\s*/i, '').trim();
+
+    const matched = lightDoctors
+      .filter(doctor => {
+        const matchesDepartment = departmentQuery === '' || doctor.departmentName?.toLowerCase().includes(departmentQuery);
+        const matchesDoctor = searchQuery === '' || doctor.name.toLowerCase().includes(searchQuery);
+        return matchesDepartment && matchesDoctor;
+      })
+      .sort((a, b) => stripPrefix(a.name).localeCompare(stripPrefix(b.name)));
+
+    const total = matched.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(Math.max(1, parseInt(req.query.page as string) || 1), totalPages);
+    const pageIds = matched.slice((page - 1) * limit, page * limit).map(doctor => doctor.id);
+
+    // Step 2: full details only for the doctors on this page
+    const doctors = pageIds.length === 0 ? [] : await prisma.doctor.findMany({
+      where: { id: { in: pageIds } },
+      include: {
+        availability: {
+          where: isToday
+            ? {
+                OR: [
+                  {
+                    updatedAt: {
+                      gte: startOfToday,
+                      lte: endOfToday,
+                    },
+                  },
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : isFuture
+            ? {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              }
+            : {
+                OR: [
+                  { updatedAt: null },
+                  {
+                    updatedAt: {
+                      lte: requestedDate,
+                    },
+                  },
+                ],
+              },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        },
+        department: true,
+        unavailableDates: true,
+        bookedSlots: {
+          where: {
+            date: formattedDate,
+          },
+        },
+        extraSlots: {
+          where: {
+            date: formattedDate,
+          },
+        },
+        unavailableSlots: {
+          where: {
+            date: formattedDate,
+          },
+          select: {
+            time: true,
+          },
+        },
+        ExtraSlotCount: {
+          where: {
+            date: formattedDate,
+          }
+        }
+      },
+    });
+
+    // Keep the page in sorted order (findMany with `in` does not preserve it)
+    const orderIndex = new Map(pageIds.map((id, index) => [id, index]));
+    doctors.sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0));
+
+    res.json({
+      doctors,
+      total,
+      page,
+      totalPages,
+      // id/name of every doctor for the date, used by the bulk-unavailable dialog
+      allDoctors: lightDoctors.map(doctor => ({ id: doctor.id, name: doctor.name })),
+    });
   } catch (error: any) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { INVALID, parseDateInput } from './quality-input.util';
 
 // Phase 9.26 / Phase 5i — Lab/Radiology amendment / rejection / repeat log.
 // Backs PSQ-002, PSQ-003, LAB-001, RAD-003. Denominators come from
@@ -28,11 +29,12 @@ export const createLabRadEvent = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: `'eventType' must be one of: ${VALID_TYPES.join(', ')}` });
       return;
     }
-    const observedAt = body.observedAt ? new Date(body.observedAt) : new Date();
-    if (Number.isNaN(observedAt.getTime())) {
+    const parsedObs = parseDateInput(body.observedAt);
+    if (parsedObs === INVALID) {
       res.status(400).json({ message: "'observedAt' must be a valid date" });
       return;
     }
+    const observedAt = parsedObs ?? new Date();
 
     const row = await prisma.qualityLabRadEvent.create({
       data: {
@@ -64,10 +66,11 @@ export const listLabRadEvents = async (req: Request, res: Response): Promise<voi
     if (eventType) where['eventType'] = eventType;
     if (period) where['period'] = period;
     if (prn) where['prn'] = prn;
-    const rows = await prisma.qualityLabRadEvent.findMany({
-      where, orderBy: { observedAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const [rows, total] = await Promise.all([
+      prisma.qualityLabRadEvent.findMany({ where, orderBy: { observedAt: 'desc' }, take: 500 }),
+      prisma.qualityLabRadEvent.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-lab-rad] list failed:', error);
     res.status(500).json({ message: 'Failed to load events' });

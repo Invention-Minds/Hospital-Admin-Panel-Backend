@@ -1010,7 +1010,7 @@ async function cop7b_therapeuticDietSelection({ fromDate, toDate }: CheckInput):
   const ids = chronicAdmissions.map((a) => a.id);
   const plans = await prisma.dietPlan.findMany({
     where: { admissionId: { in: ids }, status: 'ACTIVE' },
-    select: { admissionId: true, diet: { select: { code: true, name: true } } },
+    select: { admissionId: true, diet: { select: { code: true, name: true, isGeneral: true } } },
   });
   const planByAdm = new Map(plans.map((p) => [p.admissionId, p]));
 
@@ -1020,7 +1020,11 @@ async function cop7b_therapeuticDietSelection({ fromDate, toDate }: CheckInput):
     const plan = planByAdm.get(a.id);
     const code = (plan?.diet?.code ?? '').toLowerCase();
     const name = (plan?.diet?.name ?? '').toLowerCase();
-    const isGeneric = !plan || code === 'general' || code === 'normal' || name === 'general' || name === 'normal diet';
+    // Primary signal is the "General (non-therapeutic)" flag on the diet. The
+    // name/code match is kept for diets configured before the flag existed.
+    const isGeneric = !plan
+      || !!plan.diet?.isGeneral
+      || code === 'general' || code === 'normal' || name === 'general' || name === 'normal diet';
     if (!isGeneric) {
       compliant += 1;
     } else {

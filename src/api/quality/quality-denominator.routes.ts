@@ -1,12 +1,12 @@
 import express from 'express';
 import { upsertDenominator, listDenominators, deleteDenominator } from './quality-denominator.controller';
 import { authenticateToken } from '../../middleware/middleware';
-import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
 
 const router = express.Router();
 
-router.get('/', authenticateToken, listDenominators);
-router.post('/', authenticateToken, requireClinicalActor, upsertDenominator);
-router.delete('/:id', authenticateToken, requireClinicalActor, deleteDenominator);
+router.get('/', authenticateToken, requireQualityViewer, listDenominators);
+router.post('/', authenticateToken, requireQualityTeam, upsertDenominator);
+router.delete('/:id', authenticateToken, requireQualityTeam, deleteDenominator);
 
 export default router;

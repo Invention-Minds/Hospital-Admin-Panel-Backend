@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { onAdmissionTransferred } from '../dietetics/diet-lifecycle';
 
 /**
  * Phase 5 (WF-4) — IPD ICU Transfer controller.
@@ -336,6 +337,9 @@ export const completeTransfer = async (req: Request, res: Response): Promise<voi
 
       return updatedRow;
     });
+
+    // Patient moved to the ICU bed → re-stamp trays + alert Dietary. Never throws.
+    await onAdmissionTransferred(row.admissionId, row.fromBedId);
 
     await auditLog(req, {
       module: 'icu-transfer',

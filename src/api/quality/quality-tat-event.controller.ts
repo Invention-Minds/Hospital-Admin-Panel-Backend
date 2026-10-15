@@ -3,6 +3,7 @@ import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { getQiDef } from './quality-indicator-catalogue';
 import { TAT_TARGET_MINUTES } from './quality-indicator-auto-source';
+import { INVALID, parseDateInput, parseRangeQuery } from './quality-input.util';
 
 // Phase 9.26 / Phase 5e — Generic TAT event capture.
 //
@@ -36,9 +37,9 @@ export const createTatEvent = async (req: Request, res: Response): Promise<void>
       res.status(400).json({ message: "'startedAt' and 'endedAt' are required" });
       return;
     }
-    const startedAt = new Date(body.startedAt);
-    const endedAt = new Date(body.endedAt);
-    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) {
+    const startedAt = parseDateInput(body.startedAt);
+    const endedAt = parseDateInput(body.endedAt);
+    if (!startedAt || !endedAt || startedAt === INVALID || endedAt === INVALID) {
       res.status(400).json({ message: "Timestamps must be valid ISO dates" });
       return;
     }
@@ -83,16 +84,14 @@ export const listTatEvents = async (req: Request, res: Response): Promise<void> 
     const where: Record<string, unknown> = {};
     if (qiCode) where['qiCode'] = qiCode;
     if (location) where['location'] = { contains: location };
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['startedAt'] = range;
-    }
-    const rows = await prisma.qualityTatEvent.findMany({
-      where, orderBy: { startedAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { res.status(400).json({ message: "'from' / 'to' must be valid dates" }); return; }
+    if (range) where['startedAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.qualityTatEvent.findMany({ where, orderBy: { startedAt: 'desc' }, take: 500 }),
+      prisma.qualityTatEvent.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-tat] list failed:', error);
     res.status(500).json({ message: 'Failed to load TAT events' });

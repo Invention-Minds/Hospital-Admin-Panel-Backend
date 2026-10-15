@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { INVALID, parseDateInput, parseRangeQuery } from './quality-input.util';
 
 // Phase 9.26 / Phase 5b — Infection surveillance / NSI / sterilization /
 // device-day capture. Three sibling controllers sharing one file because
@@ -34,11 +35,12 @@ export const createSurveillance = async (req: Request, res: Response): Promise<v
       res.status(400).json({ message: `'type' must be one of: ${VALID_SURV_TYPES.join(', ')}` });
       return;
     }
-    const observedAt = body.observedAt ? new Date(body.observedAt) : new Date();
-    if (Number.isNaN(observedAt.getTime())) {
+    const parsedObs = parseDateInput(body.observedAt);
+    if (parsedObs === INVALID) {
       res.status(400).json({ message: "'observedAt' must be a valid ISO date" });
       return;
     }
+    const observedAt = parsedObs ?? new Date();
     const row = await prisma.qualitySurveillanceEvent.create({
       data: {
         type: body.type,
@@ -73,10 +75,11 @@ export const listSurveillance = async (req: Request, res: Response): Promise<voi
     if (type) where['type'] = type;
     if (period) where['period'] = period;
     if (ward) where['ward'] = ward;
-    const rows = await prisma.qualitySurveillanceEvent.findMany({
-      where, orderBy: { observedAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const [rows, total] = await Promise.all([
+      prisma.qualitySurveillanceEvent.findMany({ where, orderBy: { observedAt: 'desc' }, take: 500 }),
+      prisma.qualitySurveillanceEvent.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-surv] list failed:', error);
     res.status(500).json({ message: 'Failed to load surveillance events' });
@@ -123,9 +126,10 @@ export const upsertDeviceDay = async (req: Request, res: Response): Promise<void
       res.status(400).json({ message: "'count' must be a non-negative integer" });
       return;
     }
-    // Normalize to start-of-day so the @@unique([date, ward, deviceType]) hits.
-    const day = new Date(body.date);
-    if (Number.isNaN(day.getTime())) { res.status(400).json({ message: "'date' is not parseable" }); return; }
+    // Normalize to IST start-of-day so the @@unique([date, ward, deviceType]) hits.
+    const parsedDay = parseDateInput(body.date);
+    if (!parsedDay || parsedDay === INVALID) { res.status(400).json({ message: "'date' is not parseable" }); return; }
+    const day = new Date(parsedDay);
     day.setHours(0, 0, 0, 0);
 
     const row = await prisma.qualityDeviceDayCount.upsert({
@@ -159,16 +163,14 @@ export const listDeviceDays = async (req: Request, res: Response): Promise<void>
     const where: Record<string, unknown> = {};
     if (ward) where['ward'] = ward;
     if (deviceType) where['deviceType'] = deviceType;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['date'] = range;
-    }
-    const rows = await prisma.qualityDeviceDayCount.findMany({
-      where, orderBy: { date: 'desc' }, take: 1000,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { res.status(400).json({ message: "'from' / 'to' must be valid dates" }); return; }
+    if (range) where['date'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.qualityDeviceDayCount.findMany({ where, orderBy: { date: 'desc' }, take: 1000 }),
+      prisma.qualityDeviceDayCount.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-device-day] list failed:', error);
     res.status(500).json({ message: 'Failed to load device-day counts' });
@@ -210,8 +212,9 @@ export const createSterilizationCycle = async (req: Request, res: Response): Pro
       res.status(400).json({ message: "'passed' (boolean) is required" });
       return;
     }
-    const runAt = body.runAt ? new Date(body.runAt) : new Date();
-    if (Number.isNaN(runAt.getTime())) { res.status(400).json({ message: "'runAt' is not parseable" }); return; }
+    const parsedRun = parseDateInput(body.runAt);
+    if (parsedRun === INVALID) { res.status(400).json({ message: "'runAt' is not parseable" }); return; }
+    const runAt = parsedRun ?? new Date();
 
     const row = await prisma.qualitySterilizationCycle.create({
       data: {
@@ -240,16 +243,14 @@ export const listSterilizationCycles = async (req: Request, res: Response): Prom
     const where: Record<string, unknown> = {};
     if (passed === 'true') where['passed'] = true;
     if (passed === 'false') where['passed'] = false;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['runAt'] = range;
-    }
-    const rows = await prisma.qualitySterilizationCycle.findMany({
-      where, orderBy: { runAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { res.status(400).json({ message: "'from' / 'to' must be valid dates" }); return; }
+    if (range) where['runAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.qualitySterilizationCycle.findMany({ where, orderBy: { runAt: 'desc' }, take: 500 }),
+      prisma.qualitySterilizationCycle.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-steril] list failed:', error);
     res.status(500).json({ message: 'Failed to load cycles' });

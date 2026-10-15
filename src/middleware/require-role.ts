@@ -20,6 +20,8 @@ export interface RequireRoleOptions {
   roles?: string[];
   /** User.subAdminType values that pass (e.g. 'Nursing Superintendent'). */
   subAdminTypes?: string[];
+  /** User.adminType values that pass, only for role 'admin' (e.g. 'Quality Manager'). */
+  adminTypes?: string[];
   /** super_admin always passes unless explicitly disabled. Default true. */
   allowSuperAdmin?: boolean;
 }
@@ -28,6 +30,7 @@ export const requireRole = (opts: RequireRoleOptions) => {
   const allowSuperAdmin = opts.allowSuperAdmin !== false;
   const roles = opts.roles ?? [];
   const subAdminTypes = opts.subAdminTypes ?? [];
+  const adminTypes = opts.adminTypes ?? [];
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const userId = req.user?.id;
@@ -38,7 +41,7 @@ export const requireRole = (opts: RequireRoleOptions) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { role: true, subAdminType: true },
+      select: { role: true, subAdminType: true, adminType: true },
     });
     if (!user) {
       res.status(401).json({ error: 'User not found' });
@@ -48,7 +51,8 @@ export const requireRole = (opts: RequireRoleOptions) => {
     const passes =
       (allowSuperAdmin && user.role === 'super_admin') ||
       roles.includes(user.role) ||
-      (!!user.subAdminType && subAdminTypes.includes(user.subAdminType));
+      (!!user.subAdminType && subAdminTypes.includes(user.subAdminType)) ||
+      (user.role === 'admin' && !!user.adminType && adminTypes.includes(user.adminType));
 
     if (!passes) {
       res.status(403).json({ error: 'You do not have permission to perform this action' });

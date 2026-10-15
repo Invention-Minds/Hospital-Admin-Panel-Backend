@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { INVALID, parseDateInput, parseRangeQuery, prismaErrorCode } from './quality-input.util';
 
 // Phase 9.26 / Phase 5f — Facility / equipment / ambulance / maintenance.
 //
@@ -19,6 +20,10 @@ const EQUIPMENT_EVENT_TYPES = ['pm', 'calibration', 'breakdown'] as const;
 const UTILITY_TYPES = ['power', 'water', 'gas', 'oxygen', 'medical_gas', 'hvac', 'other'] as const;
 const MAINT_TYPES = ['electrical', 'plumbing', 'biomedical', 'civil', 'other'] as const;
 const MAINT_STATUSES = ['open', 'in_progress', 'closed'] as const;
+
+const badRange = (res: Response): void => {
+  res.status(400).json({ message: "'from' / 'to' must be valid dates" });
+};
 
 const username = (req: Request): string | null => req.user?.username ?? null;
 const userId = (req: Request): number | null => (typeof req.user?.id === 'number' ? req.user.id : null);
@@ -58,6 +63,10 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
     });
     res.status(201).json({ data: row });
   } catch (error) {
+    if (prismaErrorCode(error) === 'P2002') {
+      res.status(409).json({ message: 'Equipment with this code already exists' });
+      return;
+    }
     console.error('[facility-equipment] create failed:', error);
     res.status(500).json({ message: 'Failed to add equipment' });
   }
@@ -65,14 +74,19 @@ export const createEquipment = async (req: Request, res: Response): Promise<void
 
 export const listEquipment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { isCritical, status, search } = req.query as Record<string, string | undefined>;
+    const { isCritical, status, search, includeRetired } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
     if (isCritical === 'true') where['isCritical'] = true;
     if (isCritical === 'false') where['isCritical'] = false;
+    // Retired equipment is hidden unless explicitly asked for.
     if (status) where['status'] = status;
+    else if (includeRetired !== 'true') where['status'] = { not: 'retired' };
     if (search) where['OR'] = [{ code: { contains: search } }, { name: { contains: search } }];
-    const rows = await prisma.facilityEquipment.findMany({ where, orderBy: { code: 'asc' }, take: 1000 });
-    res.status(200).json({ data: rows, total: rows.length });
+    const [rows, total] = await Promise.all([
+      prisma.facilityEquipment.findMany({ where, orderBy: { code: 'asc' }, take: 1000 }),
+      prisma.facilityEquipment.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[facility-equipment] list failed:', error);
     res.status(500).json({ message: 'Failed to load equipment' });
@@ -113,12 +127,24 @@ export const deleteEquipment = async (req: Request, res: Response): Promise<void
     const id = req.params.id;
     const ex = await prisma.facilityEquipment.findUnique({ where: { id } });
     if (!ex) { res.status(404).json({ message: 'Equipment not found' }); return; }
+    // Events cascade on delete and feed FMS-001/002/003 — keep history by
+    // retiring instead. Hard delete only when nothing references the row.
+    const eventCount = await prisma.facilityEquipmentEvent.count({ where: { equipmentId: id } });
+    if (eventCount > 0) {
+      await prisma.facilityEquipment.update({ where: { id }, data: { status: 'retired' } });
+      await auditLog(req, {
+        module: 'facility-equipment', action: 'RETIRE', entityType: 'FacilityEquipment',
+        entityId: id, payload: { code: ex.code, from: ex.status, eventCount },
+      });
+      res.status(200).json({ ok: true, retired: true });
+      return;
+    }
     await prisma.facilityEquipment.delete({ where: { id } });
     await auditLog(req, {
       module: 'facility-equipment', action: 'DELETE', entityType: 'FacilityEquipment',
       entityId: id, payload: { code: ex.code },
     });
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, retired: false });
   } catch (error) {
     console.error('[facility-equipment] delete failed:', error);
     res.status(500).json({ message: 'Failed to delete equipment' });
@@ -144,28 +170,40 @@ export const createEquipmentEvent = async (req: Request, res: Response): Promise
       res.status(400).json({ message: `'eventType' must be one of: ${EQUIPMENT_EVENT_TYPES.join(', ')}` });
       return;
     }
+    // Date-only dueAt = end of that IST day, so same-day completion is on time.
+    const dueAt = parseDateInput(body.dueAt, true);
+    const occurredIn = parseDateInput(body.occurredAt);
+    const resolvedAt = parseDateInput(body.resolvedAt);
+    if (dueAt === INVALID || occurredIn === INVALID || resolvedAt === INVALID) {
+      res.status(400).json({ message: "'dueAt', 'occurredAt' and 'resolvedAt' must be valid dates" });
+      return;
+    }
+    const occurredAt = occurredIn ?? new Date();
+    if (resolvedAt && resolvedAt < occurredAt) {
+      res.status(400).json({ message: "'resolvedAt' must be at or after 'occurredAt'" });
+      return;
+    }
     const equipment = await prisma.facilityEquipment.findUnique({
-      where: { id: body.equipmentId }, select: { id: true },
+      where: { id: body.equipmentId }, select: { id: true, status: true },
     });
     if (!equipment) { res.status(404).json({ message: 'Equipment not found' }); return; }
 
     const row = await prisma.facilityEquipmentEvent.create({
       data: {
         equipmentId: body.equipmentId, eventType: body.eventType,
-        dueAt: body.dueAt ? new Date(body.dueAt) : null,
-        occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
-        resolvedAt: body.resolvedAt ? new Date(body.resolvedAt) : null,
+        dueAt, occurredAt,
+        resolvedAt: body.eventType === 'breakdown' ? resolvedAt : null,
         performedBy: username(req), performedById: userId(req),
         notes: body.notes ?? null,
       },
     });
 
-    // Flip equipment.status on breakdown / restore.
-    if (body.eventType === 'breakdown') {
-      if (!body.resolvedAt) {
+    // Flip equipment.status on breakdown / restore (never un-retire).
+    if (body.eventType === 'breakdown' && equipment.status !== 'retired') {
+      if (!resolvedAt) {
         await prisma.facilityEquipment.update({ where: { id: body.equipmentId }, data: { status: 'breakdown' } });
       } else {
-        await prisma.facilityEquipment.update({ where: { id: body.equipmentId }, data: { status: 'operational' } });
+        await restoreIfNoOpenBreakdown(body.equipmentId);
       }
     }
 
@@ -187,20 +225,63 @@ export const listEquipmentEvents = async (req: Request, res: Response): Promise<
     const where: Record<string, unknown> = {};
     if (equipmentId) where['equipmentId'] = equipmentId;
     if (eventType) where['eventType'] = eventType;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['occurredAt'] = range;
-    }
-    const rows = await prisma.facilityEquipmentEvent.findMany({
-      where, orderBy: { occurredAt: 'desc' }, take: 500,
-      include: { equipment: { select: { code: true, name: true, isCritical: true } } },
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { badRange(res); return; }
+    if (range) where['occurredAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.facilityEquipmentEvent.findMany({
+        where, orderBy: { occurredAt: 'desc' }, take: 500,
+        include: { equipment: { select: { code: true, name: true, isCritical: true, status: true } } },
+      }),
+      prisma.facilityEquipmentEvent.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[facility-equipment-event] list failed:', error);
     res.status(500).json({ message: 'Failed to load events' });
+  }
+};
+
+/** Set equipment back to operational once it has no open breakdown events. */
+async function restoreIfNoOpenBreakdown(equipmentId: string): Promise<void> {
+  const open = await prisma.facilityEquipmentEvent.count({
+    where: { equipmentId, eventType: 'breakdown', resolvedAt: null },
+  });
+  if (open > 0) return;
+  await prisma.facilityEquipment.updateMany({
+    where: { id: equipmentId, status: 'breakdown' }, data: { status: 'operational' },
+  });
+}
+
+export const resolveEquipmentEvent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid id' }); return; }
+    const body = (req.body ?? {}) as { resolvedAt?: string | null; notes?: string | null };
+    const parsed = parseDateInput(body.resolvedAt);
+    if (parsed === INVALID) { res.status(400).json({ message: "'resolvedAt' must be a valid date" }); return; }
+    const ex = await prisma.facilityEquipmentEvent.findUnique({ where: { id } });
+    if (!ex) { res.status(404).json({ message: 'Event not found' }); return; }
+    if (ex.eventType !== 'breakdown') { res.status(400).json({ message: 'Only breakdown events can be resolved' }); return; }
+    if (ex.resolvedAt) { res.status(409).json({ message: 'Breakdown is already resolved' }); return; }
+    const resolvedAt = parsed ?? new Date();
+    if (resolvedAt < ex.occurredAt) {
+      res.status(400).json({ message: "'resolvedAt' must be at or after the breakdown time" });
+      return;
+    }
+    const data: Record<string, unknown> = { resolvedAt };
+    const note = typeof body.notes === 'string' ? body.notes.trim() : '';
+    if (note) data['notes'] = ex.notes ? `${ex.notes}\nResolution: ${note}` : `Resolution: ${note}`;
+    const row = await prisma.facilityEquipmentEvent.update({ where: { id }, data });
+    await restoreIfNoOpenBreakdown(ex.equipmentId);
+    await auditLog(req, {
+      module: 'facility-equipment-event', action: 'RESOLVE', entityType: 'FacilityEquipmentEvent',
+      entityId: String(id), payload: { equipmentId: ex.equipmentId, resolvedAt },
+    });
+    res.status(200).json({ data: row });
+  } catch (error) {
+    console.error('[facility-equipment-event] resolve failed:', error);
+    res.status(500).json({ message: 'Failed to resolve breakdown' });
   }
 };
 
@@ -239,11 +320,19 @@ export const createUtilityFailure = async (req: Request, res: Response): Promise
       res.status(400).json({ message: `'utilityType' must be one of: ${UTILITY_TYPES.join(', ')}` });
       return;
     }
+    const occurredAt = parseDateInput(body.occurredAt);
+    if (occurredAt === INVALID) { res.status(400).json({ message: "'occurredAt' must be a valid date" }); return; }
+    const duration = body.durationMinutes;
+    if (duration !== undefined && duration !== null
+        && (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0)) {
+      res.status(400).json({ message: "'durationMinutes' must be a non-negative number" });
+      return;
+    }
     const row = await prisma.facilityUtilityFailure.create({
       data: {
         utilityType: body.utilityType,
-        occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
-        durationMinutes: typeof body.durationMinutes === 'number' ? body.durationMinutes : null,
+        occurredAt: occurredAt ?? new Date(),
+        durationMinutes: typeof duration === 'number' ? Math.round(duration) : null,
         affectedAreas: body.affectedAreas ?? null,
         notes: body.notes ?? null,
         reporter: username(req), reporterId: userId(req),
@@ -265,16 +354,14 @@ export const listUtilityFailures = async (req: Request, res: Response): Promise<
     const { from, to, utilityType } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
     if (utilityType) where['utilityType'] = utilityType;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['occurredAt'] = range;
-    }
-    const rows = await prisma.facilityUtilityFailure.findMany({
-      where, orderBy: { occurredAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { badRange(res); return; }
+    if (range) where['occurredAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.facilityUtilityFailure.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 500 }),
+      prisma.facilityUtilityFailure.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[facility-utility] list failed:', error);
     res.status(500).json({ message: 'Failed to load utility failures' });
@@ -313,20 +400,41 @@ export const createAmbulanceCall = async (req: Request, res: Response): Promise<
   try {
     const body = (req.body ?? {}) as AmbulanceBody;
     if (!body.calledAt) { res.status(400).json({ message: "'calledAt' is required" }); return; }
-    const calledAt = new Date(body.calledAt);
-    if (Number.isNaN(calledAt.getTime())) { res.status(400).json({ message: "'calledAt' must be a valid date" }); return; }
-    const arrivedAt = body.arrivedAt ? new Date(body.arrivedAt) : null;
+    const calledAt = parseDateInput(body.calledAt);
+    if (!calledAt || calledAt === INVALID) { res.status(400).json({ message: "'calledAt' must be a valid date" }); return; }
+    const dispatchedAt = parseDateInput(body.dispatchedAt);
+    const arrivedAt = parseDateInput(body.arrivedAt);
+    if (dispatchedAt === INVALID || arrivedAt === INVALID) {
+      res.status(400).json({ message: "'dispatchedAt' / 'arrivedAt' must be valid dates" });
+      return;
+    }
+    if (dispatchedAt && dispatchedAt < calledAt) {
+      res.status(400).json({ message: "'dispatchedAt' must be at or after 'calledAt'" });
+      return;
+    }
+    if (arrivedAt && arrivedAt < calledAt) {
+      res.status(400).json({ message: "'arrivedAt' must be at or after 'calledAt'" });
+      return;
+    }
+    const suppliedRt = body.responseTimeMinutes;
+    if (suppliedRt !== undefined && suppliedRt !== null
+        && (typeof suppliedRt !== 'number' || !Number.isFinite(suppliedRt) || suppliedRt < 0)) {
+      res.status(400).json({ message: "'responseTimeMinutes' must be a non-negative number" });
+      return;
+    }
 
-    let responseTimeMinutes = body.responseTimeMinutes ?? null;
+    let responseTimeMinutes = typeof suppliedRt === 'number' ? Math.round(suppliedRt) : null;
     if (arrivedAt && responseTimeMinutes === null) {
       responseTimeMinutes = Math.round((arrivedAt.getTime() - calledAt.getTime()) / 60_000);
     }
+    // withinTarget is a non-null column, so an unknown response time is
+    // stored as false (target not evidenced) until the schema allows null.
     const withinTarget = responseTimeMinutes !== null && responseTimeMinutes <= AMBULANCE_TARGET_MINUTES;
 
     const row = await prisma.facilityAmbulanceCall.create({
       data: {
         calledAt,
-        dispatchedAt: body.dispatchedAt ? new Date(body.dispatchedAt) : null,
+        dispatchedAt,
         arrivedAt, responseTimeMinutes,
         withinTarget,
         notes: body.notes ?? null,
@@ -348,16 +456,14 @@ export const listAmbulanceCalls = async (req: Request, res: Response): Promise<v
   try {
     const { from, to } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['calledAt'] = range;
-    }
-    const rows = await prisma.facilityAmbulanceCall.findMany({
-      where, orderBy: { calledAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length, target: AMBULANCE_TARGET_MINUTES });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { badRange(res); return; }
+    if (range) where['calledAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.facilityAmbulanceCall.findMany({ where, orderBy: { calledAt: 'desc' }, take: 500 }),
+      prisma.facilityAmbulanceCall.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total, target: AMBULANCE_TARGET_MINUTES });
   } catch (error) {
     console.error('[facility-ambulance] list failed:', error);
     res.status(500).json({ message: 'Failed to load ambulance calls' });
@@ -401,8 +507,8 @@ export const createMaintenanceComplaint = async (req: Request, res: Response): P
       return;
     }
     if (!body.slaDueAt) { res.status(400).json({ message: "'slaDueAt' is required" }); return; }
-    const slaDueAt = new Date(body.slaDueAt);
-    if (Number.isNaN(slaDueAt.getTime())) { res.status(400).json({ message: "'slaDueAt' must be a valid date" }); return; }
+    const slaDueAt = parseDateInput(body.slaDueAt, true);
+    if (!slaDueAt || slaDueAt === INVALID) { res.status(400).json({ message: "'slaDueAt' must be a valid date" }); return; }
 
     const row = await prisma.facilityMaintenanceComplaint.create({
       data: {
@@ -427,16 +533,14 @@ export const listMaintenanceComplaints = async (req: Request, res: Response): Pr
     const { status, from, to } = req.query as Record<string, string | undefined>;
     const where: Record<string, unknown> = {};
     if (status) where['status'] = status;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['raisedAt'] = range;
-    }
-    const rows = await prisma.facilityMaintenanceComplaint.findMany({
-      where, orderBy: { raisedAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { badRange(res); return; }
+    if (range) where['raisedAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.facilityMaintenanceComplaint.findMany({ where, orderBy: { raisedAt: 'desc' }, take: 500 }),
+      prisma.facilityMaintenanceComplaint.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[facility-maintenance] list failed:', error);
     res.status(500).json({ message: 'Failed to load complaints' });
@@ -455,9 +559,12 @@ export const updateMaintenanceStatus = async (req: Request, res: Response): Prom
     const ex = await prisma.facilityMaintenanceComplaint.findUnique({ where: { id } });
     if (!ex) { res.status(404).json({ message: 'Complaint not found' }); return; }
 
+    const closedAt = parseDateInput(body.closedAt);
+    if (closedAt === INVALID) { res.status(400).json({ message: "'closedAt' must be a valid date" }); return; }
+
     const data: Record<string, unknown> = { status: body.status };
     if (body.status === 'closed') {
-      data['closedAt'] = body.closedAt ? new Date(body.closedAt) : new Date();
+      data['closedAt'] = closedAt ?? new Date();
       data['closedBy'] = username(req);
       data['closedById'] = userId(req);
     } else {

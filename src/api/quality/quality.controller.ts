@@ -1,5 +1,7 @@
 import type { Request, Response } from 'express';
+import moment from 'moment-timezone';
 import prisma from '../../service/prisma-client';
+import { EXPIRED_DISCHARGE_TYPES, HOSPITAL_TZ, INVALID, parseDateInput } from './quality-input.util';
 
 // Phase 9.26 / Phase 5 — Quality / NABH KPI dashboard.
 //
@@ -11,10 +13,23 @@ import prisma from '../../service/prisma-client';
 //   • OT            — cancellation rate, on-time start, delay
 //   • NABH Scorecard — incidents grouped by NABH clause (open vs total)
 
-/** Default range: last 30 days. */
-function parseRange(req: Request): { from: Date; to: Date } {
-  const to = req.query.to ? new Date(req.query.to as string) : new Date();
-  const from = req.query.from ? new Date(req.query.from as string) : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+/**
+ * Default range: last 30 days. YYYY-MM-DD params are IST calendar days —
+ * `from` is start-of-day, `to` is end-of-day. Sends 400 and returns null on bad input.
+ */
+function parseRange(req: Request, res: Response): { from: Date; to: Date } | null {
+  const fromQ = parseDateInput(req.query.from as string | undefined);
+  const toQ = parseDateInput(req.query.to as string | undefined, true);
+  if (fromQ === INVALID || toQ === INVALID) {
+    res.status(400).json({ message: "'from' / 'to' must be valid dates (YYYY-MM-DD)" });
+    return null;
+  }
+  const to = toQ ?? moment.tz(HOSPITAL_TZ).endOf('day').toDate();
+  const from = fromQ ?? moment.tz(to, HOSPITAL_TZ).subtract(30, 'days').startOf('day').toDate();
+  if (from > to) {
+    res.status(400).json({ message: "'from' must be on or before 'to'" });
+    return null;
+  }
   return { from, to };
 }
 const round = (n: number): number => Math.round(n * 10) / 10;
@@ -23,7 +38,9 @@ const round = (n: number): number => Math.round(n * 10) / 10;
 
 export const safety = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
     const where = { reportedAt: { gte: from, lte: to } };
 
     const [total, open, sentinel, bySeverity, byCategory, bySource, byNabh] = await Promise.all([
@@ -55,17 +72,21 @@ export const safety = async (req: Request, res: Response): Promise<void> => {
 
 export const clinical = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
     const [admissions, discharges, expired, lama, dama, dischargedWithLos] = await Promise.all([
       prisma.ipdAdmission.count({ where: { admissionDate: { gte: from, lte: to } } }),
       prisma.ipdDischarge.count({ where: { dischargeDate: { gte: from, lte: to } } }),
-      prisma.ipdDischarge.count({ where: { dischargeDate: { gte: from, lte: to }, dischargeType: 'expired' } }),
-      prisma.lamaRecord.count({ where: { lamaTime: { gte: from, lte: to } } }).catch(() => 0),
-      prisma.damaRecord.count({ where: { dischargeTime: { gte: from, lte: to } } }).catch(() => 0),
+      prisma.ipdDischarge.count({ where: { dischargeDate: { gte: from, lte: to }, dischargeType: { in: EXPIRED_DISCHARGE_TYPES } } }),
+      // IPD-only so ER LAMA/DAMA aren't divided by IPD discharges.
+      prisma.lamaRecord.count({ where: { lamaTime: { gte: from, lte: to }, admissionId: { not: null } } }).catch(() => 0),
+      prisma.damaRecord.count({ where: { dischargeTime: { gte: from, lte: to }, admissionId: { not: null } } }).catch(() => 0),
+      // Row data needed for LoS; cap matches the auto-source sweep.
       prisma.ipdDischarge.findMany({
         where: { dischargeDate: { gte: from, lte: to } },
         select: { dischargeDate: true, admission: { select: { admissionDate: true } } },
-        take: 1000,
+        take: 20000,
       }),
     ]);
     const losSum = dischargedWithLos.reduce(
@@ -91,55 +112,70 @@ export const clinical = async (req: Request, res: Response): Promise<void> => {
 
 export const timeliness = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
 
-    // (1) Initial assessment within 24h of admission.
-    const admits = await prisma.ipdAdmission.findMany({
-      where: { admissionDate: { gte: from, lte: to } },
-      select: { admissionDate: true, initialAssessment: { select: { status: true, updatedAt: true } } },
-      take: 2000,
-    });
+    // Denominators via count(); rows are fetched only for the candidates whose
+    // timestamps must be diffed (Prisma can't filter on column arithmetic).
+    const labWhere = { criticalFlag: true, isDeleted: false, reportedAt: { gte: from, lte: to } };
+    const [admitTotal, dischTotal, labTotal, signedIa, signedDs, ackedLabs] = await Promise.all([
+      prisma.ipdAdmission.count({ where: { admissionDate: { gte: from, lte: to } } }),
+      prisma.ipdDischarge.count({ where: { dischargeDate: { gte: from, lte: to } } }),
+      prisma.investigationResult.count({ where: labWhere }),
+      // (1) Initial assessment consultant-signed within 24h of admission.
+      prisma.ipdAdmission.findMany({
+        where: {
+          admissionDate: { gte: from, lte: to },
+          initialAssessment: { status: 'CONSULTANT_SIGNED' },
+        },
+        select: { admissionDate: true, initialAssessment: { select: { consultantSignedAt: true, filledAt: true } } },
+        take: 20000,
+      }),
+      // (2) Discharge summary clinician-signed within 24h of discharge.
+      prisma.ipdDischarge.findMany({
+        where: {
+          dischargeDate: { gte: from, lte: to },
+          summaryStatus: { in: ['SIGNED', 'DELIVERED'] },
+          clinicianSignedAt: { not: null },
+        },
+        select: { dischargeDate: true, clinicianSignedAt: true },
+        take: 20000,
+      }),
+      // (3) Critical labs acknowledged within 30 min.
+      prisma.investigationResult.findMany({
+        where: { ...labWhere, acknowledgedAt: { not: null } },
+        select: { reportedAt: true, acknowledgedAt: true },
+        take: 20000,
+      }),
+    ]);
+
     let iaWithin = 0;
-    for (const a of admits) {
-      const ia = a.initialAssessment;
-      if (ia?.status === 'CONSULTANT_SIGNED' && ia.updatedAt) {
-        const diffH = (new Date(ia.updatedAt).getTime() - new Date(a.admissionDate).getTime()) / 3_600_000;
-        if (diffH <= 24) iaWithin += 1;
-      }
+    for (const a of signedIa) {
+      // Legacy rows may lack consultantSignedAt — fall back to filledAt.
+      const signedAt = a.initialAssessment?.consultantSignedAt ?? a.initialAssessment?.filledAt;
+      if (!signedAt) continue;
+      const diffH = (new Date(signedAt).getTime() - new Date(a.admissionDate).getTime()) / 3_600_000;
+      if (diffH <= 24) iaWithin += 1;
     }
-
-    // (2) Discharge summary signed within 24h.
-    const dischs = await prisma.ipdDischarge.findMany({
-      where: { dischargeDate: { gte: from, lte: to } },
-      select: { dischargeDate: true, summaryStatus: true, updatedAt: true },
-      take: 2000,
-    });
     let dsWithin = 0;
-    for (const d of dischs) {
-      if ((d.summaryStatus === 'SIGNED' || d.summaryStatus === 'DELIVERED') && d.updatedAt) {
-        const diffH = (new Date(d.updatedAt).getTime() - new Date(d.dischargeDate).getTime()) / 3_600_000;
-        if (diffH <= 24) dsWithin += 1;
-      }
+    for (const d of signedDs) {
+      if (!d.clinicianSignedAt) continue;
+      const diffH = (new Date(d.clinicianSignedAt).getTime() - new Date(d.dischargeDate).getTime()) / 3_600_000;
+      if (diffH <= 24) dsWithin += 1;
     }
-
-    // (3) Critical labs acknowledged within 30 min.
-    const labs = await prisma.investigationResult.findMany({
-      where: { criticalFlag: true, isDeleted: false, reportedAt: { gte: from, lte: to } },
-      select: { reportedAt: true, acknowledgedAt: true },
-      take: 2000,
-    });
     let labWithin = 0;
-    for (const l of labs) {
-      if (l.acknowledgedAt && l.reportedAt) {
-        const diffM = (new Date(l.acknowledgedAt).getTime() - new Date(l.reportedAt).getTime()) / 60_000;
-        if (diffM <= 30) labWithin += 1;
-      }
+    for (const l of ackedLabs) {
+      if (!l.acknowledgedAt || !l.reportedAt) continue;
+      const diffM = (new Date(l.acknowledgedAt).getTime() - new Date(l.reportedAt).getTime()) / 60_000;
+      if (diffM <= 30) labWithin += 1;
     }
 
+    const pct = (n: number, d: number): number => (d > 0 ? round((n / d) * 100) : 0);
     res.status(200).json({
-      initialAssessmentWithin24h: { within: iaWithin, total: admits.length, pct: admits.length > 0 ? round((iaWithin / admits.length) * 100) : 0 },
-      dischargeSummarySignedWithin24h: { within: dsWithin, total: dischs.length, pct: dischs.length > 0 ? round((dsWithin / dischs.length) * 100) : 0 },
-      criticalLabAckWithin30m: { within: labWithin, total: labs.length, pct: labs.length > 0 ? round((labWithin / labs.length) * 100) : 0 },
+      initialAssessmentWithin24h: { within: iaWithin, total: admitTotal, pct: pct(iaWithin, admitTotal) },
+      dischargeSummarySignedWithin24h: { within: dsWithin, total: dischTotal, pct: pct(dsWithin, dischTotal) },
+      criticalLabAckWithin30m: { within: labWithin, total: labTotal, pct: pct(labWithin, labTotal) },
       window: { from, to },
     });
   } catch (error) {
@@ -152,30 +188,45 @@ export const timeliness = async (req: Request, res: Response): Promise<void> => 
 
 export const experience = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
-    const surveys = await prisma.feedbackSurvey.findMany({
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
+    const npsGroups = await prisma.feedbackSurvey.groupBy({
+      by: ['npsScore'],
       where: { status: 'completed', npsScore: { not: null }, respondedAt: { gte: from, lte: to } },
-      select: { npsScore: true },
-      take: 10000,
+      _count: { _all: true },
     });
     let promoters = 0, passives = 0, detractors = 0;
-    for (const r of surveys) {
-      const s = r.npsScore!;
-      if (s >= 9) promoters += 1;
-      else if (s >= 7) passives += 1;
-      else detractors += 1;
+    for (const g of npsGroups) {
+      const s = g.npsScore;
+      if (s === null) continue;
+      const n = g._count._all;
+      if (s >= 9) promoters += n;
+      else if (s >= 7) passives += n;
+      else detractors += n;
     }
-    const npsScore = surveys.length > 0 ? Math.round(((promoters - detractors) / surveys.length) * 100) : 0;
+    const surveyTotal = promoters + passives + detractors;
+    const npsScore = surveyTotal > 0 ? Math.round(((promoters - detractors) / surveyTotal) * 100) : 0;
 
+    const raised = { raisedAt: { gte: from, lte: to } };
     const [complaints, resolved, slaBreached, active] = await Promise.all([
-      prisma.complaint.count({ where: { raisedAt: { gte: from, lte: to } } }),
-      prisma.complaint.count({ where: { raisedAt: { gte: from, lte: to }, status: 'resolved' } }),
-      prisma.complaint.count({ where: { raisedAt: { gte: from, lte: to }, slaDueAt: { lt: new Date() }, status: { not: 'resolved' } } }),
-      prisma.complaint.count({ where: { raisedAt: { gte: from, lte: to }, status: { in: ['open', 'acknowledged', 'escalated'] } } }),
+      prisma.complaint.count({ where: raised }),
+      prisma.complaint.count({ where: { ...raised, status: 'resolved' } }),
+      // Breached = still open past SLA, or resolved after SLA.
+      prisma.complaint.count({
+        where: {
+          ...raised,
+          OR: [
+            { slaDueAt: { lt: new Date() }, status: { not: 'resolved' } },
+            { status: 'resolved', resolvedAt: { gt: prisma.complaint.fields.slaDueAt } },
+          ],
+        },
+      }),
+      prisma.complaint.count({ where: { ...raised, status: { in: ['open', 'acknowledged', 'escalated'] } } }),
     ]);
 
     res.status(200).json({
-      nps: { score: npsScore, promoters, passives, detractors, total: surveys.length },
+      nps: { score: npsScore, promoters, passives, detractors, total: surveyTotal },
       complaints: {
         total: complaints, resolved, slaBreached, active,
         slaCompliancePct: complaints > 0 ? round(((complaints - slaBreached) / complaints) * 100) : 100,
@@ -192,14 +243,18 @@ export const experience = async (req: Request, res: Response): Promise<void> => 
 
 export const otEfficiency = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
     const [total, cancelled, started] = await Promise.all([
       prisma.otSchedule.count({ where: { plannedStart: { gte: from, lte: to } } }).catch(() => 0),
-      prisma.otSchedule.count({ where: { plannedStart: { gte: from, lte: to }, status: 'cancelled' } }).catch(() => 0),
+      // ot-schedule writes 'CANCELLED'; legacy rows may be lower-case.
+      prisma.otSchedule.count({ where: { plannedStart: { gte: from, lte: to }, status: { in: ['CANCELLED', 'cancelled'] } } }).catch(() => 0),
+      // Row data needed for delay maths.
       prisma.otSchedule.findMany({
         where: { plannedStart: { gte: from, lte: to }, actualStart: { not: null } },
         select: { plannedStart: true, actualStart: true },
-        take: 2000,
+        take: 20000,
       }).catch(() => [] as Array<{ plannedStart: Date; actualStart: Date | null }>),
     ]);
     let onTime = 0;
@@ -227,7 +282,9 @@ export const otEfficiency = async (req: Request, res: Response): Promise<void> =
 
 export const nabhScorecard = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { from, to } = parseRange(req);
+    const range = parseRange(req, res);
+    if (!range) return;
+    const { from, to } = range;
     const groups = await prisma.incident.groupBy({
       by: ['nabhClause', 'status'],
       where: { reportedAt: { gte: from, lte: to }, nabhClause: { not: null } },

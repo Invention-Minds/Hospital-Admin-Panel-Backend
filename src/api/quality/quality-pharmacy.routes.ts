@@ -4,17 +4,20 @@ import {
   createStockEvent, listStockEvents, deleteStockEvent,
 } from './quality-pharmacy.controller';
 import { authenticateToken } from '../../middleware/middleware';
-import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
 
 // Phase 9.26 / Phase 5g — two sibling sub-routers mounted in index.ts.
+// Reads: Quality viewers; writes: Quality team (see _shared/quality-roles.ts).
+const guard = [authenticateToken, requireQualityTeam];
+const view = [authenticateToken, requireQualityViewer];
 
 export const criticalDrugsRouter = express.Router();
-criticalDrugsRouter.get('/', authenticateToken, listDrugs);
-criticalDrugsRouter.post('/', authenticateToken, requireClinicalActor, createDrug);
-criticalDrugsRouter.put('/:id', authenticateToken, requireClinicalActor, updateDrug);
-criticalDrugsRouter.delete('/:id', authenticateToken, requireClinicalActor, deleteDrug);
+criticalDrugsRouter.get('/', ...view, listDrugs);
+criticalDrugsRouter.post('/', ...guard, createDrug);
+criticalDrugsRouter.put('/:id', ...guard, updateDrug);
+criticalDrugsRouter.delete('/:id', ...guard, deleteDrug);
 
 export const stockEventsRouter = express.Router();
-stockEventsRouter.get('/', authenticateToken, listStockEvents);
-stockEventsRouter.post('/', authenticateToken, requireClinicalActor, createStockEvent);
-stockEventsRouter.delete('/:id', authenticateToken, requireClinicalActor, deleteStockEvent);
+stockEventsRouter.get('/', ...view, listStockEvents);
+stockEventsRouter.post('/', ...guard, createStockEvent);
+stockEventsRouter.delete('/:id', ...guard, deleteStockEvent);

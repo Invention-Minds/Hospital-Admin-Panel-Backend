@@ -9,40 +9,57 @@ import prisma from '../../service/prisma-client';
 // usable from any device. Idempotent: only one survey per encounter.
 
 const SURVEY_EXPIRY_DAYS = 14;
+const HOUR = 60 * 60 * 1000;
 
 function freshToken(): string { return crypto.randomBytes(16).toString('hex'); }
+const expiry = (): Date => new Date(Date.now() + SURVEY_EXPIRY_DAYS * 24 * HOUR);
+
+/** Local (server TZ) YYYY-MM-DD — Appointment.date is a local date string. */
+function localDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 async function autoCreateOpdSurveys(): Promise<number> {
-  // OPD: completed appointments from the last 24h with no survey yet.
-  const sinceCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const minWait = new Date(Date.now() - 2 * 60 * 60 * 1000); // wait 2h after visit
+  // OPD: appointments completed 2h–24h ago with no survey yet. The visit's
+  // end is the consultation-end / checkout timestamp, not the date-only `date`.
+  const now = Date.now();
+  const sinceCutoff = new Date(now - 24 * HOUR);
+  const minWait = new Date(now - 2 * HOUR);
   const appts = await prisma.appointment.findMany({
     where: {
       status: 'completed',
-      date: { gte: sinceCutoff.toISOString().slice(0, 10) },
+      date: { gte: localDate(new Date(now - 48 * HOUR)) },
     },
-    select: { id: true, prnNumber: true, patientName: true, date: true },
-    take: 1000,
-  }).catch(() => [] as Array<{ id: number; prnNumber: number; patientName: string; date: string }>);
+    select: {
+      id: true, prnNumber: true, patientName: true,
+      endConsultationTime: true, checkedOutTime: true, updated_at: true,
+    },
+    take: 2000,
+  });
+  const due = appts
+    .map((a) => ({ ...a, completedAt: a.endConsultationTime ?? a.checkedOutTime ?? a.updated_at }))
+    .filter((a) => a.completedAt >= sinceCutoff && a.completedAt <= minWait);
+  if (!due.length) return 0;
+
+  const existing = await prisma.feedbackSurvey.findMany({
+    where: { appointmentId: { in: due.map((a) => a.id) }, template: 'opd-post-visit' },
+    select: { appointmentId: true },
+  });
+  const done = new Set(existing.map((s) => s.appointmentId));
   let created = 0;
-  for (const a of appts) {
-    const apptDate = new Date(a.date);
-    if (apptDate > minWait) continue; // too soon
-    const existing = await prisma.feedbackSurvey.findFirst({
-      where: { appointmentId: a.id, template: 'opd-post-visit' },
-      select: { id: true },
-    });
-    if (existing) continue;
+  for (const a of due) {
+    if (done.has(a.id)) continue;
     await prisma.feedbackSurvey.create({
       data: {
         token: freshToken(),
         template: 'opd-post-visit',
-        patientPrn: String(a.prnNumber),
+        patientPrn: a.prnNumber != null ? String(a.prnNumber) : null,
         patientName: a.patientName,
         appointmentId: a.id,
-        encounterDate: apptDate,
+        encounterDate: a.completedAt,
         status: 'pending',
-        expiresAt: new Date(Date.now() + SURVEY_EXPIRY_DAYS * 24 * 60 * 60 * 1000),
+        expiresAt: expiry(),
       },
     });
     created += 1;
@@ -52,7 +69,7 @@ async function autoCreateOpdSurveys(): Promise<number> {
 
 async function autoCreateIpdSurveys(): Promise<number> {
   // IPD: discharges from the last 3 days with no survey yet.
-  const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const since = new Date(Date.now() - 3 * 24 * HOUR);
   const discharges = await prisma.ipdDischarge.findMany({
     where: { dischargeDate: { gte: since } },
     select: {
@@ -60,14 +77,17 @@ async function autoCreateIpdSurveys(): Promise<number> {
       admission: { select: { prn: true } },
     },
     take: 500,
-  }).catch(() => [] as Array<{ id: string; admissionId: string; dischargeDate: Date; admission: { prn: string } | null }>);
+  });
+  if (!discharges.length) return 0;
+
+  const existing = await prisma.feedbackSurvey.findMany({
+    where: { admissionId: { in: discharges.map((d) => d.admissionId) }, template: 'ipd-discharge' },
+    select: { admissionId: true },
+  });
+  const done = new Set(existing.map((s) => s.admissionId));
   let created = 0;
   for (const d of discharges) {
-    const existing = await prisma.feedbackSurvey.findFirst({
-      where: { admissionId: d.admissionId, template: 'ipd-discharge' },
-      select: { id: true },
-    });
-    if (existing) continue;
+    if (done.has(d.admissionId)) continue;
     await prisma.feedbackSurvey.create({
       data: {
         token: freshToken(),
@@ -77,7 +97,7 @@ async function autoCreateIpdSurveys(): Promise<number> {
         admissionId: d.admissionId,
         encounterDate: d.dischargeDate,
         status: 'pending',
-        expiresAt: new Date(Date.now() + SURVEY_EXPIRY_DAYS * 24 * 60 * 60 * 1000),
+        expiresAt: expiry(),
       },
     });
     created += 1;
@@ -86,23 +106,29 @@ async function autoCreateIpdSurveys(): Promise<number> {
 }
 
 async function autoCreateErSurveys(): Promise<number> {
-  // ER: closed/discharged emergencies from the last 24h with no survey.
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // ER: visits closed/discharged in the last 24h with no survey. Emergency has
+  // no dedicated discharge timestamp, so updatedAt (bumped by the status
+  // change) is the closure proxy; createdAt bounds it to recent visits.
+  const now = Date.now();
   const rows = await prisma.emergency.findMany({
     where: {
-      createdAt: { gte: since },
+      updatedAt: { gte: new Date(now - 24 * HOUR) },
+      createdAt: { gte: new Date(now - 7 * 24 * HOUR) },
       status: { in: ['discharged', 'closed', 'CLOSED', 'DISCHARGED'] },
     },
-    select: { id: true, patientPrn: true, patientName: true, createdAt: true },
+    select: { id: true, patientPrn: true, patientName: true, updatedAt: true },
     take: 500,
-  }).catch(() => [] as Array<{ id: number; patientPrn: string | null; patientName: string; createdAt: Date }>);
+  });
+  if (!rows.length) return 0;
+
+  const existing = await prisma.feedbackSurvey.findMany({
+    where: { emergencyId: { in: rows.map((e) => e.id) }, template: 'er-discharge' },
+    select: { emergencyId: true },
+  });
+  const done = new Set(existing.map((s) => s.emergencyId));
   let created = 0;
   for (const e of rows) {
-    const existing = await prisma.feedbackSurvey.findFirst({
-      where: { emergencyId: e.id, template: 'er-discharge' },
-      select: { id: true },
-    });
-    if (existing) continue;
+    if (done.has(e.id)) continue;
     await prisma.feedbackSurvey.create({
       data: {
         token: freshToken(),
@@ -110,15 +136,20 @@ async function autoCreateErSurveys(): Promise<number> {
         patientPrn: e.patientPrn,
         patientName: e.patientName,
         emergencyId: e.id,
-        encounterDate: e.createdAt,
+        encounterDate: e.updatedAt,
         status: 'pending',
-        expiresAt: new Date(Date.now() + SURVEY_EXPIRY_DAYS * 24 * 60 * 60 * 1000),
+        expiresAt: expiry(),
       },
     });
     created += 1;
   }
   return created;
 }
+
+const logged = (label: string) => (err: unknown): number => {
+  console.error(`[feedback-send] ${label} failed:`, (err as Error).message);
+  return 0;
+};
 
 export const registerFeedbackSendCron = (): void => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -130,9 +161,9 @@ export const registerFeedbackSendCron = (): void => {
     if (isRunning) { console.log('[feedback-send] previous run still in progress — skipping this tick'); return; }
     isRunning = true;
     try {
-      const o = await autoCreateOpdSurveys().catch(() => 0);
-      const i = await autoCreateIpdSurveys().catch(() => 0);
-      const e = await autoCreateErSurveys().catch(() => 0);
+      const o = await autoCreateOpdSurveys().catch(logged('OPD'));
+      const i = await autoCreateIpdSurveys().catch(logged('IPD'));
+      const e = await autoCreateErSurveys().catch(logged('ER'));
       const total = o + i + e;
       if (total > 0) console.log(`[feedback-send] created ${total} surveys (OPD=${o}, IPD=${i}, ER=${e})`);
     } catch (err) {

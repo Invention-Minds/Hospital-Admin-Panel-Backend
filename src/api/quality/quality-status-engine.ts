@@ -56,12 +56,23 @@ export function evaluateStatus(input: EvaluateInput): EvaluateOutput {
     return { status: 'critical', severity: 'critical' };
   }
 
-  // 2. No benchmark — caller must review.
-  if (benchmark === null || benchmark === undefined) {
+  // 2. Non-computable value (e.g. denominator 0) — never green; needs review.
+  if (!Number.isFinite(value)) {
     return { status: 'amber', severity: 'medium' };
   }
 
-  // 3. Zero-tolerance tier — any nonzero value is critical when benchmark=0.
+  // 3. No benchmark. Zero-tolerance (event-count) tier: any event is critical,
+  //    none is green. Everything else needs manual review.
+  if (benchmark === null || benchmark === undefined) {
+    if (isCriticalTier && direction === 'higher-is-bad') {
+      return value > 0
+        ? { status: 'critical', severity: 'critical' }
+        : { status: 'green', severity: 'low' };
+    }
+    return { status: 'amber', severity: 'medium' };
+  }
+
+  // 4. Zero-tolerance tier — any nonzero value is critical when benchmark=0.
   if (isCriticalTier && benchmark === 0 && value > 0) {
     return { status: 'critical', severity: 'critical' };
   }
@@ -72,6 +83,8 @@ export function evaluateStatus(input: EvaluateInput): EvaluateOutput {
     case 'higher-is-bad': {
       // breach when value > benchmark; amber band sits just below.
       if (value > benchmark) return { status: 'red', severity: 'high' };
+      // benchmark 0 has no amber band — zero events is the target.
+      if (benchmark <= 0) return { status: 'green', severity: 'low' };
       const amberFloor = benchmark * amberFactor;
       if (value >= amberFloor) return { status: 'amber', severity: 'medium' };
       return { status: 'green', severity: 'low' };
@@ -79,9 +92,11 @@ export function evaluateStatus(input: EvaluateInput): EvaluateOutput {
     case 'lower-is-bad': {
       // benchmark is a target floor (e.g. 95% compliance); breach when value < benchmark.
       if (value < benchmark) return { status: 'red', severity: 'high' };
+      // A 100% target met in full has no headroom — green.
+      if (benchmark >= 100) return { status: 'green', severity: 'low' };
       const amberCeil = benchmark + (100 - benchmark) * (1 - amberFactor);
       // amber when only just meeting target
-      if (value <= amberCeil) return { status: 'amber', severity: 'medium' };
+      if (value < amberCeil) return { status: 'amber', severity: 'medium' };
       return { status: 'green', severity: 'low' };
     }
     case 'target-range': {
@@ -182,6 +197,7 @@ export function evaluateForDef(
   denominator: number,
   benchmarkOverride: number | null,
   criticalTriggered = false,
+  amberThresholdPct?: number | null,
 ): EvaluateOutput & { value: number } {
   const value = def.multiplier === 'NA' && denominator === 0
     ? numerator                 // sentinel-style "count" indicators (e.g. PSQ-029)
@@ -194,6 +210,7 @@ export function evaluateForDef(
     direction: def.direction,
     isCriticalTier: def.isCritical,
     criticalTriggered,
+    amberThresholdPct: amberThresholdPct ?? undefined,
   });
   return { ...out, value };
 }

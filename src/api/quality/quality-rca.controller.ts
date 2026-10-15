@@ -2,7 +2,8 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { resolveTargetRole } from '../../service/role-alias';
-import { raiseByRule } from '../incident/rule-catalogue';
+import { RULE_CATALOGUE } from '../incident/rule-catalogue';
+import { raiseAutoIncident } from '../incident/incident.controller';
 import type { Chapter } from './quality-indicator-catalogue';
 
 // Phase 9.26 / Phase 3 — Quality Indicator RCA workflow.
@@ -113,7 +114,9 @@ export async function checkTrendForRecord(opts: {
       escalationOwner: opts.escalationOwner,
     });
 
-    // Loud bell — trend breach is one of the strongest QI signals.
+    // Loud bell — trend breach is one of the strongest QI signals. Only on
+    // the first open; re-captures of the same period must not re-notify.
+    if (!ensured.created) return { trendBreach: true, rcaCreated: false };
     try {
       const targetRole = await resolveTargetRole(opts.escalationOwner);
       await prisma.notification.create({
@@ -150,7 +153,11 @@ export async function bridgeCriticalQiToIncident(opts: {
   criticalRule?: string | null;
 }): Promise<void> {
   try {
-    await raiseByRule('QI_CRITICAL_BREACH', {
+    const def = RULE_CATALOGUE['QI_CRITICAL_BREACH'];
+    // Honour the runtime IncidentRule toggle (same as raiseByRule).
+    const rule = await prisma.incidentRule.findUnique({ where: { key: def.key } }).catch(() => null);
+    if (rule && rule.isActive === false) return;
+    const ctx = {
       extras: {
         qiCode: opts.qiCode,
         chapter: opts.chapter,
@@ -161,6 +168,18 @@ export async function bridgeCriticalQiToIncident(opts: {
         criticalTrigger: opts.criticalRule ?? null,
         nabhClause: opts.nabhClause ?? null,
       },
+    };
+    // qiCode + qiPeriod let raiseAutoIncident dedupe per indicator-period
+    // (no patient/encounter context here); title carries the period.
+    await raiseAutoIncident({
+      ruleKey: def.key,
+      category: def.category,
+      severity: def.defaultSeverity,
+      nabhClause: def.nabhClause,
+      title: `QI critical breach: ${opts.qiCode} (${opts.period})`,
+      description: def.buildDescription(ctx),
+      qiCode: opts.qiCode,
+      qiPeriod: opts.period,
     });
   } catch (err) {
     console.warn('[qi-rca:incident-bridge] failed:', (err as Error).message);
@@ -169,33 +188,48 @@ export async function bridgeCriticalQiToIncident(opts: {
 
 // ─── List + stats ───────────────────────────────────────────────────────
 
+function findRcaBucket(where: Record<string, unknown>, take: number) {
+  return prisma.qualityIndicatorRca.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      record: {
+        select: {
+          id: true, qiCode: true, period: true, calculatedValue: true,
+          status: true, severity: true, benchmarkUsed: true,
+          indicator: { select: { name: true, chapter: true, department: true, unit: true, escalationOwner: true } },
+        },
+      },
+    },
+    take,
+  });
+}
+
 export const listRcas = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, owner, qiCode, overdue } = req.query as Record<string, string | undefined>;
 
-    const where: Record<string, unknown> = {};
-    if (status) where['status'] = status;
-    if (owner) where['owner'] = owner;
-    if (qiCode) where['record'] = { qiCode };
-    if (overdue === 'true') {
-      where['status'] = { not: 'closed' };
-      where['dueDate'] = { lt: new Date() };
+    if (status && !(VALID_STATUSES as readonly string[]).includes(status)) {
+      res.status(400).json({ message: 'Invalid status' });
+      return;
     }
 
-    const rows = await prisma.qualityIndicatorRca.findMany({
-      where,
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-      include: {
-        record: {
-          select: {
-            id: true, qiCode: true, period: true, calculatedValue: true,
-            status: true, severity: true, benchmarkUsed: true,
-            indicator: { select: { name: true, chapter: true, department: true, unit: true, escalationOwner: true } },
-          },
-        },
-      },
-      take: 500,
-    });
+    const where: Record<string, unknown> = {};
+    if (owner) where['owner'] = owner;
+    if (qiCode) where['record'] = { qiCode };
+    if (overdue === 'true') where['dueDate'] = { lt: new Date() };
+
+    // Workflow order (open → in_progress → closed), queried bucket by bucket
+    // so the cap can only ever drop closed rows, never open ones.
+    let buckets: string[] = status ? [status] : [...VALID_STATUSES];
+    if (overdue === 'true') buckets = buckets.filter((s) => s !== 'closed');
+
+    const LIMIT = 500;
+    const rows: Array<Awaited<ReturnType<typeof findRcaBucket>>[number]> = [];
+    for (const s of buckets) {
+      if (rows.length >= LIMIT) break;
+      rows.push(...await findRcaBucket({ ...where, status: s }, LIMIT - rows.length));
+    }
     res.status(200).json({ data: rows, total: rows.length });
   } catch (error) {
     console.error('[qi-rca] list failed:', error);
@@ -276,12 +310,43 @@ export const updateRca = async (req: Request, res: Response): Promise<void> => {
     if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid id' }); return; }
 
     const body = (req.body ?? {}) as RcaBody;
-    const existing = await prisma.qualityIndicatorRca.findUnique({ where: { id }, select: { id: true, status: true } });
+    const existing = await prisma.qualityIndicatorRca.findUnique({
+      where: { id },
+      select: { id: true, status: true, rootCause: true, correctiveActions: true, preventiveActions: true, completedAt: true },
+    });
     if (!existing) { res.status(404).json({ message: 'RCA not found' }); return; }
 
     if (body.status && !VALID_STATUSES.includes(body.status)) {
       res.status(400).json({ message: 'Invalid status' });
       return;
+    }
+
+    // Dates: undefined = leave as is, '' / null = clear, otherwise must parse.
+    const dates: Record<string, Date | null | undefined> = {};
+    for (const key of ['dueDate', 'completedAt', 'effectivenessReviewAt'] as const) {
+      const raw = body[key];
+      if (raw === undefined) continue;
+      if (raw === null || raw === '') { dates[key] = null; continue; }
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) {
+        res.status(400).json({ message: `Invalid date for '${key}'` });
+        return;
+      }
+      dates[key] = d;
+    }
+
+    // Closing requires a documented root cause and at least one action plan.
+    if (body.status === 'closed' && existing.status !== 'closed') {
+      const pick = (k: 'rootCause' | 'correctiveActions' | 'preventiveActions') =>
+        (body[k] !== undefined ? body[k] : existing[k])?.trim() ?? '';
+      if (!pick('rootCause')) {
+        res.status(400).json({ message: 'Root cause is required before closing the RCA' });
+        return;
+      }
+      if (!pick('correctiveActions') && !pick('preventiveActions')) {
+        res.status(400).json({ message: 'Corrective or preventive actions are required before closing the RCA' });
+        return;
+      }
     }
 
     const data: Record<string, unknown> = {
@@ -293,14 +358,14 @@ export const updateRca = async (req: Request, res: Response): Promise<void> => {
       preventiveActions: body.preventiveActions ?? undefined,
       owner: body.owner ?? undefined,
       ownerId: body.ownerId ?? undefined,
-      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-      completedAt: body.completedAt ? new Date(body.completedAt) : undefined,
       effectivenessReview: body.effectivenessReview ?? undefined,
-      effectivenessReviewAt: body.effectivenessReviewAt ? new Date(body.effectivenessReviewAt) : undefined,
+      ...dates,
     };
     if (body.status) data['status'] = body.status;
     // Auto-stamp completedAt when transitioning to closed and not already set.
-    if (body.status === 'closed' && !body.completedAt) data['completedAt'] = new Date();
+    if (body.status === 'closed' && !dates['completedAt'] && !(dates['completedAt'] === undefined && existing.completedAt)) {
+      data['completedAt'] = new Date();
+    }
 
     const row = await prisma.qualityIndicatorRca.update({ where: { id }, data });
 

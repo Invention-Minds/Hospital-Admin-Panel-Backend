@@ -4,6 +4,7 @@ import { auditLog } from '../../service/app-audit';
 import { QI_CATALOGUE, getQiDef } from './quality-indicator-catalogue';
 import { evaluateForDef, shouldCreateRca } from './quality-status-engine';
 import { runAutoSourceForPeriod, autoSourceCoverage } from './quality-indicator-auto.cron';
+import { dayWindow, monthWindow } from './quality-indicator-auto-source';
 import { runDataQualitySweep } from './quality-data-quality';
 import { ensureRcaForRecord, bridgeCriticalQiToIncident, checkTrendForRecord } from './quality-rca.controller';
 
@@ -19,28 +20,13 @@ import { ensureRcaForRecord, bridgeCriticalQiToIncident, checkTrendForRecord } f
 
 // ─── Period helpers ──────────────────────────────────────────────────────
 
-const MONTH_RE = /^(\d{4})-(\d{2})$/;
-const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 interface PeriodWindow { period: string; periodStart: Date; periodEnd: Date }
 
+// Hospital-local (IST) day / month windows.
 function parsePeriod(raw: string | undefined): PeriodWindow | null {
-  if (!raw) return null;
-  const day = DAY_RE.exec(raw);
-  if (day) {
-    const [, yr, mo, d] = day;
-    const start = new Date(Number(yr), Number(mo) - 1, Number(d), 0, 0, 0);
-    const end = new Date(Number(yr), Number(mo) - 1, Number(d), 23, 59, 59, 999);
-    return { period: raw, periodStart: start, periodEnd: end };
-  }
-  const month = MONTH_RE.exec(raw);
-  if (month) {
-    const [, yr, mo] = month;
-    const start = new Date(Number(yr), Number(mo) - 1, 1, 0, 0, 0);
-    const end = new Date(Number(yr), Number(mo), 0, 23, 59, 59, 999); // last day of month
-    return { period: raw, periodStart: start, periodEnd: end };
-  }
-  return null;
+  if (typeof raw !== 'string' || !raw) return null;
+  const w =raw.length === 10 ? dayWindow(raw) : monthWindow(raw);
+  return w ? { period: raw, ...w } : null;
 }
 
 // ─── List + detail ───────────────────────────────────────────────────────
@@ -109,11 +95,15 @@ export const getIndicatorStats = async (_req: Request, res: Response): Promise<v
       byChapter[i.chapter] = (byChapter[i.chapter] ?? 0) + 1;
     }
 
-    // Look at the most recent period actually captured — uses raw groupBy.
-    const latest = await prisma.qualityIndicatorRecord.findFirst({
+    // Most recent captured period — prefer monthly ('YYYY-MM') over ad-hoc
+    // daily captures, which would otherwise hide the monthly rollup.
+    const recentPeriods = await prisma.qualityIndicatorRecord.findMany({
       orderBy: { periodStart: 'desc' },
+      distinct: ['period'],
       select: { period: true },
+      take: 62,
     });
+    const latest = recentPeriods.find((r) => r.period.length === 7) ?? recentPeriods[0] ?? null;
     const recordsByStatus = latest
       ? await prisma.qualityIndicatorRecord.groupBy({
           by: ['status'],
@@ -170,6 +160,10 @@ export const captureRecord = async (req: Request, res: Response): Promise<void> 
       res.status(400).json({ message: "Fields 'numerator' and 'denominator' are required and must be numbers" });
       return;
     }
+    if (!Number.isFinite(body.numerator) || !Number.isFinite(body.denominator)) {
+      res.status(400).json({ message: 'Numerator and denominator must be finite numbers' });
+      return;
+    }
     if (body.denominator < 0 || body.numerator < 0) {
       res.status(400).json({ message: 'Numerator and denominator must be non-negative' });
       return;
@@ -179,6 +173,15 @@ export const captureRecord = async (req: Request, res: Response): Promise<void> 
     const def = getQiDef(qiCode);
     if (!def) {
       res.status(500).json({ message: 'Indicator definition missing from catalogue — seed mismatch' });
+      return;
+    }
+    if (body.denominator === 0 && def.multiplier !== 'NA') {
+      res.status(400).json({ message: 'Denominator must be greater than 0 for a rate indicator' });
+      return;
+    }
+    if (body.benchmarkOverride !== undefined && body.benchmarkOverride !== null
+      && (typeof body.benchmarkOverride !== 'number' || !Number.isFinite(body.benchmarkOverride))) {
+      res.status(400).json({ message: 'benchmarkOverride must be a number or null' });
       return;
     }
 
@@ -192,6 +195,7 @@ export const captureRecord = async (req: Request, res: Response): Promise<void> 
       body.denominator,
       benchmarkToUse ?? null,
       body.criticalTriggered === true,
+      indicator.amberThresholdPct,
     );
 
     const username = req.user?.username ?? null;
@@ -224,6 +228,7 @@ export const captureRecord = async (req: Request, res: Response): Promise<void> 
         benchmarkUsed: benchmarkToUse,
         status: evalResult.status,
         severity: evalResult.severity,
+        autoCalculated: false, // manual correction — auto-source must not overwrite it
         capturedBy: username,
         capturedById: userId,
         remarks: body.remarks ?? null,
@@ -304,9 +309,16 @@ export const updateIndicator = async (req: Request, res: Response): Promise<void
 
     const data: Record<string, unknown> = {};
     if (typeof body.isActive === 'boolean') data['isActive'] = body.isActive;
-    if (body.defaultBenchmark !== undefined) data['defaultBenchmark'] = body.defaultBenchmark;
+    if (body.defaultBenchmark !== undefined) {
+      if (body.defaultBenchmark !== null
+        && (typeof body.defaultBenchmark !== 'number' || !Number.isFinite(body.defaultBenchmark))) {
+        res.status(400).json({ message: 'defaultBenchmark must be a number or null' });
+        return;
+      }
+      data['defaultBenchmark'] = body.defaultBenchmark;
+    }
     if (typeof body.amberThresholdPct === 'number') {
-      if (body.amberThresholdPct < 0 || body.amberThresholdPct > 100) {
+      if (!Number.isFinite(body.amberThresholdPct) || body.amberThresholdPct < 0 || body.amberThresholdPct > 100) {
         res.status(400).json({ message: 'amberThresholdPct must be between 0 and 100' });
         return;
       }

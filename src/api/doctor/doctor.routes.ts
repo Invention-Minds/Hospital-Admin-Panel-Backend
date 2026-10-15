@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createDoctor, getDoctors, getDoctorById, updateDoctor, updateDoctorUserId, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature, deactivateDoctor, activateDoctor} from './doctor.controller';
+import { createDoctor, getDoctors, getDoctorById, updateDoctor, updateDoctorUserId, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorDetailsPaged, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature, deactivateDoctor, activateDoctor} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
 const router = Router();
@@ -14,6 +14,7 @@ router.get('/', getDoctorsWithDeActive);
 router.get('/inactive-doctors', getAllDeActiveDoctors)
 router.get('/top-doctors', getFourDoctors);
 router.get('/get-doctor-details',authenticateToken,getDoctorDetails)
+router.get('/get-doctor-details-paged',authenticateToken,getDoctorDetailsPaged)
 router.get('/availability',getDoctorAvailability);
 router.get('/booked-slots',getBookedSlots);
 router.post('/booked-slots',authenticateToken, addBookedSlot);

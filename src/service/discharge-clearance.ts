@@ -1,5 +1,6 @@
 import prisma from './prisma-client';
 import type { Prisma } from '@prisma/client';
+import { closeDietOnDischarge } from '../api/dietetics/diet-lifecycle';
 
 // Phase D — Discharge clearance chain helpers.
 //
@@ -166,6 +167,7 @@ export async function finalizeDischargeIfReady(opts: {
       data: { summaryStatus: 'DELIVERED' },
     });
   });
+  await closeDietOnDischarge(opts.admissionId);
   return { ...gate, finalized: true };
 }
 

@@ -2,6 +2,7 @@ import prisma from '../../service/prisma-client';
 import { pushIpdAdmission } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
 import { generatePRN } from '../patient/patient-helper';
+import { raiseDietAlert } from '../dietetics/diet-lifecycle';
 
 /**
  * Convert Emergency Case to IPD Admission
@@ -122,6 +123,9 @@ export const convertEmergencyToIpd = async (
       where: { id: bedId },
       data: { status: 'occupied' },
     });
+
+    // Tell Dietary (new patient in a bed — never serve the previous diet). Never throws.
+    await raiseDietAlert('ADMISSION', ipdAdmission.id);
 
     // Update Emergency status to mark it as admitted to IPD
     await prisma.emergency.update({

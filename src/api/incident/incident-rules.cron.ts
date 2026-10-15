@@ -3,7 +3,7 @@ import { runAllCronRules } from './rule-catalogue';
 // Phase 9.24 / Phase 2 — Incident auto-capture cron.
 //
 // Sweeps every 15 minutes for time-bound incident rules. On-write rules don't
-// need this — controllers raise them inline. The 24h dedupe in
+// need this — controllers raise them inline. The per-entity dedupe in
 // raiseAutoIncident keeps a sweep from creating duplicate rows.
 
 export const registerIncidentRulesCron = (): void => {

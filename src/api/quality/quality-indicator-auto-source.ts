@@ -1,5 +1,7 @@
+import moment from 'moment-timezone';
 import prisma from '../../service/prisma-client';
 import { getQiDef } from './quality-indicator-catalogue';
+import { EXPIRED_DISCHARGE_TYPES } from './quality-input.util';
 
 // Phase 9.26 / Phase 2 — auto-source library for derivable NABH indicators.
 //
@@ -16,6 +18,52 @@ import { getQiDef } from './quality-indicator-catalogue';
 
 export type AutoSourceResult = { numerator: number; denominator: number } | null;
 export type AutoSourceFn = (periodStart: Date, periodEnd: Date) => Promise<AutoSourceResult>;
+
+// ─── Timezone helpers ────────────────────────────────────────────────────
+// Periods are hospital-local calendar months/days, independent of server TZ.
+
+export const QI_TZ = 'Asia/Kolkata';
+
+/** 'YYYY-MM' → [start, end] of that month in hospital-local time. null if malformed. */
+export function monthWindow(period: string): { periodStart: Date; periodEnd: Date } | null {
+  const m = moment.tz(period, 'YYYY-MM', true, QI_TZ);
+  if (!m.isValid()) return null;
+  return { periodStart: m.clone().startOf('month').toDate(), periodEnd: m.clone().endOf('month').toDate() };
+}
+
+/** 'YYYY-MM-DD' → [start, end] of that day in hospital-local time. null if malformed. */
+export function dayWindow(period: string): { periodStart: Date; periodEnd: Date } | null {
+  const m = moment.tz(period, 'YYYY-MM-DD', true, QI_TZ);
+  if (!m.isValid()) return null;
+  return { periodStart: m.clone().startOf('day').toDate(), periodEnd: m.clone().endOf('day').toDate() };
+}
+
+/** Hospital-local 'YYYY-MM' containing the given instant. */
+export const monthKey = (d: Date): string => moment(d).tz(QI_TZ).format('YYYY-MM');
+
+/** Hospital-local 'YYYY-MM-DD' containing the given instant. */
+export const dayKey = (d: Date): string => moment(d).tz(QI_TZ).format('YYYY-MM-DD');
+
+// Incident filter shared by every incident-counting source: period window,
+// drop cancelled rows and the QI_* incidents raised by this module itself
+// (otherwise a critical QI breach feeds back into PSQ-028/029 next run).
+type IncidentCond = Record<string, unknown>;
+
+function incidentWhere(periodStart: Date, periodEnd: Date, ...conds: IncidentCond[]): IncidentCond {
+  return {
+    AND: [
+      { reportedAt: { gte: periodStart, lte: periodEnd } },
+      { NOT: { status: 'cancelled' } },
+      { OR: [{ ruleKey: null }, { NOT: { ruleKey: { startsWith: 'QI_' } } }] },
+      ...conds,
+    ],
+  };
+}
+
+/** Match on the post-investigation severity when set, else the reported one. */
+const effectiveSeverityIn = (levels: string[]): IncidentCond => ({
+  OR: [{ severityFinal: { in: levels } }, { severityFinal: null, severity: { in: levels } }],
+});
 
 // ─── Patient-day helper ──────────────────────────────────────────────────
 // For rate-per-1000-patient-days indicators (PSQ-024, PSQ-025). We bound each
@@ -97,25 +145,27 @@ export const psq010_dischargeSummaryWithinTat: AutoSourceFn = async (periodStart
     select: { dischargeDate: true, summaryStatus: true, clinicianSignedAt: true },
     take: 20000,
   });
-  if (rows.length === 0) return null;
+  const now = Date.now();
   let within = 0;
+  let total = 0;
   for (const d of rows) {
-    if (!(d.summaryStatus === 'SIGNED' || d.summaryStatus === 'DELIVERED')) continue;
-    if (!d.clinicianSignedAt) continue;
-    const hrs = (d.clinicianSignedAt.getTime() - d.dischargeDate.getTime()) / 3_600_000;
+    const signed = (d.summaryStatus === 'SIGNED' || d.summaryStatus === 'DELIVERED') && !!d.clinicianSignedAt;
+    // Still inside the 24h window and not yet signed — not a failure yet.
+    if (!signed && d.dischargeDate.getTime() + 24 * 3_600_000 > now) continue;
+    total += 1;
+    if (!signed) continue;
+    const hrs = (d.clinicianSignedAt!.getTime() - d.dischargeDate.getTime()) / 3_600_000;
     if (hrs <= 24) within += 1;
   }
-  return { numerator: within, denominator: rows.length };
+  if (total === 0) return null;
+  return { numerator: within, denominator: total };
 };
 
 // ─── PSQ-024 — Patient fall rate (falls / 1000 patient days) ────────────
 
 export const psq024_fallRate: AutoSourceFn = async (periodStart, periodEnd) => {
   const falls = await prisma.incident.count({
-    where: {
-      reportedAt: { gte: periodStart, lte: periodEnd },
-      category: 'fall',
-    },
+    where: incidentWhere(periodStart, periodEnd, { category: 'fall' }),
   });
   const days = await patientDaysInPeriod(periodStart, periodEnd);
   if (days === 0) return null;
@@ -127,11 +177,7 @@ export const psq024_fallRate: AutoSourceFn = async (periodStart, periodEnd) => {
 
 export const psq025_fallWithInjuryRate: AutoSourceFn = async (periodStart, periodEnd) => {
   const falls = await prisma.incident.count({
-    where: {
-      reportedAt: { gte: periodStart, lte: periodEnd },
-      category: 'fall',
-      severity: { in: ['moderate', 'major', 'sentinel'] },
-    },
+    where: incidentWhere(periodStart, periodEnd, { category: 'fall' }, effectiveSeverityIn(['moderate', 'major', 'sentinel'])),
   });
   const days = await patientDaysInPeriod(periodStart, periodEnd);
   if (days === 0) return null;
@@ -146,11 +192,7 @@ export const psq025_fallWithInjuryRate: AutoSourceFn = async (periodStart, perio
 export const psq028_adverseClinicalEvents: AutoSourceFn = async (periodStart, periodEnd) => {
   const [events, admissions] = await Promise.all([
     prisma.incident.count({
-      where: {
-        reportedAt: { gte: periodStart, lte: periodEnd },
-        category: 'clinical',
-        severity: { in: ['moderate', 'major', 'sentinel'] },
-      },
+      where: incidentWhere(periodStart, periodEnd, { category: 'clinical' }, effectiveSeverityIn(['moderate', 'major', 'sentinel'])),
     }),
     prisma.ipdAdmission.count({
       where: { admissionDate: { gte: periodStart, lte: periodEnd } },
@@ -168,10 +210,7 @@ export const psq028_adverseClinicalEvents: AutoSourceFn = async (periodStart, pe
 
 export const psq029_sentinelCount: AutoSourceFn = async (periodStart, periodEnd) => {
   const count = await prisma.incident.count({
-    where: {
-      reportedAt: { gte: periodStart, lte: periodEnd },
-      severity: 'sentinel',
-    },
+    where: incidentWhere(periodStart, periodEnd, effectiveSeverityIn(['sentinel'])),
   });
   return { numerator: count, denominator: 1 }; // always record — sentinel is zero-tol
 };
@@ -244,13 +283,19 @@ export const pre004_complaintClosureWithinTat: AutoSourceFn = async (periodStart
     select: { resolvedAt: true, slaDueAt: true, status: true },
     take: 20000,
   });
-  if (rows.length === 0) return null;
+  const now = new Date();
   let within = 0;
+  let total = 0;
   for (const c of rows) {
-    if (c.status !== 'resolved' || !c.resolvedAt || !c.slaDueAt) continue;
-    if (c.resolvedAt <= c.slaDueAt) within += 1;
+    const resolved = c.status === 'resolved' && !!c.resolvedAt;
+    // Open and SLA not yet due — not a failure yet.
+    if (!resolved && c.slaDueAt && c.slaDueAt > now) continue;
+    total += 1;
+    if (!resolved || !c.slaDueAt) continue;
+    if (c.resolvedAt! <= c.slaDueAt) within += 1;
   }
-  return { numerator: within, denominator: rows.length };
+  if (total === 0) return null;
+  return { numerator: within, denominator: total };
 };
 
 // ─── LAB-002 — Critical value reporting TAT compliance (%) ──────────────
@@ -306,7 +351,7 @@ export const ot009_firstCaseOnTime: AutoSourceFn = async (periodStart, periodEnd
   type Row = { plannedStart: Date; actualStart: Date | null };
   const firstByRoomDay = new Map<string, Row>();
   for (const r of rows) {
-    const day = r.plannedStart.toISOString().slice(0, 10);
+    const day = dayKey(r.plannedStart);
     const key = `${r.otRoomId}|${day}`;
     const prev = firstByRoomDay.get(key);
     if (!prev || r.plannedStart < prev.plannedStart) firstByRoomDay.set(key, r);
@@ -391,7 +436,7 @@ export const ot012_icuReadmission: AutoSourceFn = async (periodStart, periodEnd)
     prisma.ipdDischarge.count({
       where: {
         dischargeDate: { gte: periodStart, lte: periodEnd },
-        NOT: { dischargeType: 'expired' },
+        NOT: { dischargeType: { in: EXPIRED_DISCHARGE_TYPES } },
       },
     }),
   ]);
@@ -411,7 +456,7 @@ export const ot011_icuMortality: AutoSourceFn = async (periodStart, periodEnd) =
     prisma.ipdDischarge.count({
       where: {
         dischargeDate: { gte: periodStart, lte: periodEnd },
-        dischargeType: 'expired',
+        dischargeType: { in: EXPIRED_DISCHARGE_TYPES },
         admission: { roomType: 'ICU' },
       },
     }),
@@ -509,7 +554,7 @@ export const ico008_sterilizationFailure: AutoSourceFn = async (periodStart, per
 // surveillance events of type='NSI'; denominator is QualityMonthlyDenominator
 // (total clinical staff) entered monthly by HR.
 export const hr006_needleStickRate: AutoSourceFn = async (periodStart, periodEnd) => {
-  const period = `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, '0')}`;
+  const period = monthKey(periodStart);
   const [cases, den] = await Promise.all([
     prisma.qualitySurveillanceEvent.count({
       where: { type: 'NSI', observedAt: { gte: periodStart, lte: periodEnd } },
@@ -636,10 +681,7 @@ export const rad002_criticalCommunication: AutoSourceFn = async (s, e) =>
 export const psq030_wrongSiteSurgery: AutoSourceFn = async (periodStart, periodEnd) => {
   const [cases, surgeries] = await Promise.all([
     prisma.incident.count({
-      where: {
-        qiCode: 'PSQ-030',
-        reportedAt: { gte: periodStart, lte: periodEnd },
-      },
+      where: incidentWhere(periodStart, periodEnd, { qiCode: 'PSQ-030' }),
     }),
     prisma.otSchedule.count({
       where: {
@@ -654,19 +696,27 @@ export const psq030_wrongSiteSurgery: AutoSourceFn = async (periodStart, periodE
 
 // ─── Phase 5g — Pharmacy stock + expired drugs ────────────────────────
 
+// Distinct critical drugs with ≥1 stock-out in period / total critical drugs
+// (same shape as FMS-003) so repeated stock-outs can't push the rate past 100%.
 export const ops003_stockOut: AutoSourceFn = async (periodStart, periodEnd) => {
-  const [events, criticalCount] = await Promise.all([
-    prisma.pharmacyStockEvent.count({
-      where: { eventType: 'stock_out', occurredAt: { gte: periodStart, lte: periodEnd } },
+  const [grouped, criticalCount] = await Promise.all([
+    prisma.pharmacyStockEvent.groupBy({
+      by: ['drugId'],
+      where: {
+        eventType: 'stock_out',
+        occurredAt: { gte: periodStart, lte: periodEnd },
+        drug: { is: { isCritical: true } },
+      },
+      _count: { _all: true },
     }),
     prisma.pharmacyCriticalDrug.count({ where: { isCritical: true } }),
   ]);
   if (criticalCount === 0) return null;
-  return { numerator: events, denominator: criticalCount };
+  return { numerator: grouped.length, denominator: criticalCount };
 };
 
 export const ops004_expiredDrugs: AutoSourceFn = async (periodStart, periodEnd) => {
-  const period = `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, '0')}`;
+  const period = monthKey(periodStart);
   const [events, den] = await Promise.all([
     prisma.pharmacyStockEvent.count({
       where: { eventType: 'expired', occurredAt: { gte: periodStart, lte: periodEnd } },
@@ -753,10 +803,11 @@ function pmOrCalibrationOnTime(eventType: 'pm' | 'calibration'): AutoSourceFn {
       take: 5000,
     });
     if (rows.length === 0) return null;
+    // Compare by hospital-local calendar day — done on the due date is on time.
     let onTime = 0;
     for (const r of rows) {
       if (!r.dueAt) continue;
-      if (r.occurredAt && r.occurredAt <= r.dueAt) onTime += 1;
+      if (r.occurredAt && dayKey(r.occurredAt) <= dayKey(r.dueAt)) onTime += 1;
     }
     return { numerator: onTime, denominator: rows.length };
   };
@@ -766,7 +817,7 @@ export const fms001_pmCompliance = pmOrCalibrationOnTime('pm');
 export const fms002_calibrationCompliance = pmOrCalibrationOnTime('calibration');
 
 export const fms003_criticalBreakdown: AutoSourceFn = async (periodStart, periodEnd) => {
-  const criticalCount = await prisma.facilityEquipment.count({ where: { isCritical: true } });
+  const criticalCount = await prisma.facilityEquipment.count({ where: { isCritical: true, status: { not: 'retired' } } });
   if (criticalCount === 0) return null;
   // Distinct critical equipment items that had at least one breakdown in period.
   const grouped = await prisma.facilityEquipmentEvent.groupBy({
@@ -791,10 +842,10 @@ export const fms004_utilityFailures: AutoSourceFn = async (periodStart, periodEn
 };
 
 export const fms007_securityIncident: AutoSourceFn = async (periodStart, periodEnd) => {
-  const period = `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, '0')}`;
+  const period = monthKey(periodStart);
   const [cases, den] = await Promise.all([
     prisma.incident.count({
-      where: { category: 'security', reportedAt: { gte: periodStart, lte: periodEnd } },
+      where: incidentWhere(periodStart, periodEnd, { category: 'security' }),
     }),
     prisma.qualityMonthlyDenominator.findUnique({
       where: { qiCode_period: { qiCode: 'FMS-007', period } },
@@ -824,13 +875,19 @@ export const fms009_maintenanceClosure: AutoSourceFn = async (periodStart, perio
     select: { status: true, closedAt: true, slaDueAt: true },
     take: 5000,
   });
-  if (rows.length === 0) return null;
+  const now = new Date();
   let withinTat = 0;
+  let total = 0;
   for (const c of rows) {
-    if (c.status !== 'closed' || !c.closedAt || !c.slaDueAt) continue;
-    if (c.closedAt <= c.slaDueAt) withinTat += 1;
+    const closed = c.status === 'closed' && !!c.closedAt;
+    // Still open and SLA not yet due — not a failure yet.
+    if (!closed && c.slaDueAt > now) continue;
+    total += 1;
+    if (!closed) continue;
+    if (c.closedAt! <= c.slaDueAt) withinTat += 1;
   }
-  return { numerator: withinTat, denominator: rows.length };
+  if (total === 0) return null;
+  return { numerator: withinTat, denominator: total };
 };
 
 // ─── Phase 5c — Incident-bridge with manual denominator ────────────────
@@ -840,12 +897,10 @@ export const fms009_maintenanceClosure: AutoSourceFn = async (periodStart, perio
 // When the incident count is 0 with a real denominator we still write the
 // record (a legitimate green "no events this month").
 
-type IncidentWhere = Record<string, unknown>;
-
-function incidentRateWithManualDenominator(qiCode: string, incidentWhere: IncidentWhere): AutoSourceFn {
+function incidentRateWithManualDenominator(qiCode: string, match: IncidentCond): AutoSourceFn {
   return async (periodStart, periodEnd) => {
     // Derive YYYY-MM from periodStart — auto-source cron always passes a month window.
-    const period = `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, '0')}`;
+    const period = monthKey(periodStart);
 
     const den = await prisma.qualityMonthlyDenominator.findUnique({
       where: { qiCode_period: { qiCode, period } },
@@ -853,11 +908,7 @@ function incidentRateWithManualDenominator(qiCode: string, incidentWhere: Incide
     });
     if (!den || den.value <= 0) return null;
 
-    const where = {
-      ...incidentWhere,
-      reportedAt: { gte: periodStart, lte: periodEnd },
-    } as IncidentWhere;
-    const numerator = await prisma.incident.count({ where });
+    const numerator = await prisma.incident.count({ where: incidentWhere(periodStart, periodEnd, match) });
 
     return { numerator, denominator: den.value };
   };
@@ -900,7 +951,7 @@ function countCompliantForAudit(qiCode: string): AutoSourceFn {
 
 // Phase 5a — every "compliance %" indicator backed by QualityAuditObservation.
 // Each entry counts compliant/total for its qiCode across the period.
-const AUDIT_BACKED_INDICATORS: string[] = [
+export const AUDIT_BACKED_INDICATORS: string[] = [
   // Patient Safety & Quality
   'PSQ-004', // Diagnostic safety adherence
   // Infection Control

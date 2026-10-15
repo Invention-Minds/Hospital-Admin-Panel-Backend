@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { INVALID, parseDateInput, parseRangeQuery, prismaErrorCode } from './quality-input.util';
 
 // Phase 9.26 / Phase 5g — Pharmacy critical drug master + stock event log.
 // Backs OPS-003 (stock-out rate) and OPS-004 (expired drug rate).
@@ -37,6 +38,10 @@ export const createDrug = async (req: Request, res: Response): Promise<void> => 
     });
     res.status(201).json({ data: row });
   } catch (error) {
+    if (prismaErrorCode(error) === 'P2002') {
+      res.status(409).json({ message: 'A drug with this code already exists' });
+      return;
+    }
     console.error('[pharmacy-drug] create failed:', error);
     res.status(500).json({ message: 'Failed to add drug' });
   }
@@ -49,8 +54,11 @@ export const listDrugs = async (req: Request, res: Response): Promise<void> => {
     if (isCritical === 'true') where['isCritical'] = true;
     if (isCritical === 'false') where['isCritical'] = false;
     if (search) where['OR'] = [{ code: { contains: search } }, { name: { contains: search } }];
-    const rows = await prisma.pharmacyCriticalDrug.findMany({ where, orderBy: { code: 'asc' }, take: 1000 });
-    res.status(200).json({ data: rows, total: rows.length });
+    const [rows, total] = await Promise.all([
+      prisma.pharmacyCriticalDrug.findMany({ where, orderBy: { code: 'asc' }, take: 1000 }),
+      prisma.pharmacyCriticalDrug.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[pharmacy-drug] list failed:', error);
     res.status(500).json({ message: 'Failed to load drugs' });
@@ -115,6 +123,18 @@ export const createStockEvent = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ message: `'eventType' must be one of: ${EVENT_TYPES.join(', ')}` });
       return;
     }
+    const occurredAt = parseDateInput(body.occurredAt);
+    const expiryDate = parseDateInput(body.expiryDate);
+    if (occurredAt === INVALID || expiryDate === INVALID) {
+      res.status(400).json({ message: "'occurredAt' / 'expiryDate' must be valid dates" });
+      return;
+    }
+    const qty = body.quantity;
+    if (qty !== undefined && qty !== null
+        && (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 0)) {
+      res.status(400).json({ message: "'quantity' must be a non-negative integer" });
+      return;
+    }
     let drugCodeSnap: string | null = null;
     let drugNameSnap: string | null = null;
     if (body.drugId) {
@@ -132,10 +152,10 @@ export const createStockEvent = async (req: Request, res: Response): Promise<voi
         drugCodeSnapshot: drugCodeSnap,
         drugNameSnapshot: drugNameSnap,
         eventType: body.eventType,
-        occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
+        occurredAt: occurredAt ?? new Date(),
         batchCode: body.batchCode ?? null,
-        expiryDate: body.expiryDate ? new Date(body.expiryDate) : null,
-        quantity: typeof body.quantity === 'number' ? body.quantity : null,
+        expiryDate,
+        quantity: typeof qty === 'number' ? qty : null,
         notes: body.notes ?? null,
         reporter: username(req), reporterId: userId(req),
       },
@@ -158,16 +178,14 @@ export const listStockEvents = async (req: Request, res: Response): Promise<void
     const where: Record<string, unknown> = {};
     if (eventType) where['eventType'] = eventType;
     if (drugId) where['drugId'] = drugId;
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range['gte'] = new Date(from);
-      if (to) range['lte'] = new Date(to);
-      where['occurredAt'] = range;
-    }
-    const rows = await prisma.pharmacyStockEvent.findMany({
-      where, orderBy: { occurredAt: 'desc' }, take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const range = parseRangeQuery(from, to);
+    if (range === INVALID) { res.status(400).json({ message: "'from' / 'to' must be valid dates" }); return; }
+    if (range) where['occurredAt'] = range;
+    const [rows, total] = await Promise.all([
+      prisma.pharmacyStockEvent.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 500 }),
+      prisma.pharmacyStockEvent.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[pharmacy-stock] list failed:', error);
     res.status(500).json({ message: 'Failed to load events' });

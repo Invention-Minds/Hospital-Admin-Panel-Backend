@@ -1,7 +1,8 @@
+import moment from 'moment-timezone';
 import prisma from '../../service/prisma-client';
 import { QI_INDEX, getQiDef } from './quality-indicator-catalogue';
 import { evaluateForDef, shouldCreateRca } from './quality-status-engine';
-import { AUTO_SOURCE_REGISTRY, AUTO_SOURCE_CODES } from './quality-indicator-auto-source';
+import { AUTO_SOURCE_REGISTRY, AUTO_SOURCE_CODES, QI_TZ, monthWindow } from './quality-indicator-auto-source';
 import { ensureRcaForRecord, bridgeCriticalQiToIncident, checkTrendForRecord } from './quality-rca.controller';
 
 // Phase 9.26 / Phase 2 — monthly auto-source cron for derivable QI records.
@@ -19,22 +20,12 @@ import { ensureRcaForRecord, bridgeCriticalQiToIncident, checkTrendForRecord } f
 
 export interface PeriodWindow { period: string; periodStart: Date; periodEnd: Date }
 
-/** Resolve 'YYYY-MM' (default: previous month) to start/end timestamps. */
+/** Resolve 'YYYY-MM' (default: previous month) to hospital-local (IST) start/end. */
 export function resolveMonth(period?: string): PeriodWindow {
-  if (period && /^\d{4}-\d{2}$/.test(period)) {
-    const [yr, mo] = period.split('-').map(Number);
-    return {
-      period,
-      periodStart: new Date(yr, mo - 1, 1, 0, 0, 0),
-      periodEnd: new Date(yr, mo, 0, 23, 59, 59, 999),
-    };
-  }
-  // Default: previous calendar month.
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-  const periodStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
-  return { period: periodStr, periodStart: start, periodEnd: end };
+  const key = period && monthWindow(period)
+    ? period
+    : moment.tz(QI_TZ).subtract(1, 'month').format('YYYY-MM');
+  return { period: key, ...monthWindow(key)! };
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────
@@ -49,134 +40,133 @@ export interface AutoSourceReport {
   details: Array<{ qiCode: string; outcome: 'written' | 'skipped-manual' | 'skipped-no-data' | 'failed'; status?: string; value?: number; error?: string }>;
 }
 
-export async function runAutoSourceForPeriod(period?: string): Promise<AutoSourceReport> {
+type Detail = AutoSourceReport['details'][number];
+
+/** Run one auto-sourced indicator for a resolved month. Never throws. */
+async function runOne(qiCode: string, window: PeriodWindow): Promise<Detail> {
+  try {
+    const def = getQiDef(qiCode);
+    const sourceFn = AUTO_SOURCE_REGISTRY[qiCode];
+    if (!def || !sourceFn) return { qiCode, outcome: 'failed', error: 'catalogue def or source missing' };
+
+    const indicator = await prisma.qualityIndicator.findUnique({ where: { qiCode } });
+    if (!indicator) return { qiCode, outcome: 'failed', error: 'DB row missing — run seed' };
+    if (!indicator.isActive) return { qiCode, outcome: 'skipped-no-data', error: 'indicator inactive' };
+
+    // Honour manual captures — never clobber a row a human entered.
+    const existing = await prisma.qualityIndicatorRecord.findUnique({
+      where: { indicatorId_period: { indicatorId: indicator.id, period: window.period } },
+      select: { id: true, autoCalculated: true },
+    });
+    if (existing && !existing.autoCalculated) return { qiCode, outcome: 'skipped-manual' };
+
+    const source = await sourceFn(window.periodStart, window.periodEnd);
+    if (!source) return { qiCode, outcome: 'skipped-no-data' };
+
+    const evalResult = evaluateForDef(
+      def,
+      source.numerator,
+      source.denominator,
+      indicator.defaultBenchmark ?? null,
+      false,
+      indicator.amberThresholdPct,
+    );
+
+    const recordRow = await prisma.qualityIndicatorRecord.upsert({
+      where: { indicatorId_period: { indicatorId: indicator.id, period: window.period } },
+      create: {
+        indicatorId: indicator.id,
+        qiCode: indicator.qiCode,
+        period: window.period,
+        periodStart: window.periodStart,
+        periodEnd: window.periodEnd,
+        numerator: source.numerator,
+        denominator: source.denominator,
+        calculatedValue: Number.isFinite(evalResult.value) ? evalResult.value : 0,
+        benchmarkUsed: indicator.defaultBenchmark,
+        status: evalResult.status,
+        severity: evalResult.severity,
+        autoCalculated: true,
+        capturedBy: 'system-auto-source',
+        capturedById: null,
+        remarks: null,
+      },
+      update: {
+        numerator: source.numerator,
+        denominator: source.denominator,
+        calculatedValue: Number.isFinite(evalResult.value) ? evalResult.value : 0,
+        benchmarkUsed: indicator.defaultBenchmark,
+        status: evalResult.status,
+        severity: evalResult.severity,
+        autoCalculated: true,
+        capturedBy: 'system-auto-source',
+      },
+    });
+
+    // Phase 3 — auto-RCA + critical-tier incident bridge.
+    if (shouldCreateRca(indicator.rcaRequiredRule as never, evalResult.status)) {
+      await ensureRcaForRecord({
+        recordId: recordRow.id,
+        qiCode: indicator.qiCode,
+        escalationOwner: indicator.escalationOwner,
+      });
+    }
+    await checkTrendForRecord({
+      indicatorId: indicator.id,
+      qiCode: indicator.qiCode,
+      recordId: recordRow.id,
+      recordStatus: evalResult.status,
+      period: window.period,
+      rcaRequiredRule: indicator.rcaRequiredRule,
+      escalationOwner: indicator.escalationOwner,
+    });
+
+    if (evalResult.status === 'critical') {
+      await bridgeCriticalQiToIncident({
+        qiCode: indicator.qiCode,
+        chapter: indicator.chapter as never,
+        indicatorName: indicator.name,
+        period: window.period,
+        calculatedValue: evalResult.value,
+        unit: indicator.unit,
+        nabhClause: indicator.nabhClause,
+        criticalRule: indicator.criticalRule,
+      });
+    }
+
+    return { qiCode, outcome: 'written', status: evalResult.status, value: evalResult.value };
+  } catch (err) {
+    console.warn(`[qi-auto-source:${qiCode}] failed:`, (err as Error).message);
+    return { qiCode, outcome: 'failed', error: (err as Error).message };
+  }
+}
+
+function tally(report: AutoSourceReport, d: Detail): void {
+  report.processed += 1;
+  if (d.outcome === 'written') report.written += 1;
+  else if (d.outcome === 'skipped-manual') report.skippedManual += 1;
+  else if (d.outcome === 'skipped-no-data') report.skippedNoData += 1;
+  else report.failed += 1;
+  report.details.push(d);
+}
+
+export async function runAutoSourceForPeriod(period?: string, qiCodes?: string[]): Promise<AutoSourceReport> {
   const window = resolveMonth(period);
   const report: AutoSourceReport = {
     period: window.period,
     processed: 0, written: 0, skippedManual: 0, skippedNoData: 0, failed: 0,
     details: [],
   };
-
-  for (const qiCode of AUTO_SOURCE_CODES) {
-    report.processed += 1;
-    try {
-      const def = getQiDef(qiCode);
-      if (!def) {
-        report.failed += 1;
-        report.details.push({ qiCode, outcome: 'failed', error: 'catalogue def missing' });
-        continue;
-      }
-
-      const indicator = await prisma.qualityIndicator.findUnique({ where: { qiCode } });
-      if (!indicator) {
-        report.failed += 1;
-        report.details.push({ qiCode, outcome: 'failed', error: 'DB row missing — run seed' });
-        continue;
-      }
-      if (!indicator.isActive) {
-        report.skippedNoData += 1;
-        report.details.push({ qiCode, outcome: 'skipped-no-data', error: 'indicator inactive' });
-        continue;
-      }
-
-      // Honour manual captures — never clobber a row a human entered.
-      const existing = await prisma.qualityIndicatorRecord.findUnique({
-        where: { indicatorId_period: { indicatorId: indicator.id, period: window.period } },
-        select: { id: true, autoCalculated: true },
-      });
-      if (existing && !existing.autoCalculated) {
-        report.skippedManual += 1;
-        report.details.push({ qiCode, outcome: 'skipped-manual' });
-        continue;
-      }
-
-      const sourceFn = AUTO_SOURCE_REGISTRY[qiCode];
-      const source = await sourceFn(window.periodStart, window.periodEnd);
-      if (!source) {
-        report.skippedNoData += 1;
-        report.details.push({ qiCode, outcome: 'skipped-no-data' });
-        continue;
-      }
-
-      const evalResult = evaluateForDef(
-        def,
-        source.numerator,
-        source.denominator,
-        indicator.defaultBenchmark ?? null,
-        false,
-      );
-
-      const recordRow = await prisma.qualityIndicatorRecord.upsert({
-        where: { indicatorId_period: { indicatorId: indicator.id, period: window.period } },
-        create: {
-          indicatorId: indicator.id,
-          qiCode: indicator.qiCode,
-          period: window.period,
-          periodStart: window.periodStart,
-          periodEnd: window.periodEnd,
-          numerator: source.numerator,
-          denominator: source.denominator,
-          calculatedValue: Number.isFinite(evalResult.value) ? evalResult.value : 0,
-          benchmarkUsed: indicator.defaultBenchmark,
-          status: evalResult.status,
-          severity: evalResult.severity,
-          autoCalculated: true,
-          capturedBy: 'system-auto-source',
-          capturedById: null,
-          remarks: null,
-        },
-        update: {
-          numerator: source.numerator,
-          denominator: source.denominator,
-          calculatedValue: Number.isFinite(evalResult.value) ? evalResult.value : 0,
-          benchmarkUsed: indicator.defaultBenchmark,
-          status: evalResult.status,
-          severity: evalResult.severity,
-          autoCalculated: true,
-          capturedBy: 'system-auto-source',
-        },
-      });
-
-      report.written += 1;
-      report.details.push({ qiCode, outcome: 'written', status: evalResult.status, value: evalResult.value });
-
-      // Phase 3 — auto-RCA + critical-tier incident bridge.
-      if (shouldCreateRca(indicator.rcaRequiredRule as never, evalResult.status)) {
-        await ensureRcaForRecord({
-          recordId: recordRow.id,
-          qiCode: indicator.qiCode,
-          escalationOwner: indicator.escalationOwner,
-        });
-      }
-      await checkTrendForRecord({
-        indicatorId: indicator.id,
-        qiCode: indicator.qiCode,
-        recordId: recordRow.id,
-        recordStatus: evalResult.status,
-        period: window.period,
-        rcaRequiredRule: indicator.rcaRequiredRule,
-        escalationOwner: indicator.escalationOwner,
-      });
-
-      if (evalResult.status === 'critical') {
-        await bridgeCriticalQiToIncident({
-          qiCode: indicator.qiCode,
-          chapter: indicator.chapter as never,
-          indicatorName: indicator.name,
-          period: window.period,
-          calculatedValue: evalResult.value,
-          unit: indicator.unit,
-          nabhClause: indicator.nabhClause,
-          criticalRule: indicator.criticalRule,
-        });
-      }
-    } catch (err) {
-      report.failed += 1;
-      report.details.push({ qiCode, outcome: 'failed', error: (err as Error).message });
-      console.warn(`[qi-auto-source:${qiCode}] failed:`, (err as Error).message);
-    }
+  const codes = qiCodes ? qiCodes.filter((c) => AUTO_SOURCE_REGISTRY[c]) : AUTO_SOURCE_CODES;
+  for (const qiCode of codes) {
+    tally(report, await runOne(qiCode, window));
   }
   return report;
+}
+
+/** Indicators whose auto-source reads the manual denominator for `qiCode` (keyed 1-1). */
+export function indicatorsUsingDenominator(qiCode: string): string[] {
+  return AUTO_SOURCE_REGISTRY[qiCode] ? [qiCode] : [];
 }
 
 // Light no-op so a future caller can check the registry without hitting DB.

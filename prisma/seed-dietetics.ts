@@ -1,516 +1,179 @@
 /**
- * Dietetics — seed initial catalogue.
+ * Dietetics — seed the starter masters the module needs before any meal
+ * order can be generated or any drug-food warning can fire:
+ *   • MealTimeSlot        — breakfast / lunch / snacks / dinner
+ *   • AllergenMaster      — common food allergens
+ *   • DietMaster          — standard hospital diets (macros left blank for
+ *                           the hospital dietician to fill in)
+ *   • DrugFoodInteraction — built-in catalogue (no admin UI; edit in DB)
  *
- * Run with:
+ * NOT seeded: MealMaster items and the weekly MenuPlan. Those are
+ * hospital-specific — set them up in Dietetics → Setup. Until each diet has a
+ * menu, the generator creates no meal orders for patients on it.
+ *
+ * Create-only, never updates:
+ *   • slots + diets are inserted only when the table is empty
+ *   • allergens (by name) and interactions (by `match`) add just the missing rows
+ *
+ * The drug-food guidance is a generic starter set — have the hospital
+ * pharmacist / dietician review it before go-live.
+ *
+ * Run:
  *   npx ts-node prisma/seed-dietetics.ts
+ *   (or: npm run seed:dietetics)
  *
- * Idempotent — uses upsert on each table's natural key. Re-running it after
- * editing this file updates rows in place; nothing is duplicated.
- *
- * What this populates (enough for the nightly MealOrder cron to start
- * producing rows out-of-the-box):
- *   • 5 meal-time slots
- *   • 12 allergens
- *   • 10 diets (general + therapeutic + texture-modified)
- *   • ~30 meal items, joined to compatible diets and known allergens
- *   • Full 7-day × 4-slot menu for General and Diabetic-1800 diets
- *   • Lunch+dinner only for Soft and Full-liquid (kitchen serves the same
- *     items every day for these — fewer rotations)
- *   • 10 drug-food interaction patterns
- *   • 1 default canteen TV channel
+ * Requires the `dietetics` migration to be applied first.
  */
 
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// ─── Meal time slots ────────────────────────────────────────────────
 const SLOTS = [
-  { name: 'Early breakfast', code: 'EARLY',  startTime: '06:00', endTime: '07:00', sequence: 1 },
-  { name: 'Breakfast',       code: 'BFAST',  startTime: '08:00', endTime: '09:30', sequence: 2 },
-  { name: 'Lunch',           code: 'LUNCH',  startTime: '12:30', endTime: '14:00', sequence: 3 },
-  { name: 'Evening snack',   code: 'SNACK',  startTime: '16:30', endTime: '17:30', sequence: 4 },
-  { name: 'Dinner',          code: 'DINNER', startTime: '19:30', endTime: '21:00', sequence: 5 },
+  { name: 'Breakfast', code: 'breakfast', startTime: '07:30', endTime: '09:00', sequence: 1 },
+  { name: 'Lunch', code: 'lunch', startTime: '12:30', endTime: '14:00', sequence: 2 },
+  { name: 'Evening snacks', code: 'snacks', startTime: '16:30', endTime: '17:30', sequence: 3 },
+  { name: 'Dinner', code: 'dinner', startTime: '19:30', endTime: '21:00', sequence: 4 },
 ];
 
-// ─── Allergens ──────────────────────────────────────────────────────
 const ALLERGENS = [
-  'Peanut', 'Tree nut', 'Milk / Dairy', 'Egg', 'Wheat / Gluten',
-  'Soy', 'Fish', 'Shellfish', 'Sesame', 'Mustard', 'Sulphites', 'Lactose',
+  'Milk', 'Egg', 'Peanut', 'Tree nuts', 'Soy', 'Wheat / Gluten',
+  'Fish', 'Shellfish', 'Sesame', 'Mustard',
 ];
 
-// ─── Diets ──────────────────────────────────────────────────────────
-interface DietSeed {
-  code: string; name: string; description: string;
-  caloriesKcal?: number; proteinG?: number; carbsG?: number; fatG?: number;
-  sodiumMg?: number; potassiumMg?: number; fluidMl?: number;
-  restrictions?: string; targetConditions?: string;
-  isVeg?: boolean; isJain?: boolean; isHalal?: boolean; isKosher?: boolean; isNoOnionGarlic?: boolean;
-}
-
-const DIETS: DietSeed[] = [
+// `general` is the code COP.7.b treats as non-therapeutic — keep it.
+const DIETS: Array<{
+  name: string; code: string; description: string;
+  restrictions: string[]; targetConditions: string[];
+}> = [
   {
-    code: 'GEN', name: 'General diet',
-    description: 'Regular Indian hospital diet — no specific restriction.',
-    caloriesKcal: 2000, proteinG: 60, carbsG: 280, fatG: 65,
-    isVeg: true,
+    name: 'General diet', code: 'general',
+    description: 'Normal balanced hospital diet.',
+    restrictions: [], targetConditions: [],
   },
   {
-    code: 'DM-1800', name: 'Diabetic 1800 kcal',
-    description: 'Calorie-controlled, low-glycaemic-index, split across 5 meals.',
-    caloriesKcal: 1800, proteinG: 80, carbsG: 220, fatG: 55, sodiumMg: 2300,
-    restrictions: 'No added sugar; limit fruit juice; whole grains preferred',
-    targetConditions: 'Type 2 diabetes, prediabetes',
-    isVeg: true,
+    name: 'Soft diet', code: 'soft',
+    description: 'Soft, easy-to-chew foods; no hard, fried or fibrous items.',
+    restrictions: ['Soft'], targetConditions: ['Post-operative', 'Dental / chewing difficulty'],
   },
   {
-    code: 'DM-1500', name: 'Diabetic 1500 kcal',
-    description: 'Calorie-controlled for overweight diabetic patients.',
-    caloriesKcal: 1500, proteinG: 75, carbsG: 180, fatG: 45, sodiumMg: 2300,
-    restrictions: 'No added sugar; portion-controlled rice/roti',
-    targetConditions: 'Type 2 diabetes with BMI > 25',
-    isVeg: true,
+    name: 'Clear liquid diet', code: 'clear-liquid',
+    description: 'Clear fluids only (water, strained juice, clear soup, ORS).',
+    restrictions: ['Liquid'], targetConditions: ['Pre / post procedure', 'Bowel preparation'],
   },
   {
-    code: 'CKD-LP', name: 'Renal / low protein',
-    description: 'For non-dialysis CKD — restricted protein, potassium, phosphate.',
-    caloriesKcal: 2000, proteinG: 40, carbsG: 300, fatG: 70,
-    sodiumMg: 2000, potassiumMg: 2000, fluidMl: 1500,
-    restrictions: 'Avoid: bananas, oranges, leafy greens, dairy. Low-protein roti.',
-    targetConditions: 'CKD stage 3-4 (pre-dialysis)',
-    isVeg: true,
+    name: 'Full liquid diet', code: 'full-liquid',
+    description: 'All fluids including milk-based drinks, soups and porridge.',
+    restrictions: ['Liquid'], targetConditions: ['Post-operative progression', 'Swallowing difficulty'],
   },
   {
-    code: 'HTN-NS', name: 'Hypertension / no added salt',
-    description: 'DASH-style; sodium < 2g/day; potassium-rich.',
-    caloriesKcal: 2000, proteinG: 75, carbsG: 270, fatG: 60, sodiumMg: 2000,
-    restrictions: 'No added salt; no pickles; no papad; no processed foods',
-    targetConditions: 'Essential hypertension, CHF',
-    isVeg: true,
+    name: 'Diabetic diet', code: 'diabetic',
+    description: 'Controlled carbohydrate, no added sugar, high fibre.',
+    restrictions: ['No added sugar'], targetConditions: ['Diabetes'],
   },
   {
-    code: 'CARD', name: 'Cardiac / low fat',
-    description: 'Low saturated fat, low cholesterol, low sodium.',
-    caloriesKcal: 1800, proteinG: 70, carbsG: 250, fatG: 40, sodiumMg: 2000,
-    restrictions: 'No ghee/butter; lean protein only; no fried items',
-    targetConditions: 'IHD, post-MI, hyperlipidaemia',
-    isVeg: true,
+    name: 'Renal diet', code: 'renal',
+    description: 'Restricted sodium, potassium, phosphorus and fluid as prescribed.',
+    restrictions: ['Low salt', 'Low potassium', 'Fluid restricted'], targetConditions: ['Chronic kidney disease', 'Dialysis'],
   },
   {
-    code: 'SOFT', name: 'Soft diet',
-    description: 'Easy-to-chew, easy-to-digest for post-op / dental / dysphagia.',
-    caloriesKcal: 1800, proteinG: 60, carbsG: 240, fatG: 55,
-    restrictions: 'No raw vegetables; no nuts; no hard crusts; well-cooked only',
-    targetConditions: 'Post-surgical, dental, mild dysphagia',
-    isVeg: true,
+    name: 'Cardiac diet', code: 'cardiac',
+    description: 'Low salt, low saturated fat.',
+    restrictions: ['Low salt', 'Low fat'], targetConditions: ['Hypertension', 'Cardiac disease'],
   },
   {
-    code: 'LIQ-CLR', name: 'Clear liquids',
-    description: 'Day 1 post-op or bowel prep — see-through fluids only.',
-    caloriesKcal: 600, fluidMl: 2000,
-    restrictions: 'Clear soups, electrolytes, weak tea, water, clear juices only',
-    targetConditions: 'Immediate post-op, pre-colonoscopy, gastroenteritis',
-    isVeg: true,
-  },
-  {
-    code: 'LIQ-FULL', name: 'Full liquids',
-    description: 'All liquids including milk-based — step-up from clear liquids.',
-    caloriesKcal: 1200, proteinG: 40, fluidMl: 2000,
-    restrictions: 'No solids; milk, lassi, dal water, smooth soups, porridge slurry',
-    targetConditions: 'Day 2-3 post-op, severe sore throat, dysphagia',
-    isVeg: true,
-  },
-  {
-    code: 'PAED', name: 'Paediatric general',
-    description: 'Age-appropriate portions, no choking hazards.',
-    caloriesKcal: 1400, proteinG: 35, carbsG: 200, fatG: 45,
-    restrictions: 'No whole nuts, no popcorn, no hard candy',
-    targetConditions: 'Children 2-12 years',
-    isVeg: true,
-  },
-  {
-    code: 'GER', name: 'Geriatric soft',
-    description: 'Easy-to-chew, calorie-adequate for elderly patients.',
-    caloriesKcal: 1600, proteinG: 60, carbsG: 220, fatG: 50,
-    restrictions: 'Soft textures, easy to digest, mild seasoning',
-    targetConditions: 'Patients > 70 years, age-related dysphagia or dentition issues',
-    isVeg: true,
+    name: 'High-protein diet', code: 'high-protein',
+    description: 'Increased protein and energy for recovery.',
+    restrictions: [], targetConditions: ['Burns', 'Malnutrition', 'Post-operative recovery'],
   },
 ];
 
-// ─── Meals ──────────────────────────────────────────────────────────
-interface MealSeed {
-  name: string; description?: string; category: string; caloriesKcal?: number;
-  isVeg?: boolean;
-  compatibleDietCodes: string[];
-  allergenNames: string[];
-}
-
-const MEALS: MealSeed[] = [
-  // Breakfast options
-  { name: 'Idli (3 pcs) + sambar + chutney', category: 'Main', caloriesKcal: 250,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'DM-1500', 'HTN-NS', 'CARD', 'PAED'],
-    allergenNames: [] },
-  { name: 'Masala dosa + chutney', category: 'Main', caloriesKcal: 400,
-    compatibleDietCodes: ['GEN', 'PAED'],
-    allergenNames: [] },
-  { name: 'Plain dosa + sambar', category: 'Main', caloriesKcal: 300,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'HTN-NS', 'CARD', 'PAED'],
-    allergenNames: [] },
-  { name: 'Oats porridge (low salt)', category: 'Main', caloriesKcal: 200,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'DM-1500', 'HTN-NS', 'CARD', 'SOFT', 'PAED', 'CKD-LP'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-  { name: 'Wheat upma', category: 'Main', caloriesKcal: 280,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'HTN-NS', 'PAED'],
-    allergenNames: ['Wheat / Gluten'] },
-  { name: 'Vegetable poha', category: 'Main', caloriesKcal: 260,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'DM-1500', 'HTN-NS', 'CARD', 'PAED'],
-    allergenNames: ['Peanut'] },
-  { name: 'Paratha (2) + curd', category: 'Main', caloriesKcal: 450,
-    compatibleDietCodes: ['GEN', 'PAED'],
-    allergenNames: ['Wheat / Gluten', 'Milk / Dairy', 'Lactose'] },
-  { name: 'Ragi malt (sugar-free)', category: 'Beverage', caloriesKcal: 180,
-    compatibleDietCodes: ['DM-1800', 'DM-1500', 'GER', 'PAED', 'SOFT', 'LIQ-FULL'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-
-  // Lunch / dinner — mains
-  { name: 'Chapati (2) + dal + sabzi', category: 'Main', caloriesKcal: 500,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'HTN-NS', 'CARD', 'PAED'],
-    allergenNames: ['Wheat / Gluten'] },
-  { name: 'Steamed rice + dal + sabzi', category: 'Main', caloriesKcal: 480,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'CKD-LP', 'HTN-NS', 'CARD', 'PAED'],
-    allergenNames: [] },
-  { name: 'Curd rice', category: 'Main', caloriesKcal: 350,
-    compatibleDietCodes: ['GEN', 'SOFT', 'GER', 'PAED'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-  { name: 'Khichdi (moong dal)', category: 'Main', caloriesKcal: 380,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'HTN-NS', 'CARD', 'SOFT', 'GER', 'PAED'],
-    allergenNames: [] },
-  { name: 'Vegetable pulao', category: 'Main', caloriesKcal: 520,
-    compatibleDietCodes: ['GEN', 'PAED'],
-    allergenNames: ['Milk / Dairy'] },
-  { name: 'Sambar rice', category: 'Main', caloriesKcal: 420,
-    compatibleDietCodes: ['GEN', 'HTN-NS', 'PAED'],
-    allergenNames: [] },
-  { name: 'Low-protein roti (2) + dal water + sabzi', category: 'Main', caloriesKcal: 380,
-    compatibleDietCodes: ['CKD-LP'],
-    allergenNames: ['Wheat / Gluten'] },
-
-  // Soups / liquids
-  { name: 'Clear vegetable soup', category: 'Soup', caloriesKcal: 80,
-    compatibleDietCodes: ['LIQ-CLR', 'LIQ-FULL', 'SOFT', 'GEN', 'DM-1800', 'HTN-NS', 'CARD'],
-    allergenNames: [] },
-  { name: 'Tomato soup (cream of)', category: 'Soup', caloriesKcal: 150,
-    compatibleDietCodes: ['LIQ-FULL', 'SOFT', 'GEN', 'PAED'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-  { name: 'Dal water (clear)', category: 'Soup', caloriesKcal: 60,
-    compatibleDietCodes: ['LIQ-CLR', 'LIQ-FULL', 'SOFT', 'CKD-LP'],
-    allergenNames: [] },
-  { name: 'Lassi (sweet)', category: 'Beverage', caloriesKcal: 180,
-    compatibleDietCodes: ['LIQ-FULL', 'GEN', 'PAED'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-  { name: 'Buttermilk (salted)', category: 'Beverage', caloriesKcal: 60,
-    compatibleDietCodes: ['LIQ-FULL', 'GEN', 'DM-1800', 'PAED'],
-    allergenNames: ['Milk / Dairy', 'Lactose'] },
-  { name: 'Electrolyte drink (ORS)', category: 'Beverage', caloriesKcal: 80,
-    compatibleDietCodes: ['LIQ-CLR', 'LIQ-FULL', 'SOFT', 'GEN', 'PAED'],
-    allergenNames: [] },
-  { name: 'Weak tea (no sugar)', category: 'Beverage', caloriesKcal: 20,
-    compatibleDietCodes: ['LIQ-CLR', 'LIQ-FULL', 'DM-1800', 'GEN', 'HTN-NS', 'CARD'],
-    allergenNames: [] },
-  { name: 'Apple juice (clear)', category: 'Beverage', caloriesKcal: 110,
-    compatibleDietCodes: ['LIQ-CLR', 'LIQ-FULL', 'GEN', 'PAED'],
-    allergenNames: [] },
-
-  // Snacks / sides
-  { name: 'Fruit bowl (apple/papaya/banana)', category: 'Side', caloriesKcal: 120,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'HTN-NS', 'CARD', 'PAED', 'GER'],
-    allergenNames: [] },
-  { name: 'Sprouts salad', category: 'Side', caloriesKcal: 130,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'DM-1500', 'HTN-NS', 'CARD'],
-    allergenNames: [] },
-  { name: 'Biscuits (cream-cracker, 4)', category: 'Snack', caloriesKcal: 160,
-    compatibleDietCodes: ['GEN', 'GER', 'PAED'],
-    allergenNames: ['Wheat / Gluten', 'Milk / Dairy'] },
-  { name: 'Roasted chana (50g)', category: 'Snack', caloriesKcal: 180,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'DM-1500', 'HTN-NS', 'CARD'],
-    allergenNames: [] },
-  { name: 'Boiled egg (1) + toast', category: 'Side', caloriesKcal: 220,
-    compatibleDietCodes: ['GEN', 'CARD', 'PAED'],
-    allergenNames: ['Egg', 'Wheat / Gluten'] },
-  { name: 'Paneer bhurji + roti', category: 'Main', caloriesKcal: 420,
-    compatibleDietCodes: ['GEN', 'DM-1800', 'CARD'],
-    allergenNames: ['Milk / Dairy', 'Wheat / Gluten'] },
-  { name: 'Sugar-free kheer', category: 'Dessert', caloriesKcal: 150,
-    compatibleDietCodes: ['DM-1800', 'GEN', 'PAED', 'GER'],
-    allergenNames: ['Milk / Dairy', 'Lactose', 'Tree nut'] },
+// `match` is a case-insensitive substring of the prescription's generic or
+// brand name (see getInteractionsForAdmission).
+const INTERACTIONS: Array<{ match: string; severity: 'info' | 'warning' | 'critical'; foodGuidance: string }> = [
+  { match: 'warfarin', severity: 'warning', foodGuidance: 'Keep vitamin K intake (green leafy vegetables) consistent day to day. Avoid alcohol and cranberry juice.' },
+  { match: 'acenocoumarol', severity: 'warning', foodGuidance: 'Keep vitamin K intake (green leafy vegetables) consistent day to day. Avoid alcohol.' },
+  { match: 'phenelzine', severity: 'critical', foodGuidance: 'Strictly avoid tyramine-rich foods: aged cheese, cured / fermented meat, soy sauce, yeast extracts, overripe fruit.' },
+  { match: 'tranylcypromine', severity: 'critical', foodGuidance: 'Strictly avoid tyramine-rich foods: aged cheese, cured / fermented meat, soy sauce, yeast extracts, overripe fruit.' },
+  { match: 'linezolid', severity: 'warning', foodGuidance: 'Avoid large amounts of tyramine-rich foods (aged cheese, fermented / cured meat, soy sauce).' },
+  { match: 'isoniazid', severity: 'info', foodGuidance: 'Avoid tyramine- and histamine-rich foods (aged cheese, tuna, mackerel) — may cause flushing / headache. Best taken on an empty stomach.' },
+  { match: 'ciprofloxacin', severity: 'warning', foodGuidance: 'Do not give with milk, curd or calcium / iron supplements — separate by at least 2 hours.' },
+  { match: 'norfloxacin', severity: 'warning', foodGuidance: 'Do not give with milk, curd or calcium / iron supplements — separate by at least 2 hours.' },
+  { match: 'doxycycline', severity: 'warning', foodGuidance: 'Separate from milk, dairy, antacids and iron by at least 2 hours.' },
+  { match: 'tetracycline', severity: 'warning', foodGuidance: 'Give on an empty stomach; separate from milk, dairy and iron by at least 2 hours.' },
+  { match: 'levothyroxine', severity: 'info', foodGuidance: 'Give on an empty stomach 30–60 min before breakfast. Separate from calcium, iron, soy and high-fibre food.' },
+  { match: 'thyroxine', severity: 'info', foodGuidance: 'Give on an empty stomach 30–60 min before breakfast. Separate from calcium, iron, soy and high-fibre food.' },
+  { match: 'alendronate', severity: 'info', foodGuidance: 'Give with plain water only on an empty stomach; no food or drink for 30 min; patient stays upright.' },
+  { match: 'spironolactone', severity: 'warning', foodGuidance: 'Avoid potassium-rich foods in excess (banana, coconut water, tomato) and potassium salt substitutes.' },
+  { match: 'eplerenone', severity: 'warning', foodGuidance: 'Avoid potassium-rich foods in excess and potassium salt substitutes.' },
+  { match: 'simvastatin', severity: 'warning', foodGuidance: 'Avoid grapefruit and grapefruit juice.' },
+  { match: 'atorvastatin', severity: 'info', foodGuidance: 'Avoid large amounts of grapefruit juice.' },
+  { match: 'tacrolimus', severity: 'warning', foodGuidance: 'Avoid grapefruit / pomelo. Give consistently with respect to meals.' },
+  { match: 'ciclosporin', severity: 'warning', foodGuidance: 'Avoid grapefruit / pomelo and potassium-rich foods in excess.' },
+  { match: 'cyclosporin', severity: 'warning', foodGuidance: 'Avoid grapefruit / pomelo and potassium-rich foods in excess.' },
+  { match: 'metronidazole', severity: 'warning', foodGuidance: 'No alcohol (including alcohol-containing tonics) during and for 48 h after the course.' },
+  { match: 'lithium', severity: 'warning', foodGuidance: 'Keep salt and fluid intake consistent; avoid sudden low-salt diets or dehydration.' },
+  { match: 'ferrous', severity: 'info', foodGuidance: 'Separate from tea, coffee, milk and calcium by 2 hours; vitamin C (citrus) improves absorption.' },
+  { match: 'metformin', severity: 'info', foodGuidance: 'Give with or just after meals.' },
 ];
-
-// ─── Menu plans ─────────────────────────────────────────────────────
-// dayOfWeek: 0 = Sunday … 6 = Saturday
-// For each diet × slot × day, name the meal to use.
-// Slot codes referenced: BFAST, LUNCH, SNACK, DINNER (EARLY only for LIQ-CLR).
-
-interface MenuEntry {
-  dietCode: string; slotCode: string; dayOfWeek: number; mealName: string;
-}
-
-function makeWeeklyMenu(dietCode: string, slotCode: string, mealsByDay: string[]): MenuEntry[] {
-  return mealsByDay.map((mealName, dayOfWeek) => ({ dietCode, slotCode, dayOfWeek, mealName }));
-}
-
-const MENU_ENTRIES: MenuEntry[] = [
-  // GENERAL DIET — full week × 4 slots
-  ...makeWeeklyMenu('GEN', 'BFAST', [
-    'Idli (3 pcs) + sambar + chutney', 'Wheat upma', 'Plain dosa + sambar',
-    'Vegetable poha', 'Paratha (2) + curd', 'Masala dosa + chutney', 'Oats porridge (low salt)',
-  ]),
-  ...makeWeeklyMenu('GEN', 'LUNCH', [
-    'Chapati (2) + dal + sabzi', 'Steamed rice + dal + sabzi', 'Vegetable pulao',
-    'Sambar rice', 'Chapati (2) + dal + sabzi', 'Khichdi (moong dal)', 'Steamed rice + dal + sabzi',
-  ]),
-  ...makeWeeklyMenu('GEN', 'SNACK', [
-    'Fruit bowl (apple/papaya/banana)', 'Biscuits (cream-cracker, 4)', 'Buttermilk (salted)',
-    'Roasted chana (50g)', 'Fruit bowl (apple/papaya/banana)', 'Biscuits (cream-cracker, 4)', 'Buttermilk (salted)',
-  ]),
-  ...makeWeeklyMenu('GEN', 'DINNER', [
-    'Chapati (2) + dal + sabzi', 'Khichdi (moong dal)', 'Steamed rice + dal + sabzi',
-    'Chapati (2) + dal + sabzi', 'Curd rice', 'Steamed rice + dal + sabzi', 'Khichdi (moong dal)',
-  ]),
-
-  // DIABETIC 1800 — same structure, sugar-free options
-  ...makeWeeklyMenu('DM-1800', 'BFAST', [
-    'Idli (3 pcs) + sambar + chutney', 'Wheat upma', 'Plain dosa + sambar',
-    'Vegetable poha', 'Oats porridge (low salt)', 'Wheat upma', 'Oats porridge (low salt)',
-  ]),
-  ...makeWeeklyMenu('DM-1800', 'LUNCH', [
-    'Chapati (2) + dal + sabzi', 'Steamed rice + dal + sabzi', 'Khichdi (moong dal)',
-    'Chapati (2) + dal + sabzi', 'Steamed rice + dal + sabzi', 'Khichdi (moong dal)', 'Chapati (2) + dal + sabzi',
-  ]),
-  ...makeWeeklyMenu('DM-1800', 'SNACK', [
-    'Sprouts salad', 'Roasted chana (50g)', 'Buttermilk (salted)',
-    'Fruit bowl (apple/papaya/banana)', 'Sprouts salad', 'Roasted chana (50g)', 'Buttermilk (salted)',
-  ]),
-  ...makeWeeklyMenu('DM-1800', 'DINNER', [
-    'Chapati (2) + dal + sabzi', 'Khichdi (moong dal)', 'Chapati (2) + dal + sabzi',
-    'Khichdi (moong dal)', 'Chapati (2) + dal + sabzi', 'Khichdi (moong dal)', 'Chapati (2) + dal + sabzi',
-  ]),
-
-  // SOFT DIET — same easy items every day (kitchen doesn't rotate)
-  ...makeWeeklyMenu('SOFT', 'BFAST', new Array(7).fill('Oats porridge (low salt)')),
-  ...makeWeeklyMenu('SOFT', 'LUNCH', new Array(7).fill('Khichdi (moong dal)')),
-  ...makeWeeklyMenu('SOFT', 'SNACK', new Array(7).fill('Tomato soup (cream of)')),
-  ...makeWeeklyMenu('SOFT', 'DINNER', new Array(7).fill('Curd rice')),
-
-  // FULL LIQUIDS — every day same minimal rotation
-  ...makeWeeklyMenu('LIQ-FULL', 'EARLY', new Array(7).fill('Weak tea (no sugar)')),
-  ...makeWeeklyMenu('LIQ-FULL', 'BFAST', new Array(7).fill('Ragi malt (sugar-free)')),
-  ...makeWeeklyMenu('LIQ-FULL', 'LUNCH', new Array(7).fill('Tomato soup (cream of)')),
-  ...makeWeeklyMenu('LIQ-FULL', 'SNACK', new Array(7).fill('Buttermilk (salted)')),
-  ...makeWeeklyMenu('LIQ-FULL', 'DINNER', new Array(7).fill('Dal water (clear)')),
-
-  // CLEAR LIQUIDS — minimal, on-demand
-  ...makeWeeklyMenu('LIQ-CLR', 'EARLY',  new Array(7).fill('Weak tea (no sugar)')),
-  ...makeWeeklyMenu('LIQ-CLR', 'BFAST',  new Array(7).fill('Apple juice (clear)')),
-  ...makeWeeklyMenu('LIQ-CLR', 'LUNCH',  new Array(7).fill('Clear vegetable soup')),
-  ...makeWeeklyMenu('LIQ-CLR', 'SNACK',  new Array(7).fill('Electrolyte drink (ORS)')),
-  ...makeWeeklyMenu('LIQ-CLR', 'DINNER', new Array(7).fill('Clear vegetable soup')),
-];
-
-// ─── Drug-food interactions ─────────────────────────────────────────
-interface InteractionSeed {
-  match: string;
-  severity: 'info' | 'warning' | 'critical';
-  foodGuidance: string;
-}
-
-const INTERACTIONS: InteractionSeed[] = [
-  { match: 'warfarin', severity: 'critical',
-    foodGuidance: 'Avoid sudden changes in vitamin-K intake — keep leafy greens (spinach, methi, kale) consistent. Avoid cranberry juice and large amounts of garlic/ginger.' },
-  { match: 'linezolid', severity: 'critical',
-    foodGuidance: 'Avoid tyramine-rich foods: aged cheese, cured meats, fermented soy, wine, beer, draught beverages.' },
-  { match: 'simvastatin', severity: 'warning',
-    foodGuidance: 'Avoid grapefruit and grapefruit juice — increases statin levels and rhabdomyolysis risk.' },
-  { match: 'atorvastatin', severity: 'warning',
-    foodGuidance: 'Limit grapefruit and grapefruit juice to small amounts; large quantities increase statin exposure.' },
-  { match: 'tetracycline', severity: 'warning',
-    foodGuidance: 'Take 1h before / 2h after dairy, antacids, iron, or calcium supplements (chelation reduces absorption).' },
-  { match: 'doxycycline', severity: 'warning',
-    foodGuidance: 'Avoid dairy and antacids within 2h of dose. Take with water, upright posture.' },
-  { match: 'levothyroxine', severity: 'warning',
-    foodGuidance: 'Take on empty stomach 30-60 min before breakfast. Avoid coffee, soy, calcium, iron, and high-fibre foods at the same time.' },
-  { match: 'ciprofloxacin', severity: 'warning',
-    foodGuidance: 'Separate by 2h from dairy, calcium-fortified juices, iron, antacids. Avoid caffeine excess.' },
-  { match: 'lisinopril', severity: 'info',
-    foodGuidance: 'Watch for hyperkalaemia — moderate intake of bananas, oranges, tomatoes, coconut water. Avoid salt substitutes (KCl).' },
-  { match: 'enalapril', severity: 'info',
-    foodGuidance: 'Watch for hyperkalaemia — moderate intake of bananas, oranges, tomatoes. Avoid salt substitutes (KCl).' },
-  { match: 'furosemide', severity: 'info',
-    foodGuidance: 'May deplete potassium — include bananas, oranges, dates unless on potassium-sparing co-therapy.' },
-  { match: 'digoxin', severity: 'warning',
-    foodGuidance: 'Avoid high-fibre meals (bran, oat bran) at the same time as the dose — reduces absorption.' },
-  { match: 'methotrexate', severity: 'warning',
-    foodGuidance: 'Avoid alcohol completely. Limit caffeine. Folate-rich foods are encouraged (spinach, lentils).' },
-  { match: 'metformin', severity: 'info',
-    foodGuidance: 'Take with meals to reduce GI upset. Avoid heavy alcohol intake (lactic acidosis risk).' },
-  { match: 'insulin', severity: 'info',
-    foodGuidance: 'Coordinate meal timing with dose. Carbohydrate-counted meals; avoid skipping meals after rapid-acting doses.' },
-];
-
-// ─── Canteen channel ────────────────────────────────────────────────
-const DEFAULT_CHANNEL = { name: 'Main canteen' };
-
-// ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log('Seeding dietetics catalogue…\n');
+  const counts: Record<string, { created: number; skipped: number }> = {};
+  const bump = (entity: string, kind: 'created' | 'skipped'): void => {
+    counts[entity] ??= { created: 0, skipped: 0 };
+    counts[entity][kind] += 1;
+  };
 
-  // Slots
-  const slotIdByCode = new Map<string, string>();
-  for (const s of SLOTS) {
-    const row = await prisma.mealTimeSlot.upsert({
-      where: { code: s.code },
-      update: { name: s.name, startTime: s.startTime, endTime: s.endTime, sequence: s.sequence, isActive: true },
-      create: { ...s, isActive: true },
-    });
-    slotIdByCode.set(s.code, row.id);
-    console.log(`  slot  ${row.code.padEnd(7)} ${row.startTime}-${row.endTime}`);
+  // Slots and diets are a starter set only: if the hospital has already
+  // configured any, matching by name/code would miss near-duplicates
+  // ("Evening snack" vs "Evening snacks") and add a second slot at the same time.
+  if (await prisma.mealTimeSlot.count() === 0) {
+    for (const s of SLOTS) {
+      await prisma.mealTimeSlot.create({ data: { ...s, isActive: true } });
+      bump('MealTimeSlot', 'created');
+    }
+  } else {
+    console.log('MealTimeSlot: already configured — skipped');
   }
 
-  // Allergens
-  const allergenIdByName = new Map<string, string>();
   for (const name of ALLERGENS) {
-    const row = await prisma.allergenMaster.upsert({
-      where: { name },
-      update: { isActive: true },
-      create: { name, isActive: true },
-    });
-    allergenIdByName.set(name, row.id);
+    const existing = await prisma.allergenMaster.findUnique({ where: { name }, select: { id: true } });
+    if (existing) { bump('AllergenMaster', 'skipped'); continue; }
+    await prisma.allergenMaster.create({ data: { name, isActive: true } });
+    bump('AllergenMaster', 'created');
   }
-  console.log(`  allergens: ${ALLERGENS.length}`);
 
-  // Diets
-  const dietIdByCode = new Map<string, string>();
-  for (const d of DIETS) {
-    const row = await prisma.dietMaster.upsert({
-      where: { code: d.code },
-      update: {
-        name: d.name, description: d.description,
-        caloriesKcal: d.caloriesKcal ?? null, proteinG: d.proteinG ?? null,
-        carbsG: d.carbsG ?? null, fatG: d.fatG ?? null,
-        sodiumMg: d.sodiumMg ?? null, potassiumMg: d.potassiumMg ?? null, fluidMl: d.fluidMl ?? null,
-        restrictions: d.restrictions ?? null, targetConditions: d.targetConditions ?? null,
-        isVeg: d.isVeg ?? false, isJain: d.isJain ?? false, isHalal: d.isHalal ?? false,
-        isKosher: d.isKosher ?? false, isNoOnionGarlic: d.isNoOnionGarlic ?? false,
+  const hasDiets = (await prisma.dietMaster.count()) > 0;
+  if (hasDiets) console.log('DietMaster: already configured — skipped');
+  for (const d of hasDiets ? [] : DIETS) {
+    await prisma.dietMaster.create({
+      data: {
+        name: d.name,
+        code: d.code,
+        description: d.description,
+        restrictions: JSON.stringify(d.restrictions),
+        targetConditions: JSON.stringify(d.targetConditions),
+        isGeneral: d.code === 'general',
         isActive: true,
-      },
-      create: {
-        code: d.code, name: d.name, description: d.description,
-        caloriesKcal: d.caloriesKcal ?? null, proteinG: d.proteinG ?? null,
-        carbsG: d.carbsG ?? null, fatG: d.fatG ?? null,
-        sodiumMg: d.sodiumMg ?? null, potassiumMg: d.potassiumMg ?? null, fluidMl: d.fluidMl ?? null,
-        restrictions: d.restrictions ?? null, targetConditions: d.targetConditions ?? null,
-        isVeg: d.isVeg ?? false, isJain: d.isJain ?? false, isHalal: d.isHalal ?? false,
-        isKosher: d.isKosher ?? false, isNoOnionGarlic: d.isNoOnionGarlic ?? false,
-        isActive: true, createdBy: 'system-seed',
+        createdBy: 'seed-dietetics',
       },
     });
-    dietIdByCode.set(d.code, row.id);
-    console.log(`  diet  ${row.code.padEnd(8)} ${row.name}`);
+    bump('DietMaster', 'created');
   }
 
-  // Meals + their compat / allergen joins.
-  const mealIdByName = new Map<string, string>();
-  for (const m of MEALS) {
-    const row = await prisma.mealMaster.upsert({
-      where: { name: m.name },
-      update: {
-        description: m.description ?? null, category: m.category,
-        caloriesKcal: m.caloriesKcal ?? null, isVeg: m.isVeg ?? true, isActive: true,
-      },
-      create: {
-        name: m.name, description: m.description ?? null, category: m.category,
-        caloriesKcal: m.caloriesKcal ?? null, isVeg: m.isVeg ?? true, isActive: true,
-      },
-    });
-    mealIdByName.set(m.name, row.id);
-
-    // Replace compat joins for this meal — keeps it simple and idempotent.
-    await prisma.dietMealCompat.deleteMany({ where: { mealMasterId: row.id } });
-    for (const code of m.compatibleDietCodes) {
-      const dietId = dietIdByCode.get(code);
-      if (!dietId) {
-        console.warn(`  ! meal "${m.name}" references unknown diet "${code}"`);
-        continue;
-      }
-      await prisma.dietMealCompat.create({ data: { dietMasterId: dietId, mealMasterId: row.id } });
-    }
-    await prisma.mealAllergen.deleteMany({ where: { mealMasterId: row.id } });
-    for (const name of m.allergenNames) {
-      const allergenId = allergenIdByName.get(name);
-      if (!allergenId) {
-        console.warn(`  ! meal "${m.name}" references unknown allergen "${name}"`);
-        continue;
-      }
-      await prisma.mealAllergen.create({ data: { mealMasterId: row.id, allergenId } });
-    }
-  }
-  console.log(`  meals: ${MEALS.length}`);
-
-  // Menu plan
-  let menuCount = 0;
-  for (const e of MENU_ENTRIES) {
-    const dietId = dietIdByCode.get(e.dietCode);
-    const slotId = slotIdByCode.get(e.slotCode);
-    const mealId = mealIdByName.get(e.mealName);
-    if (!dietId || !slotId || !mealId) {
-      console.warn(`  ! menu entry skipped: diet=${e.dietCode} slot=${e.slotCode} meal=${e.mealName}`);
-      continue;
-    }
-    await prisma.menuPlan.upsert({
-      where: {
-        dietMasterId_mealTimeSlotId_dayOfWeek: {
-          dietMasterId: dietId, mealTimeSlotId: slotId, dayOfWeek: e.dayOfWeek,
-        },
-      },
-      update: { mealMasterId: mealId },
-      create: { dietMasterId: dietId, mealTimeSlotId: slotId, mealMasterId: mealId, dayOfWeek: e.dayOfWeek },
-    });
-    menuCount += 1;
-  }
-  console.log(`  menu cells: ${menuCount}`);
-
-  // Drug-food interactions — no unique on match, so we do findFirst-then-write.
   for (const i of INTERACTIONS) {
-    const existing = await prisma.drugFoodInteraction.findFirst({ where: { match: i.match } });
-    if (existing) {
-      await prisma.drugFoodInteraction.update({
-        where: { id: existing.id },
-        data: { severity: i.severity, foodGuidance: i.foodGuidance, isActive: true },
-      });
-    } else {
-      await prisma.drugFoodInteraction.create({
-        data: { match: i.match, severity: i.severity, foodGuidance: i.foodGuidance, isActive: true },
-      });
-    }
+    const existing = await prisma.drugFoodInteraction.findFirst({ where: { match: i.match }, select: { id: true } });
+    if (existing) { bump('DrugFoodInteraction', 'skipped'); continue; }
+    await prisma.drugFoodInteraction.create({ data: { ...i, isActive: true } });
+    bump('DrugFoodInteraction', 'created');
   }
-  console.log(`  drug-food interactions: ${INTERACTIONS.length}`);
 
-  // Default canteen channel.
-  await prisma.canteenChannel.upsert({
-    where: { name: DEFAULT_CHANNEL.name },
-    update: { isActive: true },
-    create: { name: DEFAULT_CHANNEL.name, isActive: true },
-  });
-  console.log(`  canteen channel: "${DEFAULT_CHANNEL.name}"`);
-
-  console.log('\nDone.');
+  for (const [entity, c] of Object.entries(counts)) {
+    console.log(`${entity}: created ${c.created}, skipped ${c.skipped}`);
+  }
+  console.log('Next: add meal items + a weekly menu per diet in Dietetics → Setup.');
 }
 
 main()
-  .then(async () => { await prisma.$disconnect(); process.exit(0); })
-  .catch(async (e) => {
-    console.error('Seed failed:', e);
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+  .catch((e) => { console.error('Dietetics seed failed:', e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import prisma from '../../service/prisma-client';
 import { raiseAutoIncident } from './incident.controller';
 
@@ -11,7 +12,8 @@ import { raiseAutoIncident } from './incident.controller';
 //   - 'on-write'  → existing controllers call raiseByRule() at save time.
 //   - 'cron'      → incident-rules.cron.ts runs every 15 minutes.
 //
-// Idempotency is owned by raiseAutoIncident() (24h dedupe per ruleKey + entity).
+// Idempotency is owned by raiseAutoIncident() (one active incident per
+// ruleKey + entity; one per ruleKey + qiCode + period for QI rules).
 
 export type Severity = 'near_miss' | 'minor' | 'moderate' | 'major' | 'sentinel';
 export type Category =
@@ -27,6 +29,8 @@ export interface IncidentContext {
   ward?: string | null;
   department?: string | null;
   occurredAt?: Date | null;
+  qiCode?: string | null;
+  qiPeriod?: string | null;
   // extra free-form data baked into title/description
   extras?: Record<string, string | number | null | undefined>;
 }
@@ -202,14 +206,28 @@ export const RULE_CATALOGUE: Record<string, RuleDef> = {
 
 // ─── Public API ──────────────────────────────────────────────────────
 
-/** Raise an incident from a rule key + context. Idempotent (24h dedupe). */
+// Set for the duration of a cron sweep so raiseByRule doesn't hit the
+// IncidentRule table once per scanned row.
+let sweepRuleActive: Map<string, boolean> | null = null;
+
+async function isRuleActive(key: string): Promise<boolean> {
+  if (sweepRuleActive) return sweepRuleActive.get(key) !== false;
+  const row = await prisma.incidentRule.findUnique({ where: { key }, select: { isActive: true } }).catch(() => null);
+  return !(row && row.isActive === false);
+}
+
+/** Raise an incident from a rule key + context. Idempotent (see raiseAutoIncident). */
 export async function raiseByRule(key: string, ctx: IncidentContext): Promise<{ created: boolean; incidentId?: string } | null> {
   try {
     const def = RULE_CATALOGUE[key];
     if (!def) return null;
     // Honour runtime toggle when an IncidentRule row exists.
-    const row = await prisma.incidentRule.findUnique({ where: { key } }).catch(() => null);
-    if (row && row.isActive === false) return { created: false };
+    if (!(await isRuleActive(key))) return { created: false };
+    // QI breach callers that only pass extras still get per-period dedupe.
+    const extraQi = key === 'QI_CRITICAL_BREACH' ? ctx.extras?.['qiCode'] : undefined;
+    const extraPeriod = key === 'QI_CRITICAL_BREACH' ? ctx.extras?.['period'] : undefined;
+    const qiCode = ctx.qiCode ?? (typeof extraQi === 'string' ? extraQi : null);
+    const qiPeriod = ctx.qiPeriod ?? (typeof extraPeriod === 'string' ? extraPeriod : null);
     const result = await raiseAutoIncident({
       ruleKey: key,
       category: def.category,
@@ -225,6 +243,8 @@ export async function raiseByRule(key: string, ctx: IncidentContext): Promise<{ 
       ward: ctx.ward ?? null,
       department: ctx.department ?? null,
       occurredAt: ctx.occurredAt ?? null,
+      qiCode,
+      qiPeriod,
     });
     return result;
   } catch (err) {
@@ -238,16 +258,33 @@ export async function raiseByRule(key: string, ctx: IncidentContext): Promise<{ 
 
 type RunnerOut = { checked: number; raised: number };
 
-/** Admission > 24h, no consultant-signed initial assessment (or no row). */
+// Sweeps only look this far back so the first run (or a long-disabled rule)
+// doesn't flood the inbox with years-old records.
+const SWEEP_LOOKBACK_DAYS = 7;
+const lookbackFloor = (): Date => new Date(Date.now() - SWEEP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+/**
+ * Admission > 24h, no consultant-signed initial assessment (or no row).
+ * No lookback floor: 'admitted' already bounds the set to the current census,
+ * so a long-stay patient who is still unsigned keeps being caught.
+ */
 async function runInitialAssessmentLate(): Promise<RunnerOut> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const admissions = await prisma.ipdAdmission.findMany({
-    where: { admissionDate: { lt: cutoff }, status: 'admitted' },
+    where: {
+      admissionDate: { lt: cutoff },
+      status: 'admitted',
+      OR: [
+        { initialAssessment: { is: null } },
+        { initialAssessment: { is: { status: { not: 'CONSULTANT_SIGNED' } } } },
+      ],
+    },
     select: {
       id: true, admissionNo: true, prn: true, department: true, ward: { select: { wardName: true } },
       admissionDate: true,
       initialAssessment: { select: { status: true } },
     },
+    orderBy: { admissionDate: 'desc' },
     take: 1000,
   });
   let raised = 0;
@@ -276,8 +313,9 @@ async function runInitialAssessmentLate(): Promise<RunnerOut> {
 async function runDischargeSummaryUnsigned(): Promise<RunnerOut> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const rows = await prisma.ipdDischarge.findMany({
-    where: { dischargeDate: { lt: cutoff }, NOT: { summaryStatus: { in: ['SIGNED', 'DELIVERED'] } } },
+    where: { dischargeDate: { lt: cutoff, gte: lookbackFloor() }, NOT: { summaryStatus: { in: ['SIGNED', 'DELIVERED'] } } },
     select: { id: true, admissionId: true, dischargeDate: true, admission: { select: { admissionNo: true, prn: true, department: true } } },
+    orderBy: { dischargeDate: 'desc' },
     take: 1000,
   });
   let raised = 0;
@@ -305,9 +343,10 @@ async function runCriticalLabUnacked(): Promise<RunnerOut> {
   const rows = await prisma.investigationResult.findMany({
     where: {
       criticalFlag: true, isDeleted: false, acknowledgedAt: null,
-      reportedAt: { lt: cutoff },
+      reportedAt: { lt: cutoff, gte: lookbackFloor() },
     },
     select: { id: true, prn: true, testName: true, reportedAt: true, department: true },
+    orderBy: { reportedAt: 'desc' },
     take: 500,
   });
   let raised = 0;
@@ -339,8 +378,8 @@ async function runCriticalLabUnacked(): Promise<RunnerOut> {
         encounterType = 'IPD';
       } else {
         // OPD fallback — most recent appointment for this PRN at or before reportedAt
-        // (Appointment.date is a string YYYY-MM-DD; compare lexically.)
-        const dayStr = reportedAt.toISOString().slice(0, 10);
+        // (Appointment.date is a local-day string YYYY-MM-DD; compare lexically.)
+        const dayStr = moment(reportedAt).tz('Asia/Kolkata').format('YYYY-MM-DD');
         const opd = await prisma.appointment.findFirst({
           where: { prnNumber: r.prn ? Number(r.prn) : undefined, date: { lte: dayStr } },
           select: { id: true, department: true },
@@ -378,11 +417,12 @@ async function runCriticalLabUnacked(): Promise<RunnerOut> {
 async function runBedRequestUnfulfilled(): Promise<RunnerOut> {
   const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000);
   const rows = await prisma.ipdBedRequest.findMany({
-    where: { status: 'REQUESTED', requestedAt: { lt: cutoff } },
+    where: { status: 'REQUESTED', requestedAt: { lt: cutoff, gte: lookbackFloor() } },
     select: {
       id: true, admissionId: true, requestedAt: true,
       admission: { select: { prn: true, department: true } },
     },
+    orderBy: { requestedAt: 'desc' },
     take: 500,
   });
   let raised = 0;
@@ -430,16 +470,27 @@ export const CRON_RUNNERS: Array<{ key: string; run: () => Promise<RunnerOut> }>
 export async function runAllCronRules(): Promise<{ raised: number; checked: number }> {
   let raised = 0;
   let checked = 0;
-  for (const r of CRON_RUNNERS) {
-    try {
-      const out = await r.run();
-      raised += out.raised; checked += out.checked;
-      if (out.raised > 0) {
-        console.log(`[incident-rule:${r.key}] raised ${out.raised} new (checked ${out.checked})`);
+  try {
+    const rules = await prisma.incidentRule.findMany({ select: { key: true, isActive: true } });
+    sweepRuleActive = new Map(rules.map((r) => [r.key, r.isActive]));
+  } catch (err) {
+    console.warn('[incident-rules] could not load rule flags — checking per row:', (err as Error).message);
+    sweepRuleActive = null;
+  }
+  try {
+    for (const r of CRON_RUNNERS) {
+      try {
+        const out = await r.run();
+        raised += out.raised; checked += out.checked;
+        if (out.raised > 0) {
+          console.log(`[incident-rule:${r.key}] raised ${out.raised} new (checked ${out.checked})`);
+        }
+      } catch (err) {
+        console.warn(`[incident-rule:${r.key}] runner failed:`, (err as Error).message);
       }
-    } catch (err) {
-      console.warn(`[incident-rule:${r.key}] runner failed:`, (err as Error).message);
     }
+  } finally {
+    sweepRuleActive = null;
   }
   return { raised, checked };
 }

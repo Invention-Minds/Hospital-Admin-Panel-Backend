@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { raiseDietAlert } from '../dietetics/diet-lifecycle';
 
 /**
  * Phase 3 — IPD bed request controller (WF-2 admission handshake).
@@ -354,6 +355,9 @@ export const attenderAccept = async (req: Request, res: Response): Promise<void>
     } catch (bedErr) {
       console.error('[bed-request] bed status update failed (non-blocking):', bedErr);
     }
+
+    // Patient now occupies the bed → tell Dietary. Never throws.
+    await raiseDietAlert('ADMISSION', reqRow.admissionId);
 
     await auditLog(req, {
       module: 'bed-request',

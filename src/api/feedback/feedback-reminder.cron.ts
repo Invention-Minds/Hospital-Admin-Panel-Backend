@@ -1,16 +1,15 @@
 import prisma from '../../service/prisma-client';
-import { resolveTargetRole } from '../../service/role-alias';
+import { complaintHandlerUserIds } from './complaint-sla.cron';
 
 // Phase 9.25 / Phase 6d — Feedback survey reminder sweep.
 //
-// One-shot bell to the patient-experience role when a survey has been sent
-// but unanswered for >72h (and isn't yet expired). The bell carries the
-// kiosk token so a coordinator can copy the follow-up link and chase
-// manually. Once Phase 6b wires SMS/WhatsApp delivery, this is where the
-// outbound send-attempt hook goes.
+// One-shot bell to the complaint handlers (Quality Manager + Patient
+// Relations) when a survey has been pending/sent but unanswered for >72h (and
+// isn't yet expired). Nothing sets sentAt until SMS/WhatsApp delivery is
+// wired, so age falls back to createdAt. The bell carries the kiosk path so a
+// coordinator can chase manually.
 
 const REMINDER_HOURS = 72;
-const TARGET_ROLE = 'patient_experience';
 const KIOSK_PATH = '/feedback/k/'; // appended with the token
 
 export interface ReminderSweepReport {
@@ -26,15 +25,18 @@ export async function runFeedbackReminderSweep(): Promise<ReminderSweepReport> {
 
   const stale = await prisma.feedbackSurvey.findMany({
     where: {
-      status: 'sent',
+      status: { in: ['pending', 'sent'] },
       respondedAt: null,
-      sentAt: { lt: cutoff, not: null },
-      expiresAt: { gt: now },
       lastReminderAt: null,
+      expiresAt: { gt: now },
+      OR: [
+        { sentAt: { lt: cutoff } },
+        { sentAt: null, createdAt: { lt: cutoff } },
+      ],
     },
     select: {
       id: true, token: true, template: true, patientPrn: true, patientName: true,
-      sentAt: true,
+      sentAt: true, createdAt: true,
     },
     take: 500,
   });
@@ -42,29 +44,35 @@ export async function runFeedbackReminderSweep(): Promise<ReminderSweepReport> {
   const report: ReminderSweepReport = {
     checked: stale.length, reminded: 0, failed: 0, details: [],
   };
+  if (!stale.length) return report;
+
+  const handlerIds = await complaintHandlerUserIds();
 
   for (const s of stale) {
     try {
-      await prisma.feedbackSurvey.update({
-        where: { id: s.id },
+      // Conditional flip = one-shot dedupe even if a manual sweep overlaps.
+      const flipped = await prisma.feedbackSurvey.updateMany({
+        where: { id: s.id, lastReminderAt: null },
         data: { lastReminderAt: now },
       });
+      if (flipped.count !== 1) continue;
 
       try {
-        const link = `${KIOSK_PATH}${s.token}`;
-        const targetRole = await resolveTargetRole(TARGET_ROLE);
-        await prisma.notification.create({
-          data: {
-            type: 'feedback_reminder',
-            title: `Survey pending · ${s.patientName ?? s.patientPrn ?? s.template}`,
-            message: `Sent ${s.sentAt?.toISOString() ?? 'n/a'} · ${REMINDER_HOURS}h overdue. Kiosk path: ${link}`,
-            status: 'unread',
-            targetRole,
-            isCritical: false,
-            entityId: 0, // entityId is Int; surveys are uuid → put real id in entityType
-            entityType: `FeedbackSurvey:${s.id}`,
-          },
-        });
+        if (handlerIds.length > 0) {
+          const since = s.sentAt ? `Sent ${s.sentAt.toISOString()}` : `Created ${s.createdAt.toISOString()}`;
+          await prisma.notification.createMany({
+            data: handlerIds.map((userId) => ({
+              type: 'feedback_reminder',
+              title: `Survey pending · ${s.patientName ?? s.patientPrn ?? s.template}`,
+              message: `${since} · ${REMINDER_HOURS}h+ unanswered. Kiosk path: ${KIOSK_PATH}${s.token}`,
+              status: 'unread',
+              isCritical: false,
+              entityId: 0, // entityId is Int; surveys are uuid → put real id in entityType
+              entityType: `FeedbackSurvey:${s.id}`,
+              userId,
+            })),
+          });
+        }
       } catch (err) {
         console.warn('[feedback-reminder:notify] failed:', (err as Error).message);
       }

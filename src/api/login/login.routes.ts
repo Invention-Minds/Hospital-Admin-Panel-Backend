@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh } from './login.controller';
+import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment } from './login.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireRole } from '../../middleware/require-role';
 import { rateLimit } from '../../middleware/rate-limit';
@@ -10,7 +10,8 @@ const router = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, mode: 'failures' });
 
 // User management is admin-only (super_admin always allowed by requireRole).
-const adminOnly = requireRole({ roles: ['admin', 'sub_admin'] });
+// Sub-admins (nurses, front desk, …) have no user-management tabs in Settings.
+const adminOnly = requireRole({ roles: ['admin'] });
 
 router.post('/login', loginLimiter, userLogin);
 router.post('/mobile/refresh', mobileRefresh);
@@ -22,6 +23,7 @@ router.get('/get-all-users', authenticateToken, adminOnly, getAllUsers); // Prot
 
 router.delete('/delete-user/:username', authenticateToken, adminOnly, deleteUserByUsername);
 router.patch('/toggle-active/:userId', authenticateToken, adminOnly, toggleUserActive);
+router.patch('/user-department/:userId', authenticateToken, adminOnly, setUserDepartment);
 
 export default router;
 

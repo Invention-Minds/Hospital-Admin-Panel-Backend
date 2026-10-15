@@ -1,16 +1,14 @@
 import express from 'express';
 import { listRcas, getRcaStats, getRca, updateRca } from './quality-rca.controller';
 import { authenticateToken } from '../../middleware/middleware';
-import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
 
 const router = express.Router();
 
-// Read endpoints — staff visibility.
-router.get('/stats', authenticateToken, getRcaStats);
-router.get('/', authenticateToken, listRcas);
-router.get('/:id', authenticateToken, getRca);
-
-// Write endpoints — clinical actor (matches incident CAPA pattern).
-router.put('/:id', authenticateToken, requireClinicalActor, updateRca);
+// Reads: Quality viewers; writes: Quality team (see _shared/quality-roles.ts).
+router.get('/stats', authenticateToken, requireQualityViewer, getRcaStats);
+router.get('/', authenticateToken, requireQualityViewer, listRcas);
+router.get('/:id', authenticateToken, requireQualityViewer, getRca);
+router.put('/:id', authenticateToken, requireQualityTeam, updateRca);
 
 export default router;

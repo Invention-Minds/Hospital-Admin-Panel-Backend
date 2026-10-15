@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { getQiDef } from './quality-indicator-catalogue';
+import { monthWindow } from './quality-indicator-auto-source';
+import { runAutoSourceForPeriod, indicatorsUsingDenominator } from './quality-indicator-auto.cron';
 
 // Phase 9.26 / Phase 5c — Manual monthly denominators.
 //
@@ -29,7 +31,7 @@ export const upsertDenominator = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: "Field 'qiCode' is required and must be a valid catalogue code" });
       return;
     }
-    if (!body.period || !PERIOD_RE.test(body.period)) {
+    if (!body.period || !PERIOD_RE.test(body.period) || !monthWindow(body.period)) {
       res.status(400).json({ message: "'period' must be YYYY-MM" });
       return;
     }
@@ -65,7 +67,26 @@ export const upsertDenominator = async (req: Request, res: Response): Promise<vo
       payload: { qiCode: row.qiCode, period: row.period, value: row.value },
     });
 
-    res.status(200).json({ data: row });
+    // The monthly cron runs on the 1st; a denominator entered later would
+    // otherwise never be applied. Recompute dependent auto-sourced indicators
+    // now (manual records are still skipped by the runner). Only completed
+    // months — the current month is picked up by the cron on the 1st.
+    const monthClosed = monthWindow(row.period)!.periodEnd.getTime() < Date.now();
+    const dependents = monthClosed ? indicatorsUsingDenominator(row.qiCode) : [];
+    let autoSource: { written: number; skippedManual: number; skippedNoData: number; failed: number } | null = null;
+    if (dependents.length > 0) {
+      try {
+        const report = await runAutoSourceForPeriod(row.period, dependents);
+        autoSource = {
+          written: report.written, skippedManual: report.skippedManual,
+          skippedNoData: report.skippedNoData, failed: report.failed,
+        };
+      } catch (err) {
+        console.error('[quality-denominator] auto-source recompute failed:', err);
+      }
+    }
+
+    res.status(200).json({ data: row, autoSource });
   } catch (error) {
     console.error('[quality-denominator] upsert failed:', error);
     res.status(500).json({ message: 'Failed to save denominator' });
@@ -90,10 +111,8 @@ export const listDenominators = async (req: Request, res: Response): Promise<voi
     // Surface a small per-indicator "untagged incidents" hint so a manager can
     // see whether reporter tagging is keeping pace.
     let untaggedHint: Record<string, number> | undefined;
-    if (qiCode === 'PSQ-016' && period && PERIOD_RE.test(period)) {
-      const [, yr, mo] = PERIOD_RE.exec(period)!;
-      const start = new Date(Number(yr), Number(mo) - 1, 1, 0, 0, 0);
-      const end = new Date(Number(yr), Number(mo), 0, 23, 59, 59, 999);
+    if (qiCode === 'PSQ-016' && period && monthWindow(period)) {
+      const { periodStart: start, periodEnd: end } = monthWindow(period)!;
       const untagged = await prisma.incident.count({
         where: { category: 'medication', qiCode: null, reportedAt: { gte: start, lte: end } },
       });

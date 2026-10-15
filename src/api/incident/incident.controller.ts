@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import prisma from '../../service/prisma-client';
+import { incidentReadScope } from '../_shared/quality-roles';
 import { auditLog } from '../../service/app-audit';
 import bucket from '../../config/googeCloudStorage';
 import { resolveTargetRole } from '../../service/role-alias';
@@ -61,19 +63,87 @@ const VALID_SEVERITIES = ['near_miss', 'minor', 'moderate', 'major', 'sentinel']
 const VALID_STATUSES = ['open', 'triaged', 'investigated', 'capa_in_progress', 'closed', 'cancelled'] as const;
 
 type Severity = (typeof VALID_SEVERITIES)[number];
+type Status = (typeof VALID_STATUSES)[number];
 
-/** Generate the next INC-YYYY-NNNN code (year-scoped sequence). */
+const ACTIVE_STATUSES: Status[] = ['open', 'triaged', 'investigated', 'capa_in_progress'];
+
+// Allowed status moves. closed → investigated and cancelled → open are reopens.
+const ALLOWED_TRANSITIONS: Record<Status, Status[]> = {
+  open: ['triaged', 'cancelled'],
+  triaged: ['investigated', 'cancelled', 'open'],
+  investigated: ['capa_in_progress', 'closed', 'triaged'],
+  capa_in_progress: ['closed', 'investigated'],
+  closed: ['investigated'],
+  cancelled: ['open'],
+};
+
+const EVIDENCE_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv',
+]);
+
+class ValidationError extends Error {}
+
+/** undefined → leave unchanged, null/'' → clear, otherwise a valid Date (400 on garbage). */
+function parseDateField(value: unknown, field: string): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' && typeof value !== 'number') throw new ValidationError(`${field} must be a date`);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new ValidationError(`${field} must be a valid date`);
+  return d;
+}
+
+function parseStringField(value: unknown, field: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new ValidationError(`${field} must be a string`);
+  return value;
+}
+
+function parseIdField(value: unknown, field: string): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) throw new ValidationError(`${field} must be a positive integer`);
+  return n;
+}
+
+/** Generate the next INC-YYYY-NNNN code (year-scoped, numeric max). */
 async function nextIncidentCode(): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `INC-${year}-`;
-  // Find the highest existing sequence for this year.
-  const last = await prisma.incident.findFirst({
-    where: { code: { startsWith: prefix } },
-    orderBy: { code: 'desc' },
-    select: { code: true },
-  });
-  const lastSeq = last ? parseInt(last.code.split('-').pop() || '0', 10) : 0;
+  const rows = await prisma.$queryRaw<Array<{ maxSeq: bigint | number | null }>>`
+    SELECT MAX(CAST(SUBSTRING(code, ${prefix.length + 1}) AS UNSIGNED)) AS maxSeq
+    FROM Incident WHERE code LIKE ${prefix + '%'}`;
+  const lastSeq = Number(rows[0]?.maxSeq ?? 0) || 0;
   return `${prefix}${String(lastSeq + 1).padStart(4, '0')}`;
+}
+
+/** Runs `create` with a fresh code, retrying when a concurrent insert took it. */
+async function createWithIncidentCode<T>(create: (code: string) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const code = await nextIncidentCode();
+    try {
+      return await create(code);
+    } catch (err) {
+      const e = err as { code?: string; meta?: { target?: unknown } };
+      const isCodeClash = e.code === 'P2002' && String(e.meta?.target ?? 'code').includes('code');
+      if (!isCodeClash || attempt >= 5) throw err;
+    }
+  }
+}
+
+/** Whether the caller's read scope (see quality-roles.incidentReadScope) covers this incident. */
+async function canReadIncident(id: string, userId: number | undefined): Promise<boolean> {
+  const scope = await incidentReadScope(userId);
+  if (!scope) return true;
+  return (await prisma.incident.count({ where: { AND: [{ id }, scope] } })) > 0;
 }
 
 interface CreateBody {
@@ -108,34 +178,52 @@ export const createIncident = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const code = await nextIncidentCode();
-    const incident = await prisma.incident.create({
+    const emergencyId = parseIdField(body.emergencyId, 'emergencyId');
+    const appointmentId = parseIdField(body.appointmentId, 'appointmentId');
+    const occurredAt = parseDateField(body.occurredAt, 'occurredAt');
+    const patientName = parseStringField(body.patientName, 'patientName');
+    const admissionId = parseStringField(body.admissionId, 'admissionId');
+    const ward = parseStringField(body.ward, 'ward');
+    const department = parseStringField(body.department, 'department');
+    const nabhClause = parseStringField(body.nabhClause, 'nabhClause');
+    const qiCode = parseStringField(body.qiCode, 'qiCode');
+    if (body.patientPrn != null && typeof body.patientPrn !== 'string' && typeof body.patientPrn !== 'number') {
+      throw new ValidationError('patientPrn must be a string');
+    }
+    if (body.evidenceLinks !== undefined && body.evidenceLinks !== null && (
+      !Array.isArray(body.evidenceLinks) ||
+      body.evidenceLinks.some((l) => !l || typeof l.label !== 'string' || typeof l.url !== 'string')
+    )) {
+      throw new ValidationError('evidenceLinks must be an array of { label, url }');
+    }
+
+    const incident = await createWithIncidentCode((code) => prisma.incident.create({
       data: {
         code,
-        category: body.category,
-        severity: body.severity,
+        category: body.category as string,
+        severity: body.severity as string,
         source: 'manual',
-        title: body.title.trim(),
-        description: body.description.trim(),
-        patientPrn: body.patientPrn?.toString() ?? null,
-        patientName: body.patientName ?? null,
-        admissionId: body.admissionId ?? null,
-        emergencyId: typeof body.emergencyId === 'number' ? body.emergencyId : null,
-        appointmentId: typeof body.appointmentId === 'number' ? body.appointmentId : null,
-        ward: body.ward ?? null,
-        department: body.department ?? null,
-        occurredAt: body.occurredAt ? new Date(body.occurredAt) : null,
-        nabhClause: body.nabhClause ?? null,
-        qiCode: body.qiCode ?? null,
+        title: (body.title as string).trim(),
+        description: (body.description as string).trim(),
+        patientPrn: body.patientPrn != null ? String(body.patientPrn) : null,
+        patientName: patientName ?? null,
+        admissionId: admissionId || null,
+        emergencyId: emergencyId ?? null,
+        appointmentId: appointmentId ?? null,
+        ward: ward ?? null,
+        department: department ?? null,
+        occurredAt: occurredAt ?? null,
+        nabhClause: nabhClause ?? null,
+        qiCode: qiCode || null,
         evidenceLinks: body.evidenceLinks ? JSON.stringify(body.evidenceLinks) : null,
         reportedBy: req.user?.username ?? null,
         reportedById: typeof req.user?.id === 'number' ? req.user.id : null,
       },
-    });
+    }));
 
     await auditLog(req, {
       module: 'incident', action: 'CREATE', entityType: 'Incident',
-      entityId: incident.id, payload: { code, category: body.category, severity: body.severity },
+      entityId: incident.id, payload: { code: incident.code, category: body.category, severity: body.severity },
     });
 
     // Bell — admins triage. Alias-resolved so an operator can re-route via
@@ -151,14 +239,19 @@ export const createIncident = async (req: Request, res: Response): Promise<void>
 
     res.status(201).json({ data: incident });
   } catch (error) {
+    if (error instanceof ValidationError) { res.status(400).json({ message: error.message }); return; }
     console.error('[incident] create failed:', error);
     res.status(500).json({ message: 'Failed to raise incident' });
   }
 };
 
 /**
- * Internal helper used by the Phase-2 auto-capture engine. Idempotent on
- * (ruleKey + entity context + day) so a cron sweep can't raise duplicates.
+ * Internal helper used by the Phase-2 auto-capture engine. Idempotent so a
+ * cron sweep can't raise duplicates:
+ *   - qiCode given  → one incident per ruleKey + qiCode + period (title/description
+ *                     contains qiPeriod), across every status except cancelled.
+ *   - otherwise     → one active incident per ruleKey + most specific entity
+ *                     (admission > emergency > appointment > PRN).
  */
 export const raiseAutoIncident = async (opts: {
   ruleKey: string;
@@ -175,29 +268,43 @@ export const raiseAutoIncident = async (opts: {
   ward?: string | null;
   department?: string | null;
   occurredAt?: Date | null;
+  qiCode?: string | null;
+  qiPeriod?: string | null;
 }): Promise<{ created: boolean; code?: string; incidentId?: string }> => {
-  // Dedupe key: same rule + same primary entity within the last 24h.
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const existing = await prisma.incident.findFirst({
-    where: {
+  let dedupeWhere: Prisma.IncidentWhereInput;
+  if (opts.qiCode) {
+    dedupeWhere = {
       ruleKey: opts.ruleKey,
-      reportedAt: { gte: since },
-      status: { in: ['open', 'triaged', 'investigated', 'capa_in_progress'] },
-      OR: [
-        opts.admissionId ? { admissionId: opts.admissionId } : { admissionId: '__no_match__' },
-        opts.emergencyId ? { emergencyId: opts.emergencyId } : { emergencyId: -1 },
-        opts.appointmentId ? { appointmentId: opts.appointmentId } : { appointmentId: -1 },
-        opts.patientPrn ? { patientPrn: opts.patientPrn } : { patientPrn: '__no_match__' },
-      ],
-    },
+      qiCode: opts.qiCode,
+      status: { not: 'cancelled' },
+      ...(opts.qiPeriod && {
+        OR: [{ title: { contains: opts.qiPeriod } }, { description: { contains: opts.qiPeriod } }],
+      }),
+    };
+  } else {
+    const entity: Prisma.IncidentWhereInput | null =
+      opts.admissionId ? { admissionId: opts.admissionId }
+      : opts.emergencyId ? { emergencyId: opts.emergencyId }
+      : opts.appointmentId ? { appointmentId: opts.appointmentId }
+      : opts.patientPrn ? { patientPrn: opts.patientPrn }
+      : null;
+    dedupeWhere = {
+      ruleKey: opts.ruleKey,
+      status: { in: ACTIVE_STATUSES },
+      // No entity at all — fall back to an identical title raised in the last 24h.
+      ...(entity ?? { title: opts.title, reportedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }),
+    };
+  }
+  const existing = await prisma.incident.findFirst({
+    where: dedupeWhere,
+    orderBy: { reportedAt: 'desc' },
     select: { id: true },
   });
   // Option A — even when deduped, surface the matched incident's id so the
   // caller can still link the new feedback/complaint to it.
   if (existing) return { created: false, incidentId: existing.id };
 
-  const code = await nextIncidentCode();
-  const created = await prisma.incident.create({
+  const created = await createWithIncidentCode((code) => prisma.incident.create({
     data: {
       code,
       category: opts.category,
@@ -215,9 +322,10 @@ export const raiseAutoIncident = async (opts: {
       ward: opts.ward ?? null,
       department: opts.department ?? null,
       occurredAt: opts.occurredAt ?? null,
+      qiCode: opts.qiCode ?? null,
       reportedBy: 'system',
     },
-  });
+  }));
   // Bell — admins triage auto-raised incidents too.
   void (async () => {
     const targetRole = await resolveTargetRole('admin');
@@ -227,7 +335,7 @@ export const raiseAutoIncident = async (opts: {
       isCritical: created.severity === 'major' || created.severity === 'sentinel',
     });
   })();
-  return { created: true, code, incidentId: created.id };
+  return { created: true, code: created.code, incidentId: created.id };
 };
 
 export const listIncidents = async (req: Request, res: Response): Promise<void> => {
@@ -241,8 +349,11 @@ export const listIncidents = async (req: Request, res: Response): Promise<void> 
       ? req.user.id
       : (assignedToId && /^\d+$/.test(assignedToId) ? Number(assignedToId) : undefined);
 
+    const scope = await incidentReadScope(req.user?.id);
+
     const rows = await prisma.incident.findMany({
       where: {
+        ...(scope && { AND: [scope] }),
         ...(status && { status }),
         ...(severity && { severity }),
         ...(category && { category }),
@@ -277,7 +388,10 @@ export const getIncident = async (req: Request, res: Response): Promise<void> =>
       where: { id: req.params.id },
       include: { capa: true },
     });
-    if (!row) { res.status(404).json({ message: 'Incident not found' }); return; }
+    if (!row || !(await canReadIncident(row.id, req.user?.id))) {
+      res.status(404).json({ message: 'Incident not found' });
+      return;
+    }
 
     // Incident.admissionId is a free string column (no Prisma relation) — look
     // up the human-readable admissionNo so the UI doesn't display a raw uuid.
@@ -335,52 +449,94 @@ interface StatusBody {
 export const updateIncidentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
-    const existing = await prisma.incident.findUnique({ where: { id }, select: { id: true, status: true } });
+    const existing = await prisma.incident.findUnique({
+      where: { id },
+      select: {
+        id: true, status: true, assignedToId: true, closureNotes: true,
+        capa: { select: { rootCause: true, correctiveActions: true } },
+      },
+    });
     if (!existing) { res.status(404).json({ message: 'Incident not found' }); return; }
 
     const body = req.body as StatusBody;
-    if (!body.status || !VALID_STATUSES.includes(body.status as typeof VALID_STATUSES[number])) {
+    if (!body.status || !VALID_STATUSES.includes(body.status as Status)) {
       res.status(400).json({ message: `status must be one of: ${VALID_STATUSES.join(', ')}` });
       return;
     }
-    if (body.severityFinal && !VALID_SEVERITIES.includes(body.severityFinal as Severity)) {
+    const from = existing.status as Status;
+    const to = body.status as Status;
+    const isTransition = from !== to;
+    if (isTransition && !(ALLOWED_TRANSITIONS[from] ?? []).includes(to)) {
+      res.status(400).json({ message: `Cannot move incident from '${from}' to '${to}'` });
+      return;
+    }
+    if (body.severityFinal != null && !VALID_SEVERITIES.includes(body.severityFinal as Severity)) {
       res.status(400).json({ message: `severityFinal must be one of: ${VALID_SEVERITIES.join(', ')}` });
       return;
     }
+    const assignedToId = parseIdField(body.assignedToId, 'assignedToId');
+    let assignedTo = parseStringField(body.assignedTo, 'assignedTo');
+    const closureNotes = parseStringField(body.closureNotes, 'closureNotes');
+
+    if (assignedToId) {
+      const assignee = await prisma.user.findUnique({
+        where: { id: assignedToId }, select: { username: true, fullName: true },
+      });
+      if (!assignee) { res.status(400).json({ message: 'assignedToId does not match a user' }); return; }
+      if (!assignedTo) assignedTo = assignee.fullName || assignee.username;
+    }
+
+    if (isTransition && to === 'closed') {
+      const notes = closureNotes !== undefined ? closureNotes : existing.closureNotes;
+      if (!existing.capa?.rootCause?.trim() || !existing.capa?.correctiveActions?.trim()) {
+        res.status(400).json({ message: 'Record a CAPA with root cause and corrective actions before closing' });
+        return;
+      }
+      if (!notes?.trim()) {
+        res.status(400).json({ message: 'closureNotes are required to close an incident' });
+        return;
+      }
+    }
 
     const now = new Date();
-    const data: Record<string, unknown> = {
-      status: body.status,
+    const data: Prisma.IncidentUpdateInput = {
+      status: to,
       ...(body.severityFinal !== undefined && { severityFinal: body.severityFinal }),
-      ...(body.assignedTo !== undefined && { assignedTo: body.assignedTo }),
-      ...(body.assignedToId !== undefined && { assignedToId: body.assignedToId }),
-      ...(body.closureNotes !== undefined && { closureNotes: body.closureNotes }),
+      ...(assignedTo !== undefined && { assignedTo }),
+      ...(assignedToId !== undefined && { assignedToId }),
+      ...(closureNotes !== undefined && { closureNotes }),
     };
-    if (body.status === 'triaged' && !existing.status.startsWith('triaged')) {
-      data['triagedAt'] = now;
-      data['triagedBy'] = req.user?.username ?? null;
+    if (isTransition && to === 'triaged') {
+      data.triagedAt = now;
+      data.triagedBy = req.user?.username ?? null;
     }
-    if (body.status === 'closed' || body.status === 'cancelled') {
-      data['closedAt'] = now;
-      data['closedBy'] = req.user?.username ?? null;
+    if (isTransition && (to === 'closed' || to === 'cancelled')) {
+      data.closedAt = now;
+      data.closedBy = req.user?.username ?? null;
+    }
+    // Reopen — closure stamps no longer apply.
+    if (isTransition && (from === 'closed' || from === 'cancelled')) {
+      data.closedAt = null;
+      data.closedBy = null;
+      data.closureNotes = null;
     }
 
     const row = await prisma.incident.update({ where: { id }, data });
     await auditLog(req, {
       module: 'incident', action: 'STATUS_CHANGE', entityType: 'Incident',
-      entityId: id, payload: { from: existing.status, to: body.status },
+      entityId: id, payload: { from, to, ...(assignedToId !== undefined && { assignedToId }) },
     });
 
     // ── Notifications on transitions ──
     // 1. New assignee → ping that specific user.
-    if (body.assignedToId && body.assignedToId !== null) {
+    if (assignedToId && assignedToId !== existing.assignedToId) {
       void notifyIncident({
         kind: 'incident_assigned', incidentId: row.id, code: row.code,
-        severity: row.severity, title: row.title, userId: body.assignedToId,
+        severity: row.severity, title: row.title, userId: assignedToId,
       });
     }
     // 2. Closure → ping the original reporter (if we have their user id).
-    if ((body.status === 'closed' || body.status === 'cancelled') && row.reportedById) {
+    if (isTransition && (to === 'closed' || to === 'cancelled') && row.reportedById) {
       void notifyIncident({
         kind: 'incident_closed', incidentId: row.id, code: row.code,
         severity: row.severity, title: row.title, userId: row.reportedById,
@@ -389,6 +545,7 @@ export const updateIncidentStatus = async (req: Request, res: Response): Promise
 
     res.status(200).json({ data: row });
   } catch (error) {
+    if (error instanceof ValidationError) { res.status(400).json({ message: error.message }); return; }
     console.error('[incident] updateStatus failed:', error);
     res.status(500).json({ message: 'Failed to update incident status' });
   }
@@ -421,20 +578,22 @@ export const upsertIncidentCapa = async (req: Request, res: Response): Promise<v
     const incident = await prisma.incident.findUnique({ where: { id: incidentId }, select: { id: true, status: true } });
     if (!incident) { res.status(404).json({ message: 'Incident not found' }); return; }
 
-    const body = req.body as CapaBody;
+    // undefined → leave unchanged; null → clear.
+    const body = (req.body ?? {}) as CapaBody;
     const data = {
-      immediateActions: body.immediateActions ?? undefined,
-      why1: body.why1 ?? undefined, why2: body.why2 ?? undefined,
-      why3: body.why3 ?? undefined, why4: body.why4 ?? undefined, why5: body.why5 ?? undefined,
-      rootCause: body.rootCause ?? undefined,
-      correctiveActions: body.correctiveActions ?? undefined,
-      preventiveActions: body.preventiveActions ?? undefined,
-      owner: body.owner ?? undefined,
-      ownerId: body.ownerId ?? undefined,
-      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-      completedAt: body.completedAt ? new Date(body.completedAt) : undefined,
-      effectivenessReview: body.effectivenessReview ?? undefined,
-      effectivenessReviewAt: body.effectivenessReviewAt ? new Date(body.effectivenessReviewAt) : undefined,
+      immediateActions: parseStringField(body.immediateActions, 'immediateActions'),
+      why1: parseStringField(body.why1, 'why1'), why2: parseStringField(body.why2, 'why2'),
+      why3: parseStringField(body.why3, 'why3'), why4: parseStringField(body.why4, 'why4'),
+      why5: parseStringField(body.why5, 'why5'),
+      rootCause: parseStringField(body.rootCause, 'rootCause'),
+      correctiveActions: parseStringField(body.correctiveActions, 'correctiveActions'),
+      preventiveActions: parseStringField(body.preventiveActions, 'preventiveActions'),
+      owner: parseStringField(body.owner, 'owner'),
+      ownerId: parseIdField(body.ownerId, 'ownerId'),
+      dueDate: parseDateField(body.dueDate, 'dueDate'),
+      completedAt: parseDateField(body.completedAt, 'completedAt'),
+      effectivenessReview: parseStringField(body.effectivenessReview, 'effectivenessReview'),
+      effectivenessReviewAt: parseDateField(body.effectivenessReviewAt, 'effectivenessReviewAt'),
     };
 
     const row = await prisma.incidentCapa.upsert({
@@ -450,6 +609,7 @@ export const upsertIncidentCapa = async (req: Request, res: Response): Promise<v
 
     res.status(200).json({ data: row });
   } catch (error) {
+    if (error instanceof ValidationError) { res.status(400).json({ message: error.message }); return; }
     console.error('[incident] upsertCapa failed:', error);
     res.status(500).json({ message: 'Failed to save CAPA' });
   }
@@ -491,16 +651,18 @@ export const tagIncidentWithQi = async (req: Request, res: Response): Promise<vo
 };
 
 /** Lightweight counts grouped by status (for the inbox tile). */
-export const getIncidentStats = async (_req: Request, res: Response): Promise<void> => {
+export const getIncidentStats = async (req: Request, res: Response): Promise<void> => {
   try {
+    const scope = await incidentReadScope(req.user?.id);
     const grouped = await prisma.incident.groupBy({
       by: ['status'],
       _count: { _all: true },
+      ...(scope && { where: scope }),
     });
     const bySeverity = await prisma.incident.groupBy({
       by: ['severity'],
       _count: { _all: true },
-      where: { status: { in: ['open', 'triaged', 'investigated', 'capa_in_progress'] } },
+      where: { status: { in: ['open', 'triaged', 'investigated', 'capa_in_progress'] }, ...(scope && { AND: [scope] }) },
     });
     res.status(200).json({
       byStatus: Object.fromEntries(grouped.map((g) => [g.status, g._count._all])),
@@ -523,12 +685,19 @@ export const uploadIncidentEvidence = async (req: Request, res: Response): Promi
   try {
     const id = req.params.id;
     const incident = await prisma.incident.findUnique({
-      where: { id }, select: { id: true, code: true, evidenceLinks: true },
+      where: { id }, select: { id: true, code: true, reportedById: true, assignedToId: true },
     });
-    if (!incident) { res.status(404).json({ message: 'Incident not found' }); return; }
+    if (!incident || !(await canReadIncident(incident.id, req.user?.id))) {
+      res.status(404).json({ message: 'Incident not found' });
+      return;
+    }
 
     const file = (req as Request & { file?: Express.Multer.File }).file;
     if (!file || !file.buffer) { res.status(400).json({ message: 'No file uploaded' }); return; }
+    if (!EVIDENCE_MIME_TYPES.has(file.mimetype)) {
+      res.status(400).json({ message: 'Unsupported file type — upload an image, PDF, Word/Excel document or text file' });
+      return;
+    }
 
     // Push to GCS — same pattern as investigation-result.controller.uploadResult.
     const safeName = file.originalname.replace(/[^\w.\-]/g, '_');
@@ -543,23 +712,29 @@ export const uploadIncidentEvidence = async (req: Request, res: Response): Promi
     });
     const url = `https://storage.googleapis.com/${bucket.name}/${objectName}`;
 
-    const existing: EvidenceLink[] = (() => {
-      if (!incident.evidenceLinks) return [];
-      try { const v = JSON.parse(incident.evidenceLinks); return Array.isArray(v) ? v : []; }
-      catch { return []; }
-    })();
     const newLink: EvidenceLink = {
       label: req.body?.label?.toString().trim() || file.originalname,
       url,
       uploadedBy: req.user?.username ?? null,
       uploadedAt: new Date().toISOString(),
     };
-    const next = [...existing, newLink];
 
-    const updated = await prisma.incident.update({
-      where: { id },
-      data: { evidenceLinks: JSON.stringify(next) },
-      select: { id: true, evidenceLinks: true },
+    // Row lock so concurrent uploads don't overwrite each other's append.
+    const { updated, next } = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM Incident WHERE id = ${id} FOR UPDATE`;
+      const cur = await tx.incident.findUnique({ where: { id }, select: { evidenceLinks: true } });
+      const existing: EvidenceLink[] = (() => {
+        if (!cur?.evidenceLinks) return [];
+        try { const v = JSON.parse(cur.evidenceLinks); return Array.isArray(v) ? v : []; }
+        catch { return []; }
+      })();
+      const merged = [...existing, newLink];
+      const row = await tx.incident.update({
+        where: { id },
+        data: { evidenceLinks: JSON.stringify(merged) },
+        select: { id: true },
+      });
+      return { updated: row, next: merged };
     });
 
     await auditLog(req, {

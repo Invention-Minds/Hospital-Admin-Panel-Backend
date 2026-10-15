@@ -1,13 +1,13 @@
 import express from 'express';
 import { createTatEvent, listTatEvents, deleteTatEvent, getTatTargets } from './quality-tat-event.controller';
 import { authenticateToken } from '../../middleware/middleware';
-import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
 
 const router = express.Router();
 
-router.get('/targets', authenticateToken, getTatTargets);
-router.get('/', authenticateToken, listTatEvents);
-router.post('/', authenticateToken, requireClinicalActor, createTatEvent);
-router.delete('/:id', authenticateToken, requireClinicalActor, deleteTatEvent);
+router.get('/targets', authenticateToken, requireQualityViewer, getTatTargets);
+router.get('/', authenticateToken, requireQualityViewer, listTatEvents);
+router.post('/', authenticateToken, requireQualityTeam, createTatEvent);
+router.delete('/:id', authenticateToken, requireQualityTeam, deleteTatEvent);
 
 export default router;

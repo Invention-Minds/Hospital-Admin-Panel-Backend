@@ -160,7 +160,7 @@ export const userLogin = async (req: Request, res: Response) => {
         isIpdScopedNurse(user.id),
       ]);
 
-      res.status(200).json({ token, refreshToken, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, therapistId: therapists?.id, departmentName, isOpdNurse, isIpdNurse } }); // Send token and user data
+      res.status(200).json({ token, refreshToken, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, department: user.department ?? null, therapistId: therapists?.id, departmentName, isOpdNurse, isIpdNurse } }); // Send token and user data
 
 
     } else {
@@ -226,6 +226,46 @@ export const toggleUserActive = async (req: Request, res: Response): Promise<voi
 };
 
 
+const INVALID_DEPARTMENT = Symbol('invalid-department');
+
+/** null/'' → no department; otherwise must match a Department.name. */
+async function resolveDepartment(raw: unknown): Promise<string | null | typeof INVALID_DEPARTMENT> {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') return INVALID_DEPARTMENT;
+  const dept = await prisma.department.findUnique({ where: { name: raw.trim() }, select: { name: true } });
+  return dept ? dept.name : INVALID_DEPARTMENT;
+}
+
+/** Sets or clears the department a user manages (scopes their incident view). */
+export const setUserDepartment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      res.status(400).json({ error: 'Invalid user ID' });
+      return;
+    }
+    const department = await resolveDepartment(req.body?.department);
+    if (department === INVALID_DEPARTMENT) {
+      res.status(400).json({ error: 'department must be an existing department name' });
+      return;
+    }
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { department },
+      select: { id: true, department: true },
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    console.error('Error setting user department:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const userRegister = async (req: Request, res: Response): Promise<void> => {
   try {
     const { username, password, isReceptionist, employeeId, role, subAdminType, adminType, createdBy } = req.body;
@@ -243,7 +283,16 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
       return; // Ensure the function stops execution after sending a response
     }
 
-    const newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);
+    const department = await resolveDepartment(req.body.department);
+    if (department === INVALID_DEPARTMENT) {
+      res.status(400).json({ error: 'department must be an existing department name' });
+      return;
+    }
+
+    let newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);
+    if (department) {
+      newUser = await prisma.user.update({ where: { id: newUser.id }, data: { department } });
+    }
     res.status(201).json(newUser);
   } catch (error) {
     console.error('Error during user registration:', error);

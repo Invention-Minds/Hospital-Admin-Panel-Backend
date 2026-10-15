@@ -1,6 +1,7 @@
 import prisma from '../../service/prisma-client';
 import { pushIpdAdmission } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
+import { raiseDietAlert } from '../dietetics/diet-lifecycle';
 
 /**
  * Convert OPD Appointment to IPD Admission
@@ -106,6 +107,9 @@ export const convertOpdToIpd = async (
       where: { id: bedId },
       data: { status: 'occupied' },
     });
+
+    // Tell Dietary (new patient in a bed — never serve the previous diet). Never throws.
+    await raiseDietAlert('ADMISSION', ipdAdmission.id);
 
     // Push to HMIS via the audit-wrapped pipeline.
     // Wrapper writes success AND failure audit logs automatically.

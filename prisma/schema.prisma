@@ -127,6 +127,8 @@ model User {
   isReceptionist Boolean? @default(false)
   subAdminType   String?
   adminType      String?
+  // Department.name this user manages — scopes department-level incident views.
+  department     String?
   createdBy      String?
   updatedBy      String?
   isActive       Boolean  @default(true)
@@ -4712,18 +4714,23 @@ model RevenueRollup {
 
 // Admin-configurable meal-time slots (default seeded: breakfast/lunch/snacks/dinner).
 model MealTimeSlot {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  code      String   @unique
-  startTime String
-  endTime   String
-  sequence  Int      @default(0)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  startTime   String
+  endTime     String
+  // HH:mm — last time a diet change can still reach the kitchen for this meal.
+  // Shown on the sheet / kitchen list; changes after it are flagged as late.
+  orderCutoff String?
+  sequence    Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  menuRows   MenuPlan[]
-  mealOrders MealOrder[]
+  menuRows     MenuPlan[]
+  mealOrders   MealOrder[]
+  instructions PatientMealInstruction[]
+  extraOrders  ExtraFoodOrder[]
 
   @@index([sequence])
 }
@@ -4764,14 +4771,24 @@ model DietMaster {
 
   targetConditions String? @db.Text
 
+  // true = normal / non-therapeutic diet. NABH COP.7.b flags chronic-condition
+  // patients who are on one of these instead of a therapeutic diet.
+  isGeneral Boolean @default(false)
+
+  // ORAL    = trays from the weekly menu + per-slot instructions
+  // FEED    = RT / tube feed — trays only for slots with an instruction
+  // NO_TRAY = home food / mother food / NPO-style: no trays, not counted as served
+  kind String @default("ORAL")
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   createdBy String?
 
-  dietPlans  DietPlan[]
-  mealCompat DietMealCompat[]
-  menuRows   MenuPlan[]
+  dietPlans   DietPlan[]
+  mealCompat  DietMealCompat[]
+  menuRows    MenuPlan[]
+  censusLines DietCensusLine[]
 
   @@index([isActive])
 }
@@ -4865,6 +4882,29 @@ model DietPlan {
 
   reassessmentReason String?
 
+  // ─── Patient-level diet details (from the hospital's Diet Information Sheet) ─
+  // Texture / consistency modifier: diet SRDD + texture SD → shown as "SRDD-SD".
+  textureId          String?
+  texture            DietTexture? @relation(fields: [textureId], references: [id])
+  // Free-text food allergy / avoid list ("No curd/fruits, no onion-garlic").
+  foodAvoid          String?      @db.Text
+  // Per-patient fluid restriction in ml/day (F/R 1.2 L/D → 1200).
+  fluidRestrictionMl Int?
+  disposablePlate    Boolean      @default(false)
+  // NPO window set by the dietitian. npoFrom without npoUntil = NPO till further orders.
+  npoFrom            DateTime?
+  // Tube / RT feed: volume per feed and interval ("200 ml Q2H"), plus formula / notes.
+  feedVolumeMl       Int?
+  feedIntervalHours  Float?
+  feedNotes          String?      @db.Text
+  // "Check" — something on this patient's diet needs verifying.
+  needsCheck         Boolean      @default(false)
+  checkNote          String?
+  remarks            String?      @db.Text
+  // DIETITIAN = prescribed + signed by the dietitian.
+  // CENSUS    = INTERIM plan from the nursing census until the dietitian assesses.
+  source             String       @default("DIETITIAN")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   createdBy String?
@@ -4900,6 +4940,17 @@ model MealOrder {
 
   kitchenNotes String? @db.Text
   skipReason   String? @db.Text
+
+  // Name of the person who physically served the tray (may not have a login).
+  servedByName String?
+  // Required when the tray is served after the meal slot's end time.
+  delayReason  String? @db.Text
+
+  // DocMinds does not bill — the dietary / billing team only records whether
+  // this tray has been billed in the HMIS.
+  billed   Boolean   @default(false)
+  billedAt DateTime?
+  billedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4975,6 +5026,265 @@ model CanteenChannel {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Dietary Services workflow (hospital's manual process, digitised) ─────
+//   Nursing census → Dietary acknowledges → Dietitian rounds + Diet sheet
+//   → Kitchen (sheet acknowledged) → Labels → Prepared → Served → Billed flag
+
+// DietTexture — consistency modifier master (SD soft, VSD very soft, MSD mashed…).
+model DietTexture {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  description String?  @db.Text
+  sequence    Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dietPlans DietPlan[]
+}
+
+// SupplementMaster — oral nutrition supplements / feed formulas (Ensure DM,
+// Resource Dialysis, Celnutra 2.0…) prescribed per meal slot.
+model SupplementMaster {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  unit        String? // scoops | ml | sachet | g
+  defaultDose String? // "2.5 scoops in 150 ml warm water"
+  notes       String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  instructions PatientMealInstruction[]
+}
+
+// DieteticsSetting — key/value settings (sheet start slot, label layout,
+// nutrition-risk tool, standing kitchen notes). JSON-encoded values.
+model DieteticsSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+// PatientMealInstruction — the per-patient, per-meal cell of the Diet
+// Information Sheet ("Ensure DM 2.5 scoops in 150 ml", "100 ml only", "NO").
+// Persists across days until the dietitian changes it; each change is audited.
+model PatientMealInstruction {
+  id             String            @id @default(uuid())
+  admissionId    String
+  mealTimeSlotId String
+  mealTimeSlot   MealTimeSlot      @relation(fields: [mealTimeSlotId], references: [id], onDelete: Cascade)
+  instruction    String?           @db.Text
+  // "NO" on the sheet — nothing is served for this slot.
+  skip           Boolean           @default(false)
+  supplementId   String?
+  supplement     SupplementMaster? @relation(fields: [supplementId], references: [id])
+  supplementDose String?
+  updatedBy      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([admissionId, mealTimeSlotId])
+  @@index([admissionId])
+}
+
+// MealHold — operational NPO / meal break (e.g. "NPO from 6 AM" for surgery,
+// relayed in the nursing census). Generator skips every slot it covers.
+model MealHold {
+  id          String    @id @default(uuid())
+  admissionId String
+  fromAt      DateTime
+  untilAt     DateTime? // null = until lifted
+  reason      String
+  source      String    @default("DIETARY") // CENSUS | DIETARY | DIETITIAN
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  liftedAt    DateTime?
+  liftedBy    String?
+
+  @@index([admissionId, liftedAt])
+}
+
+// DietCensus — the nurses' early-morning patient census for one ward, sent to
+// Dietary. Closed loop: SUBMITTED → RECEIVED → ACKNOWLEDGED.
+model DietCensus {
+  id               String    @id @default(uuid())
+  wardId           String
+  wardName         String?
+  censusDate       DateTime // calendar date (local midnight)
+  status           String    @default("SUBMITTED")
+  notes            String?   @db.Text
+  submittedBy      String?
+  submittedById    Int?
+  submittedAt      DateTime  @default(now())
+  signatureId      String?
+  receivedBy       String?
+  receivedAt       DateTime?
+  acknowledgedBy   String?
+  acknowledgedById Int?
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  lines DietCensusLine[]
+
+  @@index([censusDate, wardId])
+  @@index([status])
+}
+
+// DietCensusLine — one patient row of the census (snapshot at submit time).
+model DietCensusLine {
+  id              String      @id @default(uuid())
+  censusId        String
+  census          DietCensus  @relation(fields: [censusId], references: [id], onDelete: Cascade)
+  admissionId     String
+  bedNumber       String?
+  patientName     String?
+  prn             String?
+  ageSex          String?
+  consultant      String?
+  diagnosis       String?     @db.Text
+  // Diet as the nurse reports it (free text) + optional code from the master,
+  // used for an INTERIM plan when the dietitian hasn't assessed yet.
+  dietText        String?
+  dietMasterId    String?
+  dietMaster      DietMaster? @relation(fields: [dietMasterId], references: [id])
+  npo             Boolean     @default(false)
+  npoFrom         DateTime?
+  feedText        String?
+  disposablePlate Boolean     @default(false)
+  remarks         String?     @db.Text
+  // NEW | UNCHANGED | CHANGED — vs the patient's current diet when submitted.
+  changeFlag      String      @default("UNCHANGED")
+
+  @@index([censusId])
+  @@index([admissionId])
+}
+
+// DietSheet — the issued Diet Information Sheet for one service window
+// (e.g. evening 10-09 → lunch 11-09). Snapshot of every row at issue time,
+// signed by the dietitian, acknowledged by the F&B manager / supervisor.
+model DietSheet {
+  id                    String    @id @default(uuid())
+  serviceDate           DateTime // date the window starts (local midnight)
+  windowLabel           String?
+  status                String    @default("ISSUED") // ISSUED | ACKNOWLEDGED
+  totalPatients         Int       @default(0)
+  noTrayPatients        Int       @default(0)
+  notes                 String?   @db.Text
+  snapshot              String    @db.LongText
+  issuedBy              String?
+  issuedById            Int?
+  issuedAt              DateTime  @default(now())
+  signatureId           String?
+  supervisorAckBy       String?
+  supervisorAckById     Int?
+  supervisorAckAt       DateTime?
+  supervisorSignatureId String?
+
+  @@index([serviceDate])
+  @@index([issuedAt])
+}
+
+// DietaryAlert — real-time feed to Dietary for admission / discharge /
+// transfer / bed re-occupied, so a new patient in a bed never gets the
+// previous patient's diet. Acknowledged by Dietary staff.
+model DietaryAlert {
+  id             String    @id @default(uuid())
+  type           String // ADMISSION | DISCHARGE | TRANSFER | BED_REOCCUPIED
+  admissionId    String
+  wardName       String?
+  bedNumber      String?
+  previousBed    String?
+  message        String    @db.Text
+  createdAt      DateTime  @default(now())
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+
+  @@index([acknowledgedAt])
+  @@index([createdAt])
+}
+
+// ExtraFoodOrder — ad-hoc food outside the diet plan: a patient's extra item,
+// an attendant meal, or a home-food patient asking for a hospital meal.
+model ExtraFoodOrder {
+  id             String        @id @default(uuid())
+  admissionId    String
+  forWhom        String        @default("PATIENT") // PATIENT | ATTENDANT
+  item           String
+  quantity       String?
+  mealTimeSlotId String?
+  mealTimeSlot   MealTimeSlot? @relation(fields: [mealTimeSlotId], references: [id])
+  requestedFor   DateTime
+  notes          String?       @db.Text
+  status         String        @default("ORDERED") // ORDERED | PREPARED | SERVED | CANCELLED
+  requestedBy    String?
+  preparedAt     DateTime?
+  preparedBy     String?
+  servedAt       DateTime?
+  servedBy       String?
+  servedByName   String?
+  cancelReason   String?
+  billed         Boolean       @default(false)
+  billedAt       DateTime?
+  billedBy       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([requestedFor, status])
+  @@index([admissionId])
+}
+
+// NutritionAssessment — the hospital's screening forms, one row per screening.
+//   NRS2002      adult (NRS-2002: initial 4 questions + final score, age ≥70 +1)
+//   STAMP        paediatric (3 scored items, re-screen after 3 days)
+//   MATERNAL     obstetric (15-item risk checklist, GWG, biochemistry)
+//   REASSESSMENT long stay / clinical change (BCP, intake, diagnosis, weight trend)
+// Form-specific answers live in `answers` (JSON); score / level / at-risk are
+// computed on the server so the dashboard and NABH reports can query them.
+model NutritionAssessment {
+  id               String    @id @default(uuid())
+  admissionId      String
+  formType         String
+  weightKg         Float?
+  heightCm         Float?
+  bmi              Float?
+  ibwKg            Float?
+  answers          String    @db.LongText
+  riskScore        Float?
+  riskLevel        String? // NIL | LOW | MILD | MEDIUM | MODERATE | HIGH | SEVERE
+  atRisk           Boolean   @default(false)
+  energyKcal       Int?
+  proteinG         Float?
+  fluidMl          Int?
+  otherNutrients   String?   @db.Text
+  intervention     String?   @db.Text
+  // When the form says to re-screen (NRS < 3 → weekly; STAMP → 3 days).
+  nextScreeningDue DateTime?
+  assessedBy       String?
+  assessedById     Int?
+  assessedAt       DateTime  @default(now())
+  signatureId      String?
+
+  @@index([admissionId, assessedAt])
+  @@index([nextScreeningDue])
+}
+
+// DietitianNote — the "Date & time | Dietician note | Signature" pages.
+model DietitianNote {
+  id          String   @id @default(uuid())
+  admissionId String
+  note        String   @db.Text
+  writtenBy   String?
+  writtenById Int?
+  writtenAt   DateTime @default(now())
+  signatureId String?
+
+  @@index([admissionId, writtenAt])
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -6017,6 +6327,12 @@ model Incident {
   @@index([reportedAt])
   @@index([category, status])
   @@index([qiCode, reportedAt])
+  @@index([ruleKey, status])
+  @@index([admissionId])
+  @@index([emergencyId])
+  @@index([appointmentId])
+  @@index([assignedToId])
+  @@index([reportedById])
 }
 
 model IncidentCapa {
@@ -6108,6 +6424,29 @@ model FeedbackSurvey {
   @@index([template, status])
   @@index([patientPrn])
   @@index([respondedAt])
+  @@index([appointmentId])
+  @@index([admissionId])
+  @@index([emergencyId])
+  @@index([status, expiresAt])
+}
+
+// Walk-up kiosk PRN verification: the patient types a PRN, we SMS a 6-digit
+// OTP to the phone on record and only mint a survey once it's verified.
+// The code is stored hashed; one row per challenge.
+model FeedbackWalkUpOtp {
+  id          String    @id @default(uuid())
+  patientPrn  String
+  phoneLast4  String? // shown to the patient ("sent to ••••1234")
+  codeHash    String // sha256 of the OTP
+  expiresAt   DateTime
+  attempts    Int       @default(0) // wrong-code tries; locked at the cap
+  verifiedAt  DateTime?
+  consumedAt  DateTime? // set when a survey is minted from this challenge
+  requestIp   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([patientPrn, createdAt])
+  @@index([requestIp, createdAt])
 }
 
 model Complaint {
@@ -6137,6 +6476,12 @@ model Complaint {
   description String @db.LongText
   severity    String // 'low' | 'medium' | 'high'
 
+  // Department.name the complaint concerns (from the encounter, or chosen at
+  // raise/triage) — scopes department-level read-only views.
+  department String?
+  // Staff user who raised it (null for survey-auto / patient-originated).
+  raisedById Int?
+
   assignedTo   String?
   assignedToId Int?
 
@@ -6160,6 +6505,13 @@ model Complaint {
   @@index([severity])
   @@index([patientPrn])
   @@index([raisedAt])
+  @@index([admissionId])
+  @@index([appointmentId])
+  @@index([emergencyId])
+  @@index([department])
+  @@index([raisedById])
+  @@index([assignedToId])
+  @@index([slaDueAt, escalatedAt])
 }
 
 // ─── Phase 9.26 — NABH/QCI Quality Indicator framework ──────────────────

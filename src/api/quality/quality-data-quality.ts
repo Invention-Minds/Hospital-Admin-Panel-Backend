@@ -1,4 +1,6 @@
+import moment from 'moment-timezone';
 import prisma from '../../service/prisma-client';
+import { QI_TZ } from './quality-indicator-auto-source';
 import { resolveTargetRole } from '../../service/role-alias';
 
 // Phase 9.26 / Phase 4 — data-quality sweep.
@@ -27,20 +29,14 @@ export interface DqReport {
 }
 
 function previousCompletedMonth(): { period: string; year: number; month: number } {
-  const now = new Date();
-  // previous month's year/month (zero-indexed in JS, so we subtract 1 then format)
-  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  return {
-    period: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
-    year: d.getFullYear(),
-    month: d.getMonth() + 1,
-  };
+  const d = moment.tz(QI_TZ).subtract(1, 'month');
+  return { period: d.format('YYYY-MM'), year: d.year(), month: d.month() + 1 };
 }
 
 export async function runDataQualitySweep(opts?: { force?: boolean }): Promise<DqReport> {
   const { period } = previousCompletedMonth();
 
-  const dayOfMonth = new Date().getDate();
+  const dayOfMonth = moment.tz(QI_TZ).date();
   if (!opts?.force && dayOfMonth <= GRACE_DAYS_INTO_MONTH) {
     return {
       period,

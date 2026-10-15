@@ -5,25 +5,24 @@ import {
   triggerAutoSource, autoSourceInfo, triggerDataQualitySweep,
 } from './quality-indicator.controller';
 import { authenticateToken } from '../../middleware/middleware';
-import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
 
 const router = express.Router();
 
-// Read endpoints — all authenticated.
-router.get('/stats', authenticateToken, getIndicatorStats);
-router.get('/_catalogue', authenticateToken, catalogueSummary);
-router.get('/auto-source/info', authenticateToken, autoSourceInfo);
-router.get('/', authenticateToken, listIndicators);
-router.get('/:qiCode', authenticateToken, getIndicator);
+// Reads: Quality viewers; writes: Quality team (see _shared/quality-roles.ts).
+router.get('/stats', authenticateToken, requireQualityViewer, getIndicatorStats);
+router.get('/_catalogue', authenticateToken, requireQualityViewer, catalogueSummary);
+router.get('/auto-source/info', authenticateToken, requireQualityViewer, autoSourceInfo);
+router.get('/', authenticateToken, requireQualityViewer, listIndicators);
+router.get('/:qiCode', authenticateToken, requireQualityViewer, getIndicator);
 
-// Write endpoints — clinical actor (matches incident/complaint pattern).
-router.post('/:qiCode/records', authenticateToken, requireClinicalActor, captureRecord);
-router.put('/:qiCode', authenticateToken, requireClinicalActor, updateIndicator);
+router.post('/:qiCode/records', authenticateToken, requireQualityTeam, captureRecord);
+router.put('/:qiCode', authenticateToken, requireQualityTeam, updateIndicator);
 
 // Phase 2 — manual trigger for the auto-source cron (backfill / ad-hoc runs).
-router.post('/auto-source', authenticateToken, requireClinicalActor, triggerAutoSource);
+router.post('/auto-source', authenticateToken, requireQualityTeam, triggerAutoSource);
 
 // Phase 4 — manual trigger for the missing-record data-quality sweep.
-router.post('/data-quality-sweep', authenticateToken, requireClinicalActor, triggerDataQualitySweep);
+router.post('/data-quality-sweep', authenticateToken, requireQualityTeam, triggerDataQualitySweep);
 
 export default router;

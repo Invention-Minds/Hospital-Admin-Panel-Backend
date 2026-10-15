@@ -2,6 +2,16 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { getQiDef } from './quality-indicator-catalogue';
+import { INVALID, parseDateInput } from './quality-input.util';
+import { AUDIT_BACKED_INDICATORS } from './quality-indicator-auto-source';
+
+// Indicators whose auto-source counts QualityAuditObservation rows. The
+// quality-audit UI reads this list from GET /codes.
+const AUDIT_BACKED_QI_CODES = new Set<string>(AUDIT_BACKED_INDICATORS);
+
+export const listAuditBackedCodes = (_req: Request, res: Response): void => {
+  res.json({ data: AUDIT_BACKED_INDICATORS });
+};
 
 // Phase 9.26 / Phase 5a — Generic audit observation log.
 //
@@ -39,11 +49,16 @@ export const createObservation = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: `Unknown qiCode: ${body.qiCode}` });
       return;
     }
-    const observedAt = body.observedAt ? new Date(body.observedAt) : new Date();
-    if (Number.isNaN(observedAt.getTime())) {
+    if (!AUDIT_BACKED_QI_CODES.has(body.qiCode)) {
+      res.status(400).json({ message: `qiCode ${body.qiCode} is not an audit-observation indicator` });
+      return;
+    }
+    const parsedObs = parseDateInput(body.observedAt);
+    if (parsedObs === INVALID) {
       res.status(400).json({ message: "'observedAt' must be a valid ISO date" });
       return;
     }
+    const observedAt = parsedObs ?? new Date();
 
     const row = await prisma.qualityAuditObservation.create({
       data: {
@@ -84,12 +99,11 @@ export const listObservations = async (req: Request, res: Response): Promise<voi
     if (auditor) where['auditor'] = auditor;
     if (location) where['location'] = { contains: location };
 
-    const rows = await prisma.qualityAuditObservation.findMany({
-      where,
-      orderBy: { observedAt: 'desc' },
-      take: 500,
-    });
-    res.status(200).json({ data: rows, total: rows.length });
+    const [rows, total] = await Promise.all([
+      prisma.qualityAuditObservation.findMany({ where, orderBy: { observedAt: 'desc' }, take: 500 }),
+      prisma.qualityAuditObservation.count({ where }),
+    ]);
+    res.status(200).json({ data: rows, total });
   } catch (error) {
     console.error('[quality-audit] list failed:', error);
     res.status(500).json({ message: 'Failed to load observations' });

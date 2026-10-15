@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { computeAndStoreSnapshot } from '../treatment-dashboard/acuity-snapshot.service';
+import { onAdmissionTransferred } from '../dietetics/diet-lifecycle';
 
 // Phase 9.6 — ICU clinical artefacts controller (NABH COP.3).
 //
@@ -552,6 +553,8 @@ export const completeStepDown = async (req: Request, res: Response): Promise<voi
       prisma.ipdBed.update({ where: { id: existing.toBedId }, data: { status: 'occupied' } }),
     ]);
     await auditLog(req, { module: 'icu', action: 'UPDATE', entityType: 'IcuStepDownRequest', entityId: id, payload: { action: 'completed' } });
+    // Patient stepped down to a ward bed → re-stamp trays + alert Dietary. Never throws.
+    await onAdmissionTransferred(existing.admissionId, existing.fromBedId);
     res.status(200).json({ data: row });
   } catch (error) {
     console.error('[icu-stepdown] complete failed:', error);

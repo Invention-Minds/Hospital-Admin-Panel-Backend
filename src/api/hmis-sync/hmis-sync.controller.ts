@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import prisma from "../../service/prisma-client";
 import { createHmisAuditLog } from "./hmis-audit";
 import { createAlertFromInvestigationResult } from "./critical-value-sse";
+import { closeDietOnDischarge } from "../dietetics/diet-lifecycle";
 
 /**
  * Payment confirmed webhook from HMIS
@@ -354,6 +355,7 @@ export const dischargeConfirmedWebhook = async (
         status: "discharged",
       },
     });
+    await closeDietOnDischarge(admission.id);
 
     // Log webhook receipt
     await createHmisAuditLog({
