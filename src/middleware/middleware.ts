@@ -17,7 +17,9 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
     }
 
     jwt.verify(token, process.env.JWT_SECRET as string, { algorithms: ['HS256'] }, (err: any, user: any) => {
-        if (err) {
+        // Purpose-scoped tokens (login challenge, download grant) share the
+        // secret but are never valid as a session token.
+        if (err || user?.purpose) {
             res.sendStatus(403); // Forbidden if token is invalid
             return; // Ensure we return to avoid further processing
         }

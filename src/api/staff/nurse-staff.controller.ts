@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { NURSE, NURSE_SUBTYPES, isNurse } from '../_shared/nursing-roles';
+import { normalizeEmail } from '../../service/account-security.service';
 
 // Phase 9.10 — Nurse / clinical-staff admin.
 //
@@ -41,6 +42,7 @@ interface NurseBody {
   username?: string;
   password?: string;
   employeeId?: string | null;
+  email?: string | null;
   fullName?: string | null;
   designation?: string | null;
   qualification?: string | null;
@@ -87,6 +89,7 @@ export const listNurses = async (req: Request, res: Response): Promise<void> => 
         id: true,
         username: true,
         employeeId: true,
+        email: true,
         fullName: true,
         designation: true,
         qualification: true,
@@ -128,6 +131,15 @@ export const createNurse = async (req: Request, res: Response): Promise<void> =>
     }
     if (!body.designation || !VALID_DESIGNATIONS.includes(body.designation)) {
       res.status(400).json({ message: `designation must be one of: ${VALID_DESIGNATIONS.join(', ')}` });
+      return;
+    }
+    const email = normalizeEmail(body.email);
+    if (!email) {
+      res.status(400).json({ message: 'A valid email is required' });
+      return;
+    }
+    if (await prisma.user.findUnique({ where: { email }, select: { id: true } })) {
+      res.status(409).json({ message: 'Email is already linked to another account' });
       return;
     }
 
@@ -172,6 +184,7 @@ export const createNurse = async (req: Request, res: Response): Promise<void> =>
         subAdminType: NURSE,
         adminType: null,
         employeeId: body.employeeId?.trim() || null,
+        email,
         fullName: body.fullName.trim(),
         designation: body.designation,
         qualification: body.qualification?.trim() || null,
@@ -183,7 +196,7 @@ export const createNurse = async (req: Request, res: Response): Promise<void> =>
         createdBy: req.user?.username ?? null,
       },
       select: {
-        id: true, username: true, employeeId: true, fullName: true,
+        id: true, username: true, employeeId: true, email: true, fullName: true,
         designation: true, qualification: true, phoneNumber: true,
         primaryWardId: true, joiningDate: true, dateOfBirth: true,
         isActive: true, createdAt: true,
@@ -237,11 +250,27 @@ export const updateNurse = async (req: Request, res: Response): Promise<void> =>
         return;
       }
     }
+    let email: string | null | undefined;
+    if (body.email !== undefined) {
+      email = normalizeEmail(body.email);
+      if (!email) {
+        res.status(400).json({ message: 'A valid email is required' });
+        return;
+      }
+      const taken = await prisma.user.findFirst({ where: { email, NOT: { id } }, select: { id: true } });
+      if (taken) {
+        res.status(409).json({ message: 'Email is already linked to another account' });
+        return;
+      }
+    }
+    const current = await prisma.user.findUnique({ where: { id }, select: { email: true } });
 
     const row = await prisma.user.update({
       where: { id },
       data: {
         ...(body.employeeId !== undefined && { employeeId: body.employeeId?.trim() || null }),
+        // A changed address must be re-verified by the user at next login.
+        ...(email && email !== current?.email && { email, emailVerifiedAt: null }),
         ...(body.fullName !== undefined && { fullName: body.fullName?.trim() || null }),
         ...(body.designation !== undefined && { designation: body.designation }),
         ...(body.qualification !== undefined && { qualification: body.qualification?.trim() || null }),
@@ -253,7 +282,7 @@ export const updateNurse = async (req: Request, res: Response): Promise<void> =>
         updatedBy: req.user?.username ?? null,
       },
       select: {
-        id: true, username: true, employeeId: true, fullName: true,
+        id: true, username: true, employeeId: true, email: true, fullName: true,
         designation: true, qualification: true, phoneNumber: true,
         primaryWardId: true, joiningDate: true, dateOfBirth: true,
         isActive: true,
@@ -324,6 +353,7 @@ export const resetNursePassword = async (req: Request, res: Response): Promise<v
       where: { id },
       data: {
         password: bcrypt.hashSync(body.newPassword, 10),
+        passwordChangedAt: null, // admin-set: nurse must choose a new one at next login
         updatedBy: req.user?.username ?? null,
       },
     });

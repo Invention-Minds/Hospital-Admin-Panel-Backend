@@ -82,10 +82,12 @@ class AppointmentRepository {
   //   }
   // }
 
-  async updatePasswordByUserId(userId: number, newPassword: string,updatedBy: string) {
+  // passwordChangedAt: now when the user chose it themselves; null when an
+  // admin set it, forcing the user to pick a new one at next login.
+  async updatePasswordByUserId(userId: number, newPassword: string, updatedBy: string, passwordChangedAt: Date | null) {
     return prisma.user.update({
       where: { id: userId },
-      data: { password: newPassword, updatedBy: updatedBy },
+      data: { password: newPassword, updatedBy: updatedBy, passwordChangedAt },
     });
   }
   async deleteUserByUsername(userId: number) {

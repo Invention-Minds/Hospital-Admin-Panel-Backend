@@ -22,6 +22,7 @@ import {
   downloadBedCensusReport,
 } from './ward-management.controller';
 import { authenticateToken } from '../../middleware/middleware';
+import { requireDownloadGrant } from '../../middleware/require-download-grant';
 
 const router = express.Router();
 
@@ -51,7 +52,7 @@ router.get('/bed-census', getBedCensus);
 router.get('/bed-census/snapshot', authenticateToken, getBedCensusSnapshot); // Sprint 4a Phase 1e — historical daily snapshot
 router.get('/census-report', getBedCensusReport); // Legacy alias
 router.get('/bed-census-report', getBedCensusReport);
-router.get('/bed-census-report/download', downloadBedCensusReport);
+router.get('/bed-census-report/download', authenticateToken, requireDownloadGrant, downloadBedCensusReport);
 router.get('/occupancy-trends', getOccupancyTrends);
 router.get('/stats', getWardStats);
 

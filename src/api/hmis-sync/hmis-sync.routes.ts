@@ -39,6 +39,7 @@ import {
 } from "./hmis-hardening.controller";
 import { authenticateToken } from "../../middleware/middleware";
 import { verifyWebhookSecret } from "../../middleware/webhook-secret";
+import { requireDownloadGrant } from "../../middleware/require-download-grant";
 
 const router = express.Router();
 
@@ -68,12 +69,12 @@ router.use(authenticateToken);
 
 // Audit logs
 router.get("/audit-logs", getAuditLogs);
-router.get("/audit-logs/download", downloadAuditReport);
+router.get("/audit-logs/download", requireDownloadGrant, downloadAuditReport);
 router.post("/audit-logs/clear", clearAuditLogs);
 
 // Sync status
 router.get("/status", getSyncStatus);
-router.get("/status/download", downloadSyncReport);
+router.get("/status/download", requireDownloadGrant, downloadSyncReport);
 
 // Stats & health (/health is registered above as a public probe)
 router.get("/stats", getSyncStats);

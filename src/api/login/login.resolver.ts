@@ -75,14 +75,14 @@ export const resetPassword = async (employeeId: string, newPassword: string,upda
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
   const user = await loginRepository.findUserByEmployeeId(employeeId);
   const userId = user!.id;
-  return await loginRepository.updatePasswordByUserId(userId, hashedPassword,updatedBy);
+  return await loginRepository.updatePasswordByUserId(userId, hashedPassword, updatedBy, null);
 };
 
 export const changePassword = async (userId: number, oldPassword: string, newPassword: string, updatedBy:string) => {
   const user = await loginRepository.findUserById(userId);
   if (user && bcrypt.compareSync(oldPassword, user.password)) {
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
-    return loginRepository.updatePasswordByUserId(userId, hashedPassword, updatedBy);
+    return loginRepository.updatePasswordByUserId(userId, hashedPassword, updatedBy, new Date());
   }
   return null;
 };

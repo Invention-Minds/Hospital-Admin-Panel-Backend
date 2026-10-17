@@ -27,6 +27,7 @@ import {
 } from "./mlc.controller";
 import { authenticateToken } from "../../middleware/middleware";
 import { requireClinicalActor } from "../../middleware/audit-guard";
+import { requireDownloadGrant } from "../../middleware/require-download-grant";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -88,7 +89,7 @@ router.delete(
 
 // Reports & history
 router.get("/:id/history", authenticateToken, getMlcCaseHistory);
-router.get("/:id/download", authenticateToken, downloadMlcDocumentation);
-router.get("/:id/report-pdf", authenticateToken, generateMlcReportPdf);
+router.get("/:id/download", authenticateToken, requireDownloadGrant, downloadMlcDocumentation);
+router.get("/:id/report-pdf", authenticateToken, requireDownloadGrant, generateMlcReportPdf);
 
 export default router;

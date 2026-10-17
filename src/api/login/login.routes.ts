@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment } from './login.controller';
+import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment, challengeMfa, challengeEmailSend, challengeEmailVerify, challengePassword } from './login.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireRole } from '../../middleware/require-role';
 import { rateLimit } from '../../middleware/rate-limit';
@@ -14,6 +14,12 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, mode: 'failur
 const adminOnly = requireRole({ roles: ['admin'] });
 
 router.post('/login', loginLimiter, userLogin);
+// Post-password security steps; each takes the challengeToken from /login.
+const challengeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, mode: 'failures' });
+router.post('/challenge/mfa', challengeLimiter, challengeMfa);
+router.post('/challenge/email/send', challengeLimiter, challengeEmailSend);
+router.post('/challenge/email/verify', challengeLimiter, challengeEmailVerify);
+router.post('/challenge/password', challengeLimiter, challengePassword);
 router.post('/mobile/refresh', mobileRefresh);
 router.post('/register', authenticateToken, adminOnly, userRegister);
 router.post('/reset-password',authenticateToken, userResetPassword);

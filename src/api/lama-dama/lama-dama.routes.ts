@@ -27,6 +27,7 @@ import {
 } from "./lama-dama.controller";
 import { authenticateToken } from "../../middleware/middleware";
 import { requireClinicalActor } from "../../middleware/audit-guard";
+import { requireDownloadGrant } from "../../middleware/require-download-grant";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -83,10 +84,10 @@ router.post(
 );
 
 // Downloads
-router.get("/lama/:id/download", authenticateToken, downloadLamaDocumentation);
-router.get("/dama/:id/download", authenticateToken, downloadDamaDocumentation);
-router.get("/lama/:id/report-pdf", authenticateToken, generateLamaReport);
-router.get("/dama/:id/report-pdf", authenticateToken, generateDamaReport);
+router.get("/lama/:id/download", authenticateToken, requireDownloadGrant, downloadLamaDocumentation);
+router.get("/dama/:id/download", authenticateToken, requireDownloadGrant, downloadDamaDocumentation);
+router.get("/lama/:id/report-pdf", authenticateToken, requireDownloadGrant, generateLamaReport);
+router.get("/dama/:id/report-pdf", authenticateToken, requireDownloadGrant, generateDamaReport);
 
 // Verification
 router.post("/:type/:id/verify", authenticateToken, verifyDocumentation);

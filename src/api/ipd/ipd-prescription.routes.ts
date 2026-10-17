@@ -19,6 +19,7 @@ import {
 } from './ipd-prescription.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireDownloadGrant } from '../../middleware/require-download-grant';
 import {
   pharmacyQueue, pharmacyAck, pharmacyReject, pharmacyDispense,
   nurseInbox, nurseCollect, nurseReturn,
@@ -33,7 +34,7 @@ router.get('/admission/:admissionId/pending', getPendingMedications);
 router.get('/admission/:admissionId/mar', getMedicationAdministrationRecord);
 router.get('/admission/:admissionId/mar-report', getMarReport);
 router.get('/admission/:admissionId/history', getPrescriptionHistory);
-router.get('/admission/:admissionId/download-medication-list', downloadMedicationList);
+router.get('/admission/:admissionId/download-medication-list', authenticateToken, requireDownloadGrant, downloadMedicationList);
 
 // Clinical writes — guarded for NABH MRD.1 (Sprint 4a Phase 1b).
 router.post('/admission/:admissionId/prescription', authenticateToken, requireClinicalActor, createNewPrescription);

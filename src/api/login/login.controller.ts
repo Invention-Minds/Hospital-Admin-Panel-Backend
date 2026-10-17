@@ -1,7 +1,12 @@
 import { Request, Response } from 'express';
 import { loginUser, createUser, resetPassword, changePassword, loginDoctor, issueMobileRefreshToken, validateMobileRefreshToken } from './login.resolver';
-import { UserRole } from '@prisma/client';
+import { UserRole, User } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import {
+  LoginStep, PASSWORD_MAX_AGE_DAYS, SecurityError, getMfaSetup, maskEmail, nextLoginStep, normalizeEmail,
+  passwordPolicyError, readChallenge, sendEmailOtp, signChallenge, verifyEmailOtp, verifyMfaCode,
+} from '../../service/account-security.service';
 import loginRepository from './login.repository';
 import { deleteUserById } from './login.resolver';
 import { PrismaClient } from '@prisma/client';
@@ -87,7 +92,133 @@ export const userLogin = async (req: Request, res: Response) => {
     }
 
     if (user) {
-      // const role = extractRoleFromUsername(user.username); // Extract role
+      // Security steps (authenticator, email, expired password) must be
+      // cleared before a session token is issued.
+      const account = await prisma.user.findUnique({ where: { id: user.id } });
+      const step = account ? nextLoginStep(account, false) : null;
+      if (account && step) {
+        if (client === 'mobile') {
+          res.status(428).json({ error: 'Please sign in to the DocMinds web panel once to complete your account security setup, then try again.' });
+          return;
+        }
+        res.status(200).json({ challenge: await buildChallenge(account, false, step) });
+        return;
+      }
+      await completeLogin(res, user, client, therapists?.id);
+    } else {
+      res.status(401).json({ error: 'Invalid username or password' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/** Challenge response sent to the client for the next pending security step. */
+async function buildChallenge(user: User, mfaPassed: boolean, step: LoginStep) {
+  return {
+    token: signChallenge(user.id, mfaPassed),
+    step,
+    mfaSetup: step === 'mfa_setup' ? await getMfaSetup(user) : undefined,
+    // Address an admin entered on the account, offered as the default to verify.
+    pendingEmail: step === 'email' ? user.email ?? undefined : undefined,
+    passwordMaxAgeDays: PASSWORD_MAX_AGE_DAYS,
+    passwordNeverSet: step === 'password' ? !user.passwordChangedAt : undefined,
+  };
+}
+
+/** After a step succeeds: either the next challenge or the full login response. */
+async function advanceChallenge(res: Response, userId: number, mfaPassed: boolean) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    res.status(401).json({ error: 'Invalid login session.' });
+    return;
+  }
+  const step = nextLoginStep(user, mfaPassed);
+  if (step) {
+    res.status(200).json({ challenge: await buildChallenge(user, mfaPassed, step) });
+    return;
+  }
+  const therapist = await prisma.therapist.findFirst({ where: { userId: user.id }, select: { id: true } });
+  await completeLogin(res, user, undefined, therapist?.id);
+}
+
+function sendSecurityError(res: Response, error: unknown, label: string) {
+  if (error instanceof SecurityError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+  console.error(`[login] ${label} failed:`, error);
+  res.status(500).json({ error: 'Internal server error' });
+}
+
+/** Loads the challenge and ensures the caller is on the expected step. */
+async function challengeAt(token: unknown, allowed: LoginStep[]) {
+  const { user, mfaPassed } = await readChallenge(token);
+  const step = nextLoginStep(user, mfaPassed);
+  if (!step || !allowed.includes(step)) throw new SecurityError(409, 'This step is not pending. Please sign in again.');
+  return { user, mfaPassed };
+}
+
+export const challengeMfa = async (req: Request, res: Response) => {
+  try {
+    const { user } = await challengeAt(req.body?.challengeToken, ['mfa', 'mfa_setup']);
+    await verifyMfaCode(user, req.body?.code);
+    await advanceChallenge(res, user.id, true);
+  } catch (error) {
+    sendSecurityError(res, error, 'challengeMfa');
+  }
+};
+
+export const challengeEmailSend = async (req: Request, res: Response) => {
+  try {
+    const { user } = await challengeAt(req.body?.challengeToken, ['email']);
+    const email = normalizeEmail(req.body?.email);
+    if (!email) throw new SecurityError(400, 'Please enter a valid email address.');
+    const taken = await prisma.user.findFirst({ where: { email, NOT: { id: user.id } }, select: { id: true } });
+    if (taken) throw new SecurityError(409, 'This email is already linked to another account.');
+    const { expiresAt } = await sendEmailOtp(user.id, 'verify_email', email);
+    res.status(200).json({ sentTo: maskEmail(email), expiresAt });
+  } catch (error) {
+    sendSecurityError(res, error, 'challengeEmailSend');
+  }
+};
+
+export const challengeEmailVerify = async (req: Request, res: Response) => {
+  try {
+    const { user, mfaPassed } = await challengeAt(req.body?.challengeToken, ['email']);
+    const email = await verifyEmailOtp(user.id, 'verify_email', req.body?.otp);
+    const taken = await prisma.user.findFirst({ where: { email, NOT: { id: user.id } }, select: { id: true } });
+    if (taken) throw new SecurityError(409, 'This email is already linked to another account.');
+    await prisma.user.update({ where: { id: user.id }, data: { email, emailVerifiedAt: new Date() } });
+    await advanceChallenge(res, user.id, mfaPassed);
+  } catch (error) {
+    sendSecurityError(res, error, 'challengeEmailVerify');
+  }
+};
+
+export const challengePassword = async (req: Request, res: Response) => {
+  try {
+    const { user, mfaPassed } = await challengeAt(req.body?.challengeToken, ['password']);
+    const newPassword = req.body?.newPassword;
+    const policyError = passwordPolicyError(newPassword);
+    if (policyError) throw new SecurityError(400, policyError);
+    if (bcrypt.compareSync(newPassword, user.password)) {
+      throw new SecurityError(400, 'Your new password must be different from the current one.');
+    }
+    await loginRepository.updatePasswordByUserId(user.id, bcrypt.hashSync(newPassword, 10), user.username, new Date());
+    await advanceChallenge(res, user.id, mfaPassed);
+  } catch (error) {
+    sendSecurityError(res, error, 'challengePassword');
+  }
+};
+
+/** Issues the session token and sends the standard login response. */
+async function completeLogin(
+  res: Response,
+  user: Pick<User, 'id' | 'username' | 'role' | 'isReceptionist' | 'employeeId' | 'subAdminType' | 'adminType'> & { department?: string | null },
+  client: string | undefined,
+  therapistId: number | undefined,
+) {
       const role = user.role;
       const token = generateToken(user); // Generate JWT token
       const usEasternTime = moment.tz("America/New_York");
@@ -160,16 +291,8 @@ export const userLogin = async (req: Request, res: Response) => {
         isIpdScopedNurse(user.id),
       ]);
 
-      res.status(200).json({ token, refreshToken, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, department: user.department ?? null, therapistId: therapists?.id, departmentName, isOpdNurse, isIpdNurse } }); // Send token and user data
-
-
-    } else {
-      res.status(401).json({ error: 'Invalid username or password' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
+      res.status(200).json({ token, refreshToken, generatedDate, generatedTime, user: { userId: user.id, username: user.username, role, isReceptionist: user.isReceptionist, employeeId: user.employeeId, subAdminType: user.subAdminType, adminType: user.adminType, department: user.department ?? null, therapistId, departmentName, isOpdNurse, isIpdNurse } }); // Send token and user data
+}
 
 // Exchanges a valid mobile refresh token for a fresh access token.
 export const mobileRefresh = async (req: Request, res: Response) => {
@@ -289,10 +412,19 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    let newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);
-    if (department) {
-      newUser = await prisma.user.update({ where: { id: newUser.id }, data: { department } });
+    // Verified by the user at first login before it can receive download OTPs.
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      res.status(400).json({ error: 'A valid email is required' });
+      return;
     }
+    if (await prisma.user.findUnique({ where: { email }, select: { id: true } })) {
+      res.status(409).json({ error: 'This email is already linked to another account.' });
+      return;
+    }
+
+    let newUser = await createUser(username, password, role, isReceptionist, employeeId, subAdminType, adminType,createdBy);
+    newUser = await prisma.user.update({ where: { id: newUser.id }, data: { email, ...(department && { department }) } });
     res.status(201).json(newUser);
   } catch (error) {
     console.error('Error during user registration:', error);

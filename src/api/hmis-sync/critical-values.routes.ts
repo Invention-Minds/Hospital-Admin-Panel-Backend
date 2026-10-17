@@ -29,7 +29,8 @@ router.get('/stream', (req: Request, res: Response) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string, {
       algorithms: ['HS256'],
-    }) as { id?: number; username?: string };
+    }) as { id?: number; username?: string; purpose?: string };
+    if (decoded.purpose) throw new Error('purpose-scoped token');
     userId = decoded.username || (decoded.id != null ? String(decoded.id) : 'unknown');
   } catch {
     res.status(403).json({ error: 'invalid token' });

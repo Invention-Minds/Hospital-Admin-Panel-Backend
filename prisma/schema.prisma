@@ -146,7 +146,19 @@ model User {
   joiningDate   DateTime?
   dateOfBirth   DateTime?
 
+  // Account security. email receives download OTPs and is verified before
+  // use. passwordChangedAt drives the 90-day expiry (null = must change at
+  // next login). totpSecret is AES-GCM encrypted with MFA_ENC_KEY; Google
+  // Authenticator is enforced for admin/super_admin once totpEnabledAt is set.
+  email             String?   @unique
+  emailVerifiedAt   DateTime?
+  passwordChangedAt DateTime?
+  totpSecret        String?   @db.Text
+  totpEnabledAt     DateTime?
+
   doctors             Doctor[]                 @relation("DoctorUser")
+  emailOtps           UserEmailOtp[]
+  downloadLogs        DownloadLog[]
   Notification        Notification[]
   activeTokens        ActiveToken[]
   mobileRefreshTokens MobileRefreshToken[]
@@ -6433,6 +6445,49 @@ model FeedbackSurvey {
 // Walk-up kiosk PRN verification: the patient types a PRN, we SMS a 6-digit
 // OTP to the phone on record and only mint a survey once it's verified.
 // The code is stored hashed; one row per challenge.
+// Email OTPs for staff accounts. purpose: 'download' (unlocks exports for
+// 10 min) | 'verify_email' (confirms a newly entered address; `email` holds
+// the pending address until verified).
+model UserEmailOtp {
+  id         String    @id @default(uuid())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    String
+  email      String
+  codeHash   String // sha256 of the OTP
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@map("user_email_otps")
+}
+
+// Who downloaded what, when and why. One row per download, written after the
+// user passes the captcha and gives a reason. For server-generated files,
+// servedAt/serverRoute are set when the file route actually serves it.
+model DownloadLog {
+  id          String    @id @default(uuid())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username    String
+  employeeId  String?
+  role        String
+  label       String // what, e.g. "Bed census CSV"
+  page        String? // app route the download was started from
+  reason      String    @db.Text
+  ip          String?
+  userAgent   String?   @db.Text
+  serverRoute String?   @db.Text
+  servedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("download_logs")
+}
+
 model FeedbackWalkUpOtp {
   id          String    @id @default(uuid())
   patientPrn  String

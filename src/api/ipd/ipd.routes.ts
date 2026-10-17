@@ -82,6 +82,7 @@ import {
 } from './diagnosis-code.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
+import { requireDownloadGrant } from '../../middleware/require-download-grant';
 
 const router = express.Router();
 
@@ -158,7 +159,7 @@ router.post('/admission/:admissionId/discharge', authenticateToken, requireClini
 router.get('/admission/:admissionId/discharge', getDischarge);
 // Phase 9.17 — assembled full discharge summary (paper layout, read-only gather)
 router.get('/admission/:admissionId/discharge-context', authenticateToken, getDischargeContext);
-router.get('/admission/:admissionId/discharge-pdf', downloadDischargePDF);
+router.get('/admission/:admissionId/discharge-pdf', authenticateToken, requireDownloadGrant, downloadDischargePDF);
 
 // Phase 6 (WF-5) — AI-drafted discharge summary chain.
 router.post('/admission/:admissionId/discharge/ai-draft', authenticateToken, requireClinicalActor, generateAiDraft);

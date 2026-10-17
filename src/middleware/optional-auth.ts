@@ -28,7 +28,7 @@ export const optionalAuth = (req: Request, _res: Response, next: NextFunction): 
   jwt.verify(token, process.env.JWT_SECRET as string, { algorithms: ['HS256'] }, (err: any, user: any) => {
     // An invalid/expired token is treated exactly like no token at all —
     // the request proceeds anonymously instead of failing.
-    if (!err && user) {
+    if (!err && user && !user.purpose) {
       req.user = user;
     }
     next();
