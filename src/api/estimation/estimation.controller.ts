@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { getRecipientPhones } from '../../service/notification-recipients';
 import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import fs from "fs";
@@ -10,6 +10,48 @@ import { ServiceRepository } from '../services/services.repository';
 import { notifyPendingAppointments } from '../appointments/appointment.controller';
 import { loadOtTV } from '../appointments/appointment.controller';
 import { proposeFromEstimation } from '../conversion/estimation-to-ipd';
+import moment from 'moment-timezone';
+
+/**
+ * Indian financial year (1 April – 31 March), by IST date, as used in
+ * estimation IDs: 31 Oct 2026 → "2026/27", 15 Feb 2027 → "2026/27",
+ * 1 Apr 2027 → "2027/28".
+ */
+export function currentFiscalYear(now: Date = new Date()): string {
+    const ist = moment(now).tz('Asia/Kolkata');
+    const startYear = ist.month() >= 3 ? ist.year() : ist.year() - 1; // month() is 0-based: 3 = April
+    return `${startYear}/${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+/**
+ * Next estimation ID. The running number restarts every financial year:
+ * the first estimation from 1 April is "JMRH FY2026/27 - 0001", then 0002…
+ * IDs issued before this rule (one global counter, 3 digits) are left as they
+ * are; their prefix differs, so they never collide with the new numbers.
+ */
+export async function nextEstimationId(now: Date = new Date()): Promise<string> {
+    const prefix = `JMRH FY${currentFiscalYear(now)} - `;
+    const last = await prisma.estimationDetails.findFirst({
+        where: { estimationId: { startsWith: prefix } },
+        orderBy: { id: 'desc' },
+        select: { estimationId: true },
+    });
+    const lastNumber = last ? parseInt(last.estimationId.slice(prefix.length), 10) || 0 : 0;
+    return `${prefix}${String(lastNumber + 1).padStart(4, '0')}`;
+}
+
+/** Creates the row with the next ID; if two saves race for the same number, the loser takes the next one. */
+async function createWithNextEstimationId<T>(create: (estimationId: string) => Promise<T>): Promise<{ estimationId: string; record: T }> {
+    for (let attempt = 0; ; attempt++) {
+        const estimationId = await nextEstimationId();
+        try {
+            return { estimationId, record: await create(estimationId) };
+        } catch (error) {
+            const clash = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+            if (!clash || attempt >= 4) throw error;
+        }
+    }
+}
 
 const prisma = new PrismaClient();
 const repository = new ServiceRepository();
@@ -104,24 +146,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
             patientEmail,
         } = req.body;
 
-        const lastEstimation = await prisma.estimationDetails.findFirst({
-            orderBy: { id: 'desc' }, // Order by ID descending to get the latest record
-        });
-
-        // Extract the last number from the estimationId (if any)
-        let nextNumber = 1;
-        if (lastEstimation && lastEstimation.estimationId) {
-            const match = lastEstimation.estimationId.match(/(\d+)$/); // Extract the numeric part
-            if (match) {
-                nextNumber = parseInt(match[1], 10) + 1; // Increment the number
-            }
-        }
-        const currentYear = new Date().getFullYear();
-        const fiscalYear = `${currentYear - 1}/${currentYear % 100}`;
-        const estimationIdPrefix = `JMRH FY${fiscalYear}`;
-        const estimationId = `${estimationIdPrefix} - ${nextNumber.toString().padStart(3, '0')}`;
-
-        const estimationDetails = await prisma.estimationDetails.create({
+        const { estimationId, record: estimationDetails } = await createWithNextEstimationId((estimationId) => prisma.estimationDetails.create({
             data: {
                 estimationId: estimationId,
                 patientUHID: prnNumber,
@@ -143,7 +168,7 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                 estimationStatus,
                 patientEmail
             },
-        });
+        }));
         const fromPhoneNumber = process.env.WHATSAPP_FROM_PHONE_NUMBER;
         const url = process.env.WHATSAPP_API_URL_BULK;
         console.log(estimationId)
@@ -284,27 +309,11 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
             attenderName
         } = updateFields;
 
-        const lastEstimation = await prisma.estimationDetails.findFirst({
-            orderBy: { id: 'desc' }, // Order by ID descending to get the latest record
-        });
-
-        // Extract the last number from the estimationId (if any)
-        let nextNumber = 1;
-        if (lastEstimation && lastEstimation.estimationId) {
-            const match = lastEstimation.estimationId.match(/(\d+)$/); // Extract the numeric part
-            if (match) {
-                nextNumber = parseInt(match[1], 10) + 1; // Increment the number
-            }
-        }
-        const currentYear = new Date().getFullYear();
-        const fiscalYear = `${currentYear - 1}/${currentYear % 100}`;
-        const estimationIdPrefix = `JMRH FY${fiscalYear}`;
-        const estimationId = `${estimationIdPrefix} - ${nextNumber.toString().padStart(3, '0')}`;
         console.log("Implants:", implants);
         console.log("Procedures:", procedures);
         console.log("Instrumentals:", instrumentals);
         // Create the estimation details
-        const estimationDetails = await prisma.estimationDetails.create({
+        const { record: estimationDetails } = await createWithNextEstimationId((estimationId) => prisma.estimationDetails.create({
             data: {
                 estimationId: estimationId,
                 patientUHID: patientUHID,
@@ -355,7 +364,7 @@ export const createNewEstimationDetails = async (req: Request, res: Response) =>
                 multipleSurgeryDoctor,
                 attenderName
             },
-        });
+        }));
 
         // Create inclusions
         if (inclusions && Array.isArray(inclusions)) {

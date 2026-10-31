@@ -12,6 +12,7 @@ import { deleteUserById } from './login.resolver';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import { isOpdStationNurse, isIpdScopedNurse } from '../_shared/nursing-roles';
+import { auditLog } from '../../service/app-audit';
 const prisma = new PrismaClient();
 
 
@@ -209,6 +210,45 @@ export const challengePassword = async (req: Request, res: Response) => {
     await advanceChallenge(res, user.id, mfaPassed);
   } catch (error) {
     sendSecurityError(res, error, 'challengePassword');
+  }
+};
+
+/**
+ * super_admin: clear a user's Google Authenticator (lost phone, app
+ * uninstalled without backup). They scan a new QR code at next sign-in.
+ */
+export const resetUserMfa = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      res.status(400).json({ error: 'Invalid user ID' });
+      return;
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, employeeId: true, role: true, totpSecret: true },
+    });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    if (!user.totpSecret) {
+      res.status(409).json({ error: 'This user has not set up Google Authenticator yet.' });
+      return;
+    }
+    await prisma.user.update({ where: { id: userId }, data: { totpSecret: null, totpEnabledAt: null } });
+    await auditLog(req, {
+      module: 'security',
+      action: 'RESET_MFA',
+      entityType: 'User',
+      entityId: userId,
+      payload: { username: user.username, employeeId: user.employeeId, role: user.role },
+      notes: 'Google Authenticator reset by super_admin',
+    });
+    res.status(200).json({ id: userId, mfaEnabled: false });
+  } catch (error) {
+    console.error('Error resetting user MFA:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 

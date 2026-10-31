@@ -6481,10 +6481,14 @@ model DownloadLog {
   userAgent   String?   @db.Text
   serverRoute String?   @db.Text
   servedAt    DateTime?
+  seq         Int? // this user's nth download, 1-based (null on rows logged before it existed)
+  downloadRef String? // printed in the footer of the file, e.g. EMP1023-20261031-143205-0057
   createdAt   DateTime  @default(now())
 
+  @@unique([userId, seq])
   @@index([userId, createdAt])
   @@index([createdAt])
+  @@index([downloadRef])
   @@map("download_logs")
 }
 

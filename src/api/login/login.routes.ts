@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment, challengeMfa, challengeEmailSend, challengeEmailVerify, challengePassword } from './login.controller';
+import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment, resetUserMfa, challengeMfa, challengeEmailSend, challengeEmailVerify, challengePassword } from './login.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireRole } from '../../middleware/require-role';
 import { rateLimit } from '../../middleware/rate-limit';
@@ -30,6 +30,8 @@ router.get('/get-all-users', authenticateToken, adminOnly, getAllUsers); // Prot
 router.delete('/delete-user/:username', authenticateToken, adminOnly, deleteUserByUsername);
 router.patch('/toggle-active/:userId', authenticateToken, adminOnly, toggleUserActive);
 router.patch('/user-department/:userId', authenticateToken, adminOnly, setUserDepartment);
+// Authenticator reset bypasses a sign-in factor, so super_admin only (no roles listed).
+router.post('/reset-mfa/:userId', authenticateToken, requireRole({}), resetUserMfa);
 
 export default router;
 

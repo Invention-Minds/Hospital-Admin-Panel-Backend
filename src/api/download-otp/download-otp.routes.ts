@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import moment from 'moment-timezone';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireRole } from '../../middleware/require-role';
 import prisma from '../../service/prisma-client';
@@ -17,6 +18,35 @@ router.use(authenticateToken);
 
 const MIN_REASON = 5;
 const MAX_REASON = 500;
+
+// Download ID printed in the footer of every downloaded file:
+//   <employeeId>-<YYYYMMDD>-<HHmmss IST>-<this user's nth download>
+// e.g. EMP1023-20261031-143205-0057. The count includes downloads logged
+// before the ID existed; @@unique([userId, seq]) makes two simultaneous
+// downloads retry instead of sharing a number.
+type LogFields = Pick<Prisma.DownloadLogUncheckedCreateInput, 'label' | 'page' | 'reason' | 'ip' | 'userAgent'>;
+
+async function createNumberedLog(
+  userId: number,
+  user: { username: string; employeeId: string | null; role: string },
+  fields: LogFields,
+): Promise<{ id: string; downloadRef: string | null }> {
+  const who = (user.employeeId || user.username || '').replace(/[^A-Za-z0-9_]/g, '') || `U${userId}`;
+  for (let attempt = 0; ; attempt++) {
+    const now = new Date();
+    const seq = (await prisma.downloadLog.count({ where: { userId } })) + 1;
+    const downloadRef = `${who}-${moment(now).tz('Asia/Kolkata').format('YYYYMMDD-HHmmss')}-${String(seq).padStart(4, '0')}`;
+    try {
+      return await prisma.downloadLog.create({
+        data: { userId, username: user.username, employeeId: user.employeeId, role: user.role, ...fields, seq, downloadRef, createdAt: now },
+        select: { id: true, downloadRef: true },
+      });
+    } catch (error) {
+      const clash = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+      if (!clash || attempt >= 4) throw error;
+    }
+  }
+}
 
 function sendError(res: Response, error: unknown, label: string) {
   if (error instanceof SecurityError) {
@@ -73,21 +103,14 @@ router.post('/authorize', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { username: true, employeeId: true, role: true } });
     if (!user) throw new SecurityError(401, 'User not found.');
 
-    const log = await prisma.downloadLog.create({
-      data: {
-        userId,
-        username: user.username,
-        employeeId: user.employeeId,
-        role: user.role,
-        label: label || 'Unlabelled download',
-        page,
-        reason: reason.slice(0, MAX_REASON),
-        ip: (req.ip || req.socket?.remoteAddress || '').slice(0, 64) || null,
-        userAgent: (req.headers['user-agent'] || '').slice(0, 1000) || null,
-      },
-      select: { id: true },
+    const log = await createNumberedLog(userId, user, {
+      label: label || 'Unlabelled download',
+      page,
+      reason: reason.slice(0, MAX_REASON),
+      ip: (req.ip || req.socket?.remoteAddress || '').slice(0, 64) || null,
+      userAgent: (req.headers['user-agent'] || '').slice(0, 1000) || null,
     });
-    res.status(200).json({ logId: log.id, ticket: signDownloadTicket(userId, log.id) });
+    res.status(200).json({ logId: log.id, downloadRef: log.downloadRef, ticket: signDownloadTicket(userId, log.id) });
   } catch (error) {
     sendError(res, error, 'authorize');
   }
@@ -108,6 +131,7 @@ router.get('/logs', requireRole({ roles: ['admin'] }), async (req: Request, res:
         OR: [
           { username: { contains: search } },
           { employeeId: { contains: search } },
+          { downloadRef: { contains: search } },
           { label: { contains: search } },
           { reason: { contains: search } },
         ],
