@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import prisma from '../../service/prisma-client';
+import { resolveDoctorIdByName } from '../../service/doctor-name-match';
 import { auditLog } from '../../service/app-audit';
 import { raiseDietAlert, closeDietOnDischarge, onAdmissionTransferred } from '../dietetics/diet-lifecycle';
 import { parseHmisExport, parseHmisDate, HmisExportError, type ParsedExport } from './hmis-export-parser';
@@ -369,6 +370,8 @@ export async function runHmisImport(
     }
 
     // 4. New admissions (and their patients).
+    // HMIS sends the doctor as free text — link it only when it names exactly one doctor.
+    const doctorPool = await prisma.doctor.findMany({ select: { id: true, name: true } });
     for (const p of plan.filter((x) => x.item.action === 'ADMIT')) {
       const r = p.row!;
       try {
@@ -392,6 +395,7 @@ export async function runHmisImport(
           admissionType: (r.type || 'routine').toLowerCase(),
           sourceModule: SOURCE,
           admittingDoctor: r.doctor || 'Not recorded in HMIS',
+          admittingDoctorId: await resolveDoctorIdByName(r.doctor, doctorPool),
           department: r.dept || 'General',
           wardId,
           bedId,

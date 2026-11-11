@@ -1,4 +1,5 @@
 import prisma from '../../service/prisma-client';
+import { resolveAdmittingDoctorId } from '../../service/doctor-name-match';
 
 /**
  * Refer a confirmed Estimation for IPD admission (NABH WF-2 path).
@@ -77,6 +78,7 @@ export const proposeFromEstimation = async (input: ProposeFromEstimationInput) =
       referralEstimationId: input.estimationId,
       referringDoctor: est.consultantName ?? null,
       admittingDoctor: est.consultantName || 'Consultant',
+      admittingDoctorId: await resolveAdmittingDoctorId(est.consultantId, est.consultantName),
       department: 'General',
       // No wardId / bedId — assigned by NS at accept time.
       roomType: preferredBedType,

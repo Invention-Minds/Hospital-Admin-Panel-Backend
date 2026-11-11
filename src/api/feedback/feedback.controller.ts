@@ -11,12 +11,20 @@ import { generateOtp, otpExpiry, sendOtpSms } from '../../service/otp-sms.servic
 import { getRegisteredNumber, last10 } from '../../service/record-access.service';
 import { runFeedbackExpirySweep } from './feedback-expiry.cron';
 import { runFeedbackReminderSweep } from './feedback-reminder.cron';
+import { complaintHandlerUserIds } from './complaint-sla.cron';
+import { notifyComplaintRaised } from './complaint.controller';
+import { resolveUnitId } from '../../service/quality-escalation';
+import { categoryFromRatings, complaintDueAt } from '../../service/complaint-sla';
+import {
+  surveyContext, getFeedbackThresholds, SURVEY_LANGUAGES, CHOICE_REASONS, type FeedbackThresholds,
+} from '../../service/feedback-context';
 
 // Phase 9.25 / Phase 4 — Feedback surveys.
 //
 // Surveys live behind a one-shot token: the URL /feedback/k/:token works on
-// a phone or a kiosk without auth. submitByToken auto-raises a Complaint when
-// NPS ≤ 6 and also fires the LOW_NPS_PATIENT_FEEDBACK incident rule at ≤ 3.
+// a phone or a kiosk without auth. submitByToken auto-raises a Complaint at
+// NPS ≤ complaintMaxNps and also fires the LOW_NPS_PATIENT_FEEDBACK incident
+// rule at ≤ incidentMaxNps (FeedbackConfig; defaults 6 / 3).
 
 const VALID_TEMPLATES = ['opd-post-visit', 'ipd-discharge', 'er-discharge', 'day-care', 'general'] as const;
 const VALID_CHANNELS = ['kiosk', 'sms', 'whatsapp', 'web', 'qr'] as const;
@@ -27,16 +35,11 @@ const SATISFACTION_KEYS = [
 const MAX_COMMENT = 2000;
 const MAX_NAME = 120;
 
-/** Severity buckets driven by NPS (industry-standard NPS classification). */
-function severityFromNps(nps: number): 'low' | 'medium' | 'high' {
-  if (nps <= 3) return 'high';
-  if (nps <= 6) return 'medium';
+/** Complaint severity from NPS, using the configurable incident / complaint cut-offs. */
+function severityFromNps(nps: number, t: FeedbackThresholds): 'low' | 'medium' | 'high' {
+  if (nps <= t.incidentMaxNps) return 'high';
+  if (nps <= t.complaintMaxNps) return 'medium';
   return 'low';
-}
-
-/** Hours of SLA on the auto-complaint. */
-function slaHoursFor(severity: 'low' | 'medium' | 'high'): number {
-  return severity === 'high' ? 24 : severity === 'medium' ? 72 : 168;
 }
 
 /** `YYYY-MM-DD` → local start/end of day; anything else parsed as-is. null = invalid. */
@@ -110,6 +113,11 @@ export const createSurvey = async (req: Request, res: Response): Promise<void> =
     }
     const token = crypto.randomBytes(16).toString('hex');
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+    const link = {
+      appointmentId: body.appointmentId ?? null,
+      admissionId: body.admissionId ?? null,
+      emergencyId: body.emergencyId ?? null,
+    };
 
     const survey = await prisma.feedbackSurvey.create({
       data: {
@@ -117,9 +125,9 @@ export const createSurvey = async (req: Request, res: Response): Promise<void> =
         template: body.template,
         patientPrn: body.patientPrn?.trim() || null,
         patientName: body.patientName?.trim() || null,
-        appointmentId: body.appointmentId ?? null,
-        admissionId: body.admissionId ?? null,
-        emergencyId: body.emergencyId ?? null,
+        ...link,
+        ...(await surveyContext(link)),
+        collectedById: typeof req.user?.id === 'number' ? req.user.id : null,
         encounterDate,
         status: 'pending',
         expiresAt,
@@ -207,7 +215,7 @@ export const getSurveyByToken = async (req: Request, res: Response): Promise<voi
       where: { token },
       select: {
         id: true, template: true, patientName: true, encounterDate: true,
-        status: true, expiresAt: true,
+        status: true, expiresAt: true, patientPrn: true,
       },
     });
     if (!row) { res.status(404).json({ message: 'Survey not found' }); return; }
@@ -219,7 +227,15 @@ export const getSurveyByToken = async (req: Request, res: Response): Promise<voi
       res.status(410).json({ message: 'This survey link has expired' });
       return;
     }
-    res.status(200).json({ data: row });
+    // The page opens in the patient's preferred language when we know it.
+    const { patientPrn, ...publicRow } = row;
+    let preferredLanguage: string | null = null;
+    if (patientPrn && /^\d+$/.test(patientPrn)) {
+      const p = await prisma.patientDetails.findUnique({ where: { prn: Number(patientPrn) }, select: { preferredLanguage: true } }).catch(() => null);
+      const lang = p?.preferredLanguage?.trim().toLowerCase() ?? '';
+      preferredLanguage = (SURVEY_LANGUAGES as readonly string[]).includes(lang) ? lang : null;
+    }
+    res.status(200).json({ data: { ...publicRow, preferredLanguage } });
   } catch (error) {
     console.error('[feedback] getSurveyByToken failed:', error);
     res.status(500).json({ message: 'Failed to fetch survey' });
@@ -231,6 +247,8 @@ interface SubmitBody {
   satisfactionScores?: unknown;
   comments?: unknown;
   channel?: unknown;
+  language?: unknown;      // en | kn | ml | hi — the language the patient answered in
+  choiceReasons?: unknown; // CHOICE_REASONS keys
 }
 
 /** Validates satisfactionScores; returns an error message or null. */
@@ -270,14 +288,31 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
     }
     const satErr = satisfactionError(body.satisfactionScores);
     if (satErr) { res.status(400).json({ message: satErr }); return; }
-    const channel = VALID_CHANNELS.includes(body.channel as typeof VALID_CHANNELS[number])
-      ? (body.channel as string) : 'kiosk';
-
+    if (body.language != null && !(SURVEY_LANGUAGES as readonly unknown[]).includes(body.language)) {
+      res.status(400).json({ message: `language must be one of: ${SURVEY_LANGUAGES.join(', ')}` });
+      return;
+    }
+    let choiceReasons: string[] | null = null;
+    if (body.choiceReasons != null) {
+      if (!Array.isArray(body.choiceReasons) || body.choiceReasons.length > CHOICE_REASONS.length ||
+          body.choiceReasons.some((r) => !(CHOICE_REASONS as readonly unknown[]).includes(r))) {
+        res.status(400).json({ message: `choiceReasons must be a list of: ${CHOICE_REASONS.join(', ')}` });
+        return;
+      }
+      choiceReasons = [...new Set(body.choiceReasons as string[])];
+    }
     const existing = await prisma.feedbackSurvey.findUnique({ where: { token } });
     if (!existing) { res.status(404).json({ message: 'Survey not found' }); return; }
+    // Explicit channel from the link wins; otherwise the channel the link was
+    // delivered on, else a desk QR (the only other way to reach a token).
+    const channel = VALID_CHANNELS.includes(body.channel as typeof VALID_CHANNELS[number])
+      ? (body.channel as string)
+      : (existing.sentChannel && VALID_CHANNELS.includes(existing.sentChannel as typeof VALID_CHANNELS[number])
+        ? existing.sentChannel : 'qr');
 
     const now = new Date();
-    const willFlag = nps <= 6;
+    const thresholds = await getFeedbackThresholds();
+    const willFlag = nps <= thresholds.complaintMaxNps;
     // Atomic completion — only one concurrent submit can flip the row.
     const { count } = await prisma.feedbackSurvey.updateMany({
       where: {
@@ -290,6 +325,8 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
         satisfactionScores: body.satisfactionScores ? JSON.stringify(body.satisfactionScores) : null,
         comments,
         complaintFlag: willFlag,
+        language: (body.language as string | undefined) ?? null,
+        choiceReasons: choiceReasons && choiceReasons.length ? JSON.stringify(choiceReasons) : null,
         status: 'completed',
         respondedAt: now,
         respondedChannel: existing.respondedChannel === 'walk-up' ? 'walk-up' : channel,
@@ -307,16 +344,23 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
     // back-link to it (Option A: link, don't dedupe).
     let createdComplaintId: string | null = null;
 
-    // Auto-raise a complaint when NPS ≤ 6.
+    // Auto-raise a complaint at or below the configured NPS cut-off (default 6).
+    // The survey is already completed, so a transient failure here would lose
+    // the grievance — retry, and if it still fails tell the handlers so it's
+    // raised by hand.
     if (willFlag) {
+      const severity = severityFromNps(nps, thresholds);
+      for (let attempt = 1; attempt <= 3 && !createdComplaintId; attempt++) {
       try {
-        const severity = severityFromNps(nps);
-        const slaDueAt = new Date(Date.now() + slaHoursFor(severity) * 60 * 60 * 1000);
         const department = await deriveComplaintDepartment({
           appointmentId: updated.appointmentId,
           admissionId: updated.admissionId,
           emergencyId: updated.emergencyId,
         });
+        const unitId = await resolveUnitId({ admissionId: updated.admissionId, department });
+        // Type = the patient's lowest-rated (1–2★) question, if any.
+        const category = categoryFromRatings(body.satisfactionScores as Record<string, number> | undefined);
+        const slaDueAt = await complaintDueAt(new Date(), { unitId, category, severity });
         const complaint = await createWithComplaintCode((code) => prisma.complaint.create({
           data: {
             code,
@@ -328,6 +372,7 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
             feedbackSurveyId: updated.id,
             description: `Auto-raised from feedback survey (NPS ${nps}). ${comments ? 'Patient comment: "' + comments + '"' : 'No comment provided.'}`,
             severity,
+            category,
             status: 'open',
             slaDueAt,
             raisedById: null,
@@ -336,18 +381,44 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
             appointmentId: updated.appointmentId,
             admissionId: updated.admissionId,
             emergencyId: updated.emergencyId,
+            unitId,
+            escalationStartAt: new Date(),
           },
         }));
         createdComplaintId = complaint.id;
+        void notifyComplaintRaised(complaint);
       } catch (e) {
-        console.warn('[feedback] auto-complaint failed:', (e as Error).message);
+        console.warn(`[feedback] auto-complaint attempt ${attempt} failed:`, (e as Error).message);
+      }
+      }
+      if (!createdComplaintId) {
+        console.error(`[feedback] auto-complaint FAILED for survey ${updated.id} (NPS ${nps}) — alerting handlers`);
+        try {
+          const handlerIds = await complaintHandlerUserIds();
+          if (handlerIds.length > 0) {
+            await prisma.notification.createMany({
+              data: handlerIds.map((userId) => ({
+                type: 'feedback_reminder', // routes to the feedback inbox
+                title: `Low-score survey needs a manual complaint (NPS ${nps})`,
+                message: `Auto-complaint creation failed for survey ${updated.id}${updated.patientPrn ? ' · PRN ' + updated.patientPrn : ''}. Raise it from the complaints inbox.`,
+                status: 'unread',
+                isCritical: true,
+                entityId: 0,
+                entityType: `FeedbackSurvey:${updated.id}`,
+                userId,
+              })),
+            });
+          }
+        } catch (err) {
+          console.error('[feedback] auto-complaint fallback alert failed:', (err as Error).message);
+        }
       }
     }
 
-    // Very low NPS — also fire the incident rule (Patient Experience review).
-    // Phase 6 / Option A — wait for the rule to return so we can attach links
-    // back to the survey + complaint + any pre-existing open incidents.
-    if (nps <= 3) {
+    // Very low NPS (default ≤ 3) — also fire the incident rule (Patient
+    // Experience review). Phase 6 / Option A — wait for the rule to return so
+    // we can attach links back to the survey + complaint + open incidents.
+    if (nps <= thresholds.incidentMaxNps) {
       try {
         const result = await raiseByRule('LOW_NPS_PATIENT_FEEDBACK', {
           patientPrn: updated.patientPrn,
@@ -381,10 +452,27 @@ export const submitSurveyByToken = async (req: Request, res: Response): Promise<
       }
     }
 
-    res.status(200).json({ data: { id: updated.id, status: 'completed' } });
+    // Offer the Google review page to every respondent (never only happy ones —
+    // selectively soliciting positive reviews breaks Google's review policy).
+    const review = await prisma.feedbackConfig.findUnique({ where: { id: 1 }, select: { googleReviewUrl: true } }).catch(() => null);
+    res.status(200).json({ data: { id: updated.id, status: 'completed', reviewUrl: review?.googleReviewUrl ?? null } });
   } catch (error) {
     console.error('[feedback] submitSurveyByToken failed:', error);
     res.status(500).json({ message: 'Failed to submit survey' });
+  }
+};
+
+/** Public: the patient tapped "Share on Google" after submitting. First tap is counted; never errors loudly. */
+export const recordReviewClick = async (req: Request, res: Response): Promise<void> => {
+  try {
+    await prisma.feedbackSurvey.updateMany({
+      where: { token: req.params.token, status: 'completed', reviewClickedAt: null },
+      data: { reviewClickedAt: new Date() },
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.error('[feedback] recordReviewClick failed:', error);
+    res.status(204).end();
   }
 };
 
@@ -404,6 +492,7 @@ const OTP_WINDOW_MS = 15 * 60 * 1000;
 const OTP_MAX_PER_PRN = 3;
 const OTP_MAX_PER_IP = 10;
 const OTP_MAX_ATTEMPTS = 5;
+const WALKUP_SURVEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const WALKUP_GENERIC = 'If this PRN is registered, an OTP has been sent to the phone on record.';
 
 // `trust proxy` is set in index.ts, so req.ip is the proxy-reported client
@@ -531,6 +620,26 @@ export const verifyWalkUpOtp = async (req: Request, res: Response): Promise<void
     });
     if (consumed.count !== 1) {
       res.status(410).json({ message: 'This OTP has expired or was already used. Please request a new one.' });
+      return;
+    }
+
+    // One walk-up survey per patient per 24h: resume a still-open one, refuse
+    // a second submission (each low score raises a complaint + incident).
+    const recent = await prisma.feedbackSurvey.findFirst({
+      where: {
+        patientPrn: row.patientPrn,
+        respondedChannel: 'walk-up',
+        createdAt: { gte: new Date(Date.now() - WALKUP_SURVEY_WINDOW_MS) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, token: true, status: true, expiresAt: true },
+    });
+    if (recent?.status === 'completed') {
+      res.status(429).json({ message: 'You have already shared your feedback today. Thank you!' });
+      return;
+    }
+    if (recent && recent.status !== 'expired' && (!recent.expiresAt || recent.expiresAt > now)) {
+      res.status(201).json({ data: { token: recent.token, id: recent.id } });
       return;
     }
 

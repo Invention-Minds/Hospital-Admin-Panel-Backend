@@ -10,6 +10,7 @@ import { buildRecordFile } from '../../service/record-builder.service';
 import { openai } from '../../config/openai';
 import { generateOtp, otpExpiry, sendOtpSms } from '../../service/otp-sms.service';
 import { createComplaintRecord } from '../feedback/complaint.controller';
+import { complaintHandlerUserIds } from '../feedback/complaint-sla.cron';
 import {
   recordAppointmentEventSystem,
   slotSnapshot,
@@ -198,7 +199,7 @@ async function notifyDoctor(doctorId: number, queryId: number, prn: number, who:
 async function sendMainMenu(to: string, greet = true): Promise<void> {
   await sendList(
     to,
-    'DocMinds Services',
+    HOSPITAL_NAME,
     `${greet ? `Hello, and a warm welcome to ${HOSPITAL_NAME}! I'm your virtual assistant.\n` : ''}How can we help you today?`,
     'Main menu',
     [
@@ -724,18 +725,23 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
       patientPrn: sc.prn ? String(sc.prn) : null,
       patientName: sc.name ?? null,
     });
-    await prisma.notification
-      .create({
-        data: {
-          type: 'whatsapp_complaint',
-          title: 'New WhatsApp complaint',
-          message: `${sc.name} (${c.code}): ${(sc.description ?? '').slice(0, 150)}`,
+    // Per-handler bell; 'complaint_*' + 'Complaint:<id>' is what the FE bell
+    // shows and deep-links (the old 'whatsapp_complaint' type was never shown).
+    await (async () => {
+      const handlerIds = await complaintHandlerUserIds();
+      if (handlerIds.length === 0) return;
+      await prisma.notification.createMany({
+        data: handlerIds.map((userId) => ({
+          type: 'complaint_raised',
+          title: `New WhatsApp complaint · ${c.code}`,
+          message: `[${c.severity.toUpperCase()}] ${(sc.description ?? '').slice(0, 150)}`,
           status: 'unread',
-          entityType: 'Complaint',
-          targetRole: 'admin',
-        },
-      })
-      .catch((e) => console.warn('[whatsapp-bot] complaint notify failed:', (e as Error).message));
+          entityId: 0,
+          entityType: `Complaint:${c.id}`,
+          userId,
+        })),
+      });
+    })().catch((e) => console.warn('[whatsapp-bot] complaint notify failed:', (e as Error).message));
     await finishWithThanks(from, `Thank you, ${sc.name}. Your complaint (${c.code}) has been registered. Our team will follow up.`);
     return;
   }

@@ -18,6 +18,7 @@ const prismaMock = {
   investigationOrder: { findMany: jest.fn() },
   ipdAdmission: { findFirst: jest.fn(), create: jest.fn() },
   ipdBed: { update: jest.fn() },
+  doctor: { findUnique: jest.fn(), findMany: jest.fn() },
 };
 
 jest.mock('../../../service/prisma-client', () => ({
@@ -93,6 +94,9 @@ beforeEach(() => {
   mockedPrisma.ipdAdmission.findFirst.mockResolvedValue(null);
   mockedPrisma.ipdAdmission.create.mockResolvedValue(admissionFixture);
   mockedPrisma.ipdBed.update.mockResolvedValue({});
+  // admittingDoctorId 7 from the request is a real doctor.
+  mockedPrisma.doctor.findUnique.mockResolvedValue({ id: 7 });
+  mockedPrisma.doctor.findMany.mockResolvedValue([]);
   mockedCreateHmisAuditLog.mockResolvedValue({
     id: 2000,
     direction: 'push',
@@ -124,6 +128,7 @@ describe('convertToIPD — happy path (HMIS 2xx)', () => {
         sourceModule: 'emergency',
         referralEmergencyId: '9',
         admittingDoctor: 'Dr. Surgeon',
+        admittingDoctorId: 7,
         wardId: 'W1',
         bedId: 'B1',
         roomType: 'ICU',

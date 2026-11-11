@@ -1,4 +1,5 @@
 import prisma from '../../service/prisma-client';
+import { resolveAdmittingDoctorId } from '../../service/doctor-name-match';
 
 /**
  * Phase 3 — WF-2 NABH-compliant referral path.
@@ -76,6 +77,7 @@ export const proposeFromOpd = async (input: ProposeFromOpdInput) => {
       referralOpdId: input.appointmentId.toString(),
       referringDoctor: appointment.doctor?.name,
       admittingDoctor: input.admittingDoctorName,
+      admittingDoctorId: await resolveAdmittingDoctorId(input.admittingDoctorId, input.admittingDoctorName),
       department: appointment.doctor?.departmentName || 'General',
       // No wardId / bedId yet — they get assigned by NS at accept time.
       roomType: input.preferredBedType || 'general',

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
+import { admittedByDoctor } from '../../service/doctor-name-match';
 
 function todayYmd(): string {
   // Server-local date is fine: the existing Appointment.date column stores
@@ -186,12 +187,12 @@ export const getDoctorDashboardSummary = async (req: Request, res: Response): Pr
     });
 
     // ─── IPD admissions under this doctor (active) ─────────────────────
-    // IpdAdmission.admittingDoctor is a free-text snapshot — match by
-    // contains so prefixes (e.g. "Dr. ") still hit.
+    // Matched on admittingDoctorId; legacy rows without an id fall back to
+    // the admittingDoctor name snapshot.
     const activeIpdStatuses = ['admitted', 'BED_ACCEPTED'];
     const ipdAdmissions = await prisma.ipdAdmission.findMany({
       where: {
-        admittingDoctor: { contains: doctor.name },
+        ...admittedByDoctor(doctor),
         status: { in: activeIpdStatuses },
       },
       select: {
@@ -330,7 +331,7 @@ export const getDoctorDashboardSummary = async (req: Request, res: Response): Pr
     // ─── Pending discharge summaries (not yet signed/delivered) ─────────
     const pendingDischargeSummaries = await prisma.ipdDischarge.count({
       where: {
-        admission: { admittingDoctor: { contains: doctor.name } },
+        admission: admittedByDoctor(doctor),
         NOT: { summaryStatus: { in: ['SIGNED', 'DELIVERED'] } },
       },
     });
@@ -422,7 +423,7 @@ export const getDoctorDashboardSummary = async (req: Request, res: Response): Pr
     // their AdmissionDiagnosisCode rows (icd-provisional + icd-final).
     const recentAdmissions = await prisma.ipdAdmission.findMany({
       where: {
-        admittingDoctor: { contains: doctor.name },
+        ...admittedByDoctor(doctor),
         admissionDate: { gte: thirtyDaysAgoDate },
       },
       select: { id: true },

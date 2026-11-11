@@ -12,6 +12,7 @@ import { createFollowUpAppointment, FollowUpResult } from './follow-up-automatio
 import { getClinicalActor } from '../../middleware/audit-guard';
 import { getNurseAllowedWardIds } from '../_shared/nursing-roles';
 import { closeDietOnDischarge, raiseDietAlert, onAdmissionTransferred } from '../dietetics/diet-lifecycle';
+import { normalizeDoctorName, resolveAdmittingDoctorId } from '../../service/doctor-name-match';
 
 /** Sprint 4a Phase 1c — concise human-readable summary for the discharge response. */
 const summarizeFollowUp = (r: FollowUpResult): string => {
@@ -138,6 +139,7 @@ export const createIpdAdmission = async (
       referralMlcId,
       referringDoctor,
       admittingDoctor,
+      admittingDoctorId,
       department,
       wardId,
       bedId,
@@ -211,6 +213,12 @@ export const createIpdAdmission = async (
       return `JMRH-IPD-${String(nextNumber).padStart(4, '0')}`;
     };
 
+    // The admission form picks the doctor by id; resolve once, outside the retry loop.
+    const resolvedDoctorId = await resolveAdmittingDoctorId(
+      admittingDoctorId == null ? null : Number(admittingDoctorId),
+      admittingDoctor,
+    );
+
     // Create admission with a small retry loop to survive concurrent submits
     // (two requests racing both read the same "last" + try the same next).
     let admission: Awaited<ReturnType<typeof prisma.ipdAdmission.create>> | null = null;
@@ -231,6 +239,7 @@ export const createIpdAdmission = async (
             referralMlcId,
             referringDoctor,
             admittingDoctor,
+            admittingDoctorId: resolvedDoctorId,
             department: department || 'General',
             wardId,
             bedId,
@@ -448,10 +457,32 @@ export const updateIpdAdmission = async (
       return;
     }
 
+    // Keep admittingDoctorId in step with the doctor. An explicit id wins; a
+    // changed name without an id is re-resolved (strict match, else null) so the
+    // previous doctor's id never stays attached. A resent, unchanged name leaves
+    // the stored id alone.
+    const doctorFields: { admittingDoctorId?: number | null } = {};
+    const { admittingDoctor: newName, admittingDoctorId: rawId } = req.body as {
+      admittingDoctor?: string;
+      admittingDoctorId?: number | string | null;
+    };
+    if (rawId !== undefined) {
+      doctorFields.admittingDoctorId = await resolveAdmittingDoctorId(
+        rawId === null || rawId === '' ? null : Number(rawId),
+        newName,
+      );
+    } else if (newName !== undefined) {
+      const current = await prisma.ipdAdmission.findUnique({ where: { id }, select: { admittingDoctor: true } });
+      if (normalizeDoctorName(current?.admittingDoctor) !== normalizeDoctorName(newName)) {
+        doctorFields.admittingDoctorId = await resolveAdmittingDoctorId(null, newName);
+      }
+    }
+
     const admission = await prisma.ipdAdmission.update({
       where: { id },
       data: {
         ...req.body,
+        ...doctorFields,
         updatedBy: req.user?.username || 'system',
       },
     });

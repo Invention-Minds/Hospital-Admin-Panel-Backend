@@ -6,8 +6,8 @@ import { PATIENT_RELATIONS, QUALITY_MANAGER } from '../_shared/quality-roles';
 //
 // Sweeps every 15 minutes for complaints whose slaDueAt has passed but
 // haven't been resolved or already escalated. Flips status to 'escalated',
-// stamps escalatedAt, and fires a loud bell to the assignee (or every
-// complaint handler when unassigned). Idempotent: the flip is a conditional
+// stamps escalatedAt, and fires a loud bell to every complaint handler plus
+// the assignee. Idempotent: the flip is a conditional
 // updateMany on `escalatedAt IS NULL`, and only the run that wins it notifies,
 // so the cron and a manual sweep can't double-notify.
 
@@ -76,17 +76,17 @@ export async function runComplaintSlaSweep(): Promise<SlaSweepReport> {
           entityId: 0, // entityId is Int; complaint id is uuid → put real id in entityType.
           entityType: `Complaint:${c.id}`,
         };
-        if (c.assignedToId) {
-          await prisma.notification.create({ data: { ...base, userId: c.assignedToId } });
+        // Escalation goes up, not just back to the owner who missed the SLA:
+        // every complaint handler is told, plus the assignee (if not one).
+        handlerIds ??= await complaintHandlerUserIds();
+        const recipients = new Set<number>(handlerIds);
+        if (c.assignedToId) recipients.add(c.assignedToId);
+        if (recipients.size > 0) {
+          await prisma.notification.createMany({ data: [...recipients].map((userId) => ({ ...base, userId })) });
         } else {
-          handlerIds ??= await complaintHandlerUserIds();
-          if (handlerIds.length > 0) {
-            await prisma.notification.createMany({ data: handlerIds.map((userId) => ({ ...base, userId })) });
-          } else {
-            await prisma.notification.create({
-              data: { ...base, targetRole: await resolveTargetRole(FALLBACK_ESCALATION_ROLE) },
-            });
-          }
+          await prisma.notification.create({
+            data: { ...base, targetRole: await resolveTargetRole(FALLBACK_ESCALATION_ROLE) },
+          });
         }
       } catch (err) {
         console.warn('[complaint-sla:notify] failed:', (err as Error).message);

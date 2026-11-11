@@ -1,4 +1,5 @@
 import prisma from '../../service/prisma-client';
+import { resolveAdmittingDoctorId } from '../../service/doctor-name-match';
 import { pushIpdAdmission } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
 import { raiseDietAlert } from '../dietetics/diet-lifecycle';
@@ -93,6 +94,7 @@ export const convertOpdToIpd = async (
         referralOpdId: appointmentId.toString(),
         referringDoctor: appointment.doctor?.name,
         admittingDoctor: admittingDoctorName,
+        admittingDoctorId: await resolveAdmittingDoctorId(admittingDoctorId, admittingDoctorName),
         department: appointment.doctor?.departmentName || 'General',
         wardId,
         bedId,

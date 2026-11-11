@@ -41,20 +41,50 @@ export const safety = async (req: Request, res: Response): Promise<void> => {
     const range = parseRange(req, res);
     if (!range) return;
     const { from, to } = range;
-    const where = { reportedAt: { gte: from, lte: to } };
+    // Cancelled incidents (false positives) are excluded, and sentinel uses the
+    // post-investigation severity when set — same basis as PSQ-029.
+    const where = { reportedAt: { gte: from, lte: to }, status: { not: 'cancelled' } };
 
     const [total, open, sentinel, bySeverity, byCategory, bySource, byNabh] = await Promise.all([
       prisma.incident.count({ where }),
       prisma.incident.count({ where: { ...where, status: { in: ['open', 'triaged', 'investigated', 'capa_in_progress'] } } }),
-      prisma.incident.count({ where: { ...where, severity: 'sentinel' } }),
+      prisma.incident.count({
+        where: { ...where, OR: [{ severityFinal: 'sentinel' }, { severityFinal: null, severity: 'sentinel' }] },
+      }),
       prisma.incident.groupBy({ by: ['severity'], where, _count: { _all: true } }),
       prisma.incident.groupBy({ by: ['category'], where, _count: { _all: true } }),
       prisma.incident.groupBy({ by: ['source'], where, _count: { _all: true } }),
       prisma.incident.groupBy({ by: ['nabhClause'], where, _count: { _all: true } }),
     ]);
     const nearMiss = bySeverity.find((g) => g.severity === 'near_miss')?._count._all ?? 0;
+
+    // CAPA follow-through — live state (not limited to the window): overdue
+    // actions and due checks are what needs doing now; effectiveness % is over
+    // checks recorded in the window.
+    const now = new Date();
+    const [capaOverdue, capaOpen, reviewsDue, reviewOutcomes] = await Promise.all([
+      prisma.incidentCapaAction.count({
+        where: { status: 'open', dueDate: { lt: now }, incident: { status: { notIn: ['closed', 'cancelled'] } } },
+      }),
+      prisma.incidentCapaAction.count({ where: { status: 'open', incident: { status: { notIn: ['closed', 'cancelled'] } } } }),
+      prisma.incidentEffectivenessReview.count({ where: { status: 'pending', dueAt: { lte: now }, incident: { status: 'closed' } } }),
+      prisma.incidentEffectivenessReview.groupBy({
+        by: ['outcome'], where: { status: 'done', reviewedAt: { gte: from, lte: to } }, _count: { _all: true },
+      }),
+    ]);
+    const reviewsDone = reviewOutcomes.reduce((s, g) => s + g._count._all, 0);
+    const effective = reviewOutcomes.find((g) => g.outcome === 'effective')?._count._all ?? 0;
+
     res.status(200).json({
       total, open, sentinel,
+      capa: {
+        openActions: capaOpen,
+        overdueActions: capaOverdue,
+        reviewsDue,
+        reviewsDone,
+        effectiveRate: reviewsDone > 0 ? round((effective / reviewsDone) * 100) : null,
+        reviewOutcomes: Object.fromEntries(reviewOutcomes.map((g) => [g.outcome ?? 'unknown', g._count._all])),
+      },
       nearMissRate: total > 0 ? round((nearMiss / total) * 100) : 0,
       bySeverity: Object.fromEntries(bySeverity.map((g) => [g.severity, g._count._all])),
       byCategory: Object.fromEntries(byCategory.map((g) => [g.category, g._count._all])),
@@ -287,7 +317,7 @@ export const nabhScorecard = async (req: Request, res: Response): Promise<void> 
     const { from, to } = range;
     const groups = await prisma.incident.groupBy({
       by: ['nabhClause', 'status'],
-      where: { reportedAt: { gte: from, lte: to }, nabhClause: { not: null } },
+      where: { reportedAt: { gte: from, lte: to }, nabhClause: { not: null }, status: { not: 'cancelled' } },
       _count: { _all: true },
     });
     // Roll up into { clause: { total, open, closed } }
@@ -297,7 +327,7 @@ export const nabhScorecard = async (req: Request, res: Response): Promise<void> 
       const chapter = clause.split('.')[0] || clause;
       if (!byClause[clause]) byClause[clause] = { total: 0, open: 0, closed: 0, chapter };
       byClause[clause].total += g._count._all;
-      if (g.status === 'closed' || g.status === 'cancelled') byClause[clause].closed += g._count._all;
+      if (g.status === 'closed') byClause[clause].closed += g._count._all;
       else byClause[clause].open += g._count._all;
     }
     // Sort by total desc.

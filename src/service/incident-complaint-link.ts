@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import prisma from './prisma-client';
 
 // Phase 6 / Concern #4 + Option A — cross-module linkage helpers.
@@ -135,7 +136,7 @@ export async function linkComplaintToIncident(complaintId: string, incidentId: s
 
 /** Next COMP-YYYY-NNNN code (year-scoped, numeric max so 10000+ still sorts right). */
 async function nextComplaintCode(): Promise<string> {
-  const year = new Date().getFullYear();
+  const year = moment().tz('Asia/Kolkata').year(); // hospital year, not server-TZ year
   const prefix = `COMP-${year}-`;
   const rows = await prisma.$queryRaw<Array<{ maxSeq: bigint | number | null }>>`
     SELECT MAX(CAST(SUBSTRING(code, ${prefix.length + 1}) AS UNSIGNED)) AS maxSeq

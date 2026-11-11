@@ -1,12 +1,19 @@
 import crypto from 'crypto';
+import moment from 'moment-timezone';
+import type { FeedbackSurvey } from '@prisma/client';
 import prisma from '../../service/prisma-client';
+import { notifyFeedbackRequest } from '../../service/whatsapp-notify.service';
+import { surveyContext } from '../../service/feedback-context';
 
 // Phase 9.25 / Phase 4 — Survey-send cron.
 //
-// Every 30 minutes, finds recent encounters that should get a survey and
-// creates a FeedbackSurvey row with a one-shot token. Actual SMS / WhatsApp
-// delivery is a follow-up — for now the row exists and the kiosk URL is
-// usable from any device. Idempotent: only one survey per encounter.
+// Every 30 minutes, finds recent encounters that should get a survey, creates
+// a FeedbackSurvey row with a one-shot token and sends the link to the
+// patient on WhatsApp (`feedback_request` template). Delivery is gated by
+// WHATSAPP_PUSH_ENABLED inside notifyPatient and de-duplicated on the survey
+// id, so a replay never double-messages. A survey that couldn't be delivered
+// stays 'pending' (usable via QR at the desk). Idempotent: one survey per
+// encounter.
 
 const SURVEY_EXPIRY_DAYS = 14;
 const HOUR = 60 * 60 * 1000;
@@ -18,6 +25,40 @@ const expiry = (): Date => new Date(Date.now() + SURVEY_EXPIRY_DAYS * 24 * HOUR)
 function localDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Sends the survey link on WhatsApp; flips the row to 'sent' only when it went out. */
+async function deliverSurvey(s: FeedbackSurvey): Promise<boolean> {
+  const prn = s.patientPrn && /^\d+$/.test(s.patientPrn) ? Number(s.patientPrn) : null;
+  if (!prn) return false; // no PRN → no registered number to message
+  const visitDate = moment(s.encounterDate ?? s.createdAt).tz('Asia/Kolkata').format('DD MMM YYYY');
+  const sent = await notifyFeedbackRequest(prn, null, s.patientName || 'Patient', visitDate, s.token, s.id);
+  if (!sent) return false;
+  await prisma.feedbackSurvey.updateMany({
+    where: { id: s.id, status: 'pending' },
+    data: { status: 'sent', sentAt: new Date(), sentChannel: 'whatsapp' },
+  });
+  return true;
+}
+
+/** Creates the survey row (with its visit context for analytics), then attempts delivery (a failed send never undoes the row). */
+async function createAndDeliver(data: Parameters<typeof prisma.feedbackSurvey.create>[0]['data']): Promise<void> {
+  const ctx = await surveyContext({
+    appointmentId: data.appointmentId ?? null, admissionId: data.admissionId ?? null, emergencyId: data.emergencyId ?? null,
+  }).catch(() => ({}));
+  const s = await prisma.feedbackSurvey.create({ data: { ...data, ...ctx } });
+  await deliverSurvey(s).catch((err) => console.warn(`[feedback-send] delivery failed for ${s.id}:`, (err as Error).message));
+}
+
+/** Patient name for an IPD survey (IpdAdmission carries only the PRN). */
+async function nameForPrn(prn: string | null | undefined): Promise<string | null> {
+  if (!prn || !/^\d+$/.test(prn)) return null;
+  const n = Number(prn);
+  const [pd, p] = await Promise.all([
+    prisma.patientDetails.findUnique({ where: { prn: n }, select: { name: true } }).catch(() => null),
+    prisma.patient.findUnique({ where: { prn: n }, select: { name: true } }).catch(() => null),
+  ]);
+  return (pd?.name || p?.name || '').trim() || null;
 }
 
 async function autoCreateOpdSurveys(): Promise<number> {
@@ -50,17 +91,15 @@ async function autoCreateOpdSurveys(): Promise<number> {
   let created = 0;
   for (const a of due) {
     if (done.has(a.id)) continue;
-    await prisma.feedbackSurvey.create({
-      data: {
-        token: freshToken(),
-        template: 'opd-post-visit',
-        patientPrn: a.prnNumber != null ? String(a.prnNumber) : null,
-        patientName: a.patientName,
-        appointmentId: a.id,
-        encounterDate: a.completedAt,
-        status: 'pending',
-        expiresAt: expiry(),
-      },
+    await createAndDeliver({
+      token: freshToken(),
+      template: 'opd-post-visit',
+      patientPrn: a.prnNumber != null ? String(a.prnNumber) : null,
+      patientName: a.patientName,
+      appointmentId: a.id,
+      encounterDate: a.completedAt,
+      status: 'pending',
+      expiresAt: expiry(),
     });
     created += 1;
   }
@@ -88,17 +127,15 @@ async function autoCreateIpdSurveys(): Promise<number> {
   let created = 0;
   for (const d of discharges) {
     if (done.has(d.admissionId)) continue;
-    await prisma.feedbackSurvey.create({
-      data: {
-        token: freshToken(),
-        template: 'ipd-discharge',
-        patientPrn: d.admission?.prn ?? null,
-        patientName: null,
-        admissionId: d.admissionId,
-        encounterDate: d.dischargeDate,
-        status: 'pending',
-        expiresAt: expiry(),
-      },
+    await createAndDeliver({
+      token: freshToken(),
+      template: 'ipd-discharge',
+      patientPrn: d.admission?.prn ?? null,
+      patientName: await nameForPrn(d.admission?.prn),
+      admissionId: d.admissionId,
+      encounterDate: d.dischargeDate,
+      status: 'pending',
+      expiresAt: expiry(),
     });
     created += 1;
   }
@@ -129,17 +166,15 @@ async function autoCreateErSurveys(): Promise<number> {
   let created = 0;
   for (const e of rows) {
     if (done.has(e.id)) continue;
-    await prisma.feedbackSurvey.create({
-      data: {
-        token: freshToken(),
-        template: 'er-discharge',
-        patientPrn: e.patientPrn,
-        patientName: e.patientName,
-        emergencyId: e.id,
-        encounterDate: e.updatedAt,
-        status: 'pending',
-        expiresAt: expiry(),
-      },
+    await createAndDeliver({
+      token: freshToken(),
+      template: 'er-discharge',
+      patientPrn: e.patientPrn,
+      patientName: e.patientName,
+      emergencyId: e.id,
+      encounterDate: e.updatedAt,
+      status: 'pending',
+      expiresAt: expiry(),
     });
     created += 1;
   }

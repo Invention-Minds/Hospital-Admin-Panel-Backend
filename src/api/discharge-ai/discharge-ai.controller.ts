@@ -62,132 +62,75 @@ interface AttenderAckBody {
   attenderAcknowledgmentSignatureId: string;
 }
 
-/** POST /api/ipd/admission/:admissionId/discharge/ai-draft */
-export const generateAiDraft = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { admissionId } = req.params;
+/** Raised by runDischargeDraft for request-level failures (404/409) so callers can map them to HTTP. */
+export class DischargeDraftError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
 
-    const admission = await prisma.ipdAdmission.findUnique({ where: { id: admissionId } });
-    if (!admission) {
-      res.status(404).json({ error: 'Admission not found' });
-      return;
-    }
-    if (admission.status === 'discharged') {
-      res.status(409).json({ error: 'Admission is already discharged' });
-      return;
-    }
+export interface DischargeDraftResult {
+  row: Awaited<ReturnType<typeof prisma.ipdDischarge.update>>;
+  created: boolean;
+  model: string;
+  templated: boolean;
+}
 
-    const existing = await prisma.ipdDischarge.findUnique({ where: { admissionId } });
-    if (existing?.summaryStatus === 'SIGNED' || existing?.summaryStatus === 'DELIVERED') {
-      res
-        .status(409)
-        .json({ error: `Discharge is locked at status=${existing.summaryStatus}; cannot redraft` });
-      return;
-    }
+/**
+ * Draft (or re-draft) the discharge summary for an admission with the model and
+ * upsert the IpdDischarge row in summaryStatus='DRAFTED'. Shared by the manual
+ * "Generate draft" endpoint and the automatic draft fired when a doctor marks a
+ * patient ready for discharge.
+ */
+export async function runDischargeDraft(
+  admissionId: string,
+  actorUsername: string | null,
+  noteTemplateId?: string | null,
+): Promise<DischargeDraftResult> {
+  const admission = await prisma.ipdAdmission.findUnique({ where: { id: admissionId } });
+  if (!admission) throw new DischargeDraftError(404, 'Admission not found');
+  if (admission.status === 'discharged') throw new DischargeDraftError(409, 'Admission is already discharged');
 
-    // Template-aware AI: if the existing discharge already has a noteTemplateId,
-    // OR the request body explicitly requests a templateId, route through
-    // generateTemplatedDischargeDraft. The legacy path stays as the fallback.
-    const requestedTemplateId =
-      (req.body as { noteTemplateId?: string } | undefined)?.noteTemplateId
-      ?? existing?.noteTemplateId
-      ?? null;
+  const existing = await prisma.ipdDischarge.findUnique({ where: { admissionId } });
+  if (existing?.summaryStatus === 'SIGNED' || existing?.summaryStatus === 'DELIVERED') {
+    throw new DischargeDraftError(409, `Discharge is locked at status=${existing.summaryStatus}; cannot redraft`);
+  }
 
-    if (requestedTemplateId) {
-      const tpl = await prisma.noteTemplate.findUnique({ where: { id: requestedTemplateId } });
-      if (!tpl) {
-        res.status(404).json({ error: 'Selected template not found' });
-        return;
-      }
-      let parsedFields: FieldDef[] = [];
-      try { parsedFields = JSON.parse(tpl.fields); } catch { parsedFields = []; }
+  // Template-aware AI: if the existing discharge already has a noteTemplateId,
+  // OR the caller explicitly requests a templateId, route through
+  // generateTemplatedDischargeDraft. The legacy path stays as the fallback.
+  const requestedTemplateId = noteTemplateId ?? existing?.noteTemplateId ?? null;
+  const now = new Date();
 
-      const templated = await generateTemplatedDischargeDraft(admissionId, {
-        id: tpl.id,
-        name: tpl.name,
-        fields: parsedFields,
-      });
+  if (requestedTemplateId) {
+    const tpl = await prisma.noteTemplate.findUnique({ where: { id: requestedTemplateId } });
+    if (!tpl) throw new DischargeDraftError(404, 'Selected template not found');
+    let parsedFields: FieldDef[] = [];
+    try { parsedFields = JSON.parse(tpl.fields); } catch { parsedFields = []; }
 
-      const now = new Date();
-      const aiDraftJson = JSON.stringify(templated);
-      const templatedValuesJson = JSON.stringify({
-        _schema: null, // schema only locks at sign-time
-        _values: templated.templatedValueMap,
-      });
+    const templated = await generateTemplatedDischargeDraft(admissionId, {
+      id: tpl.id,
+      name: tpl.name,
+      fields: parsedFields,
+    });
 
-      const row = existing
-        ? await prisma.ipdDischarge.update({
-            where: { admissionId },
-            data: {
-              noteTemplateId: tpl.id,
-              templatedValues: templatedValuesJson,
-              summaryStatus: 'DRAFTED',
-              aiDraftJson,
-              aiDraftedAt: now,
-              aiDraftedByModel: templated.modelVersion,
-              updatedBy: req.user?.username ?? null,
-            },
-          })
-        : await prisma.ipdDischarge.create({
-            data: {
-              admissionId,
-              dischargeDate: now,
-              dischargeTime: now.toLocaleTimeString(),
-              dischargeType: 'regular',
-              // Legacy fields can stay empty — the templated values carry the content.
-              finalDiagnosis: '',
-              conditionAtDischarge: '',
-              dischargeSummary: '',
-              medications: '[]',
-              noteTemplateId: tpl.id,
-              templatedValues: templatedValuesJson,
-              summaryStatus: 'DRAFTED',
-              aiDraftJson,
-              aiDraftedAt: now,
-              aiDraftedByModel: templated.modelVersion,
-              createdBy: req.user?.username ?? null,
-            },
-          });
-
-      await auditLog(req, {
-        module: 'discharge-ai',
-        action: existing ? 'UPDATE' : 'CREATE',
-        entityType: 'IpdDischarge',
-        entityId: row.id,
-        payload: { admissionId, model: templated.modelVersion, status: 'DRAFTED', templated: true },
-      });
-
-      res.status(200).json(row);
-      return;
-    }
-
-    const draft: DischargeAiDraft = await generateDischargeDraft(admissionId);
-
-    const aiDraftJson = JSON.stringify(draft);
-    const now = new Date();
-    const followUpDate =
-      typeof draft.followUpInDays === 'number'
-        ? new Date(Date.now() + draft.followUpInDays * 24 * 60 * 60 * 1000)
-        : null;
-    const medicationsJson = JSON.stringify(draft.medications || []);
+    const aiDraftJson = JSON.stringify(templated);
+    const templatedValuesJson = JSON.stringify({
+      _schema: null, // schema only locks at sign-time
+      _values: templated.templatedValueMap,
+    });
 
     const row = existing
       ? await prisma.ipdDischarge.update({
           where: { admissionId },
           data: {
-            finalDiagnosis: draft.finalDiagnosis,
-            proceduresDone: draft.proceduresDone,
-            conditionAtDischarge: draft.conditionAtDischarge,
-            dischargeSummary: draft.dischargeSummary,
-            medications: medicationsJson,
-            advice: draft.advice,
-            followUpDate,
-            followUpDoctor: draft.followUpDoctor ?? null,
+            noteTemplateId: tpl.id,
+            templatedValues: templatedValuesJson,
             summaryStatus: 'DRAFTED',
             aiDraftJson,
             aiDraftedAt: now,
-            aiDraftedByModel: draft.modelVersion,
-            updatedBy: req.user?.username ?? null,
+            aiDraftedByModel: templated.modelVersion,
+            updatedBy: actorUsername,
           },
         })
       : await prisma.ipdDischarge.create({
@@ -196,32 +139,96 @@ export const generateAiDraft = async (req: Request, res: Response): Promise<void
             dischargeDate: now,
             dischargeTime: now.toLocaleTimeString(),
             dischargeType: 'regular',
-            finalDiagnosis: draft.finalDiagnosis,
-            proceduresDone: draft.proceduresDone,
-            conditionAtDischarge: draft.conditionAtDischarge,
-            dischargeSummary: draft.dischargeSummary,
-            medications: medicationsJson,
-            advice: draft.advice,
-            followUpDate,
-            followUpDoctor: draft.followUpDoctor ?? null,
+            // Legacy fields can stay empty — the templated values carry the content.
+            finalDiagnosis: '',
+            conditionAtDischarge: '',
+            dischargeSummary: '',
+            medications: '[]',
+            noteTemplateId: tpl.id,
+            templatedValues: templatedValuesJson,
             summaryStatus: 'DRAFTED',
             aiDraftJson,
             aiDraftedAt: now,
-            aiDraftedByModel: draft.modelVersion,
-            createdBy: req.user?.username ?? null,
+            aiDraftedByModel: templated.modelVersion,
+            createdBy: actorUsername,
           },
         });
+    return { row, created: !existing, model: templated.modelVersion, templated: true };
+  }
+
+  const draft: DischargeAiDraft = await generateDischargeDraft(admissionId);
+
+  const aiDraftJson = JSON.stringify(draft);
+  const followUpDate =
+    typeof draft.followUpInDays === 'number'
+      ? new Date(Date.now() + draft.followUpInDays * 24 * 60 * 60 * 1000)
+      : null;
+  const medicationsJson = JSON.stringify(draft.medications || []);
+
+  const row = existing
+    ? await prisma.ipdDischarge.update({
+        where: { admissionId },
+        data: {
+          finalDiagnosis: draft.finalDiagnosis,
+          proceduresDone: draft.proceduresDone,
+          conditionAtDischarge: draft.conditionAtDischarge,
+          dischargeSummary: draft.dischargeSummary,
+          medications: medicationsJson,
+          advice: draft.advice,
+          followUpDate,
+          followUpDoctor: draft.followUpDoctor ?? null,
+          summaryStatus: 'DRAFTED',
+          aiDraftJson,
+          aiDraftedAt: now,
+          aiDraftedByModel: draft.modelVersion,
+          updatedBy: actorUsername,
+        },
+      })
+    : await prisma.ipdDischarge.create({
+        data: {
+          admissionId,
+          dischargeDate: now,
+          dischargeTime: now.toLocaleTimeString(),
+          dischargeType: 'regular',
+          finalDiagnosis: draft.finalDiagnosis,
+          proceduresDone: draft.proceduresDone,
+          conditionAtDischarge: draft.conditionAtDischarge,
+          dischargeSummary: draft.dischargeSummary,
+          medications: medicationsJson,
+          advice: draft.advice,
+          followUpDate,
+          followUpDoctor: draft.followUpDoctor ?? null,
+          summaryStatus: 'DRAFTED',
+          aiDraftJson,
+          aiDraftedAt: now,
+          aiDraftedByModel: draft.modelVersion,
+          createdBy: actorUsername,
+        },
+      });
+  return { row, created: !existing, model: draft.modelVersion, templated: false };
+}
+
+/** POST /api/ipd/admission/:admissionId/discharge/ai-draft */
+export const generateAiDraft = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { admissionId } = req.params;
+    const noteTemplateId = (req.body as { noteTemplateId?: string } | undefined)?.noteTemplateId;
+    const result = await runDischargeDraft(admissionId, req.user?.username ?? null, noteTemplateId);
 
     await auditLog(req, {
       module: 'discharge-ai',
-      action: existing ? 'UPDATE' : 'CREATE',
+      action: result.created ? 'CREATE' : 'UPDATE',
       entityType: 'IpdDischarge',
-      entityId: row.id,
-      payload: { admissionId, model: draft.modelVersion, status: 'DRAFTED' },
+      entityId: result.row.id,
+      payload: { admissionId, model: result.model, status: 'DRAFTED', templated: result.templated },
     });
 
-    res.status(200).json(row);
+    res.status(200).json(result.row);
   } catch (error) {
+    if (error instanceof DischargeDraftError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
     console.error('[discharge-ai] generateAiDraft failed:', error);
     res.status(500).json({
       error: error instanceof Error ? error.message : 'AI draft failed',

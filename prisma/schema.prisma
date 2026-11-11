@@ -3052,6 +3052,11 @@ model IpdAdmission {
   referralEstimationId String? // set when admission proposed from a confirmed estimation
   referringDoctor      String?
   admittingDoctor      String
+  // Doctor.id of the admitting doctor. admittingDoctor stays as the name
+  // snapshot for printing; this is what "my patients" queries match on.
+  // Null on rows created before it existed (see scripts/backfill-admitting-doctor-id.ts)
+  // and on HMIS imports whose doctor name doesn't resolve to exactly one Doctor.
+  admittingDoctorId    Int?
   department           String
   // Phase 3 — wardId/bedId are nullable to support PROPOSED state (bed not
   // yet assigned). Once status flips to BED_ACCEPTED or 'admitted', both
@@ -3170,6 +3175,7 @@ model IpdAdmission {
   @@index([status])
   @@index([admissionDate])
   @@index([icuAdmittedAt])
+  @@index([admittingDoctorId])
 }
 
 // Phase 9.14 — Insulin Infusion Chart (UHJ paper form).
@@ -3473,6 +3479,7 @@ model DiagnosisCodeMaster {
   code        String
   description String  @db.Text
   isActive    Boolean @default(true)
+  specialty   String? // null = general; 'ophthalmology' = shown in the eye prescription diagnosis search
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3481,6 +3488,7 @@ model DiagnosisCodeMaster {
   @@unique([category, code])
   @@index([category])
   @@index([code])
+  @@index([specialty])
 }
 
 // Phase 9.3c — ICD-10 + CPT codes per admission (MRD coding).
@@ -6333,10 +6341,39 @@ model Incident {
 
   capa IncidentCapa?
 
+  // Harm-based severity. The reporter answers "did it reach the patient / what
+  // harm" and `severity` is derived from it (severityFinal from harmLevelFinal
+  // after investigation), so the escalation matrix, QI and dashboards keep
+  // working off severity. Null = not assessed (auto-rule + legacy incidents).
+  // Values: not_reached | none | mild | moderate | severe | permanent_or_death
+  harmLevel      String?
+  harmLevelFinal String?
+
+  // CAPA as tracked actions + 30/60/90-day effectiveness checks.
+  capaActions          IncidentCapaAction[]
+  effectivenessReviews IncidentEffectivenessReview[]
+
+  // Phase 3 — sub-type within the category (service/incident-taxonomy.ts),
+  // anonymous reports (no reporter stored; source 'anonymous' for the public
+  // QR form), and staff "also involved" alongside the lead investigator.
+  subCategory  String?
+  anonymous    Boolean               @default(false)
+  participants IncidentParticipant[]
+
+  // Quality escalation matrix — owning hospital unit (HOD routing) and the
+  // escalation clock. escalationStartAt is null for cases raised before the
+  // matrix went live, which the escalation cron skips; it restarts on reopen.
+  unitId            Int?
+  escalationLevel   Int       @default(0)
+  escalationStartAt DateTime?
+  lastEscalatedAt   DateTime?
+
   @@index([status])
   @@index([severity])
   @@index([patientPrn])
   @@index([reportedAt])
+  @@index([unitId])
+  @@index([escalationStartAt, status])
   @@index([category, status])
   @@index([qiCode, reportedAt])
   @@index([ruleKey, status])
@@ -6373,6 +6410,92 @@ model IncidentCapa {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Staff "also involved" on an incident besides the lead investigator
+// (assignedToId): they can open it, attach evidence and get its alerts.
+model IncidentParticipant {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  userId     Int
+  addedBy    String?
+  createdAt  DateTime @default(now())
+
+  @@unique([incidentId, userId])
+  @@index([userId])
+}
+
+// Every WhatsApp / SMS alert sent to a staff member (escalations). No patient
+// identifiers are ever put in these messages.
+model StaffAlertLog {
+  id        String   @id @default(uuid())
+  userId    Int
+  channel   String // 'whatsapp' | 'sms'
+  phone     String
+  template  String
+  refType   String?
+  refId     String? // e.g. Incident:<id>:L2:<userId> — de-duplicates resends
+  status    String // 'sent' | 'failed' | 'skipped'
+  error     String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([channel, refId, status])
+  @@index([userId, createdAt])
+}
+
+// One corrective / preventive action of an incident's CAPA. Replaces the free-
+// text correctiveActions / preventiveActions on IncidentCapa (kept read-only as
+// "earlier notes"). Closing the incident needs ≥1 corrective action and none
+// still open; the owner can mark their own action done.
+model IncidentCapaAction {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  kind        String // 'corrective' | 'preventive'
+  description String @db.Text
+  owner       String?
+  ownerId     Int?
+  dueDate     DateTime?
+
+  status         String    @default("open") // 'open' | 'done' | 'dropped'
+  completedAt    DateTime?
+  completedBy    String?
+  completionNote String?   @db.Text
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([incidentId])
+  @@index([status, dueDate])
+  @@index([ownerId, status])
+}
+
+// Effectiveness check scheduled when an incident is closed (30/60/90 days for
+// moderate+, 30 days for minor / near miss). 'not_effective' reopens the
+// incident to capa_in_progress and cancels the remaining checks.
+model IncidentEffectivenessReview {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  dayOffset Int // days after closure: 30 | 60 | 90
+  dueAt     DateTime
+  status    String   @default("pending") // 'pending' | 'done' | 'cancelled'
+
+  outcome      String? // 'effective' | 'partial' | 'not_effective'
+  notes        String?   @db.Text
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  reviewedById Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([incidentId])
+  @@index([status, dueAt])
 }
 
 model IncidentRule {
@@ -6428,11 +6551,25 @@ model FeedbackSurvey {
   status    String    @default("pending") // 'pending' | 'sent' | 'completed' | 'expired'
   expiresAt DateTime?
 
+  // Feedback analytics — encounter context copied from the visit when the
+  // survey is created (OPD appointment / IPD admission / ER), so breakdowns
+  // don't need joins and survive later edits to the visit.
+  department    String?
+  doctorId      Int? // OPD only; IPD stores the admitting doctor as free text
+  doctorName    String?
+  wardName      String?
+  unitId        Int? // HospitalUnit the department / ward routes to
+  collectedById Int? // staff member who created it at the desk (null = auto / walk-up)
+  language      String? // language the patient answered in: en | kn | ml | hi
+  choiceReasons String? @db.Text // JSON string[] — "why did you choose us"
+  reviewClickedAt DateTime? // patient tapped "Share on Google" on the thank-you screen
+
   complaints Complaint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([respondedAt, department])
   @@index([template, status])
   @@index([patientPrn])
   @@index([respondedAt])
@@ -6440,6 +6577,20 @@ model FeedbackSurvey {
   @@index([admissionId])
   @@index([emergencyId])
   @@index([status, expiresAt])
+}
+
+// Single-row feedback settings (id = 1), edited by the Quality Manager. Missing
+// row = the built-in defaults (see service/feedback-config.ts).
+model FeedbackConfig {
+  id                 Int      @id @default(1)
+  satisfiedMinRating Int      @default(4) // a 1..5 question answer at or above this counts as satisfied
+  complaintMaxNps    Int      @default(6) // NPS at or below → auto-complaint
+  incidentMaxNps     Int      @default(3) // NPS at or below → also an incident
+  // Google review page offered on the survey thank-you screen to EVERY
+  // respondent (asking only happy patients breaks Google's review policy).
+  googleReviewUrl    String?  @db.Text
+  updatedById        Int?
+  updatedAt          DateTime @updatedAt
 }
 
 // Walk-up kiosk PRN verification: the patient types a PRN, we SMS a 6-digit
@@ -6534,6 +6685,9 @@ model Complaint {
 
   description String @db.LongText
   severity    String // 'low' | 'medium' | 'high'
+  // Complaint type (service/complaint-sla.ts COMPLAINT_CATEGORIES) — drives
+  // the deadline together with unit + severity (ComplaintSlaRule).
+  category    String?
 
   // Department.name the complaint concerns (from the encounter, or chosen at
   // raise/triage) — scopes department-level read-only views.
@@ -6567,10 +6721,94 @@ model Complaint {
   @@index([admissionId])
   @@index([appointmentId])
   @@index([emergencyId])
+  // Quality escalation matrix — see Incident.unitId.
+  unitId            Int?
+  escalationLevel   Int       @default(0)
+  escalationStartAt DateTime?
+  lastEscalatedAt   DateTime?
+
   @@index([department])
   @@index([raisedById])
   @@index([assignedToId])
   @@index([slaDueAt, escalatedAt])
+  @@index([unitId])
+  @@index([escalationStartAt, status])
+  @@index([category])
+}
+
+// Complaint resolution deadline per unit × type × severity (any of the three
+// may be null = "any"). The most specific matching rule wins; with no match
+// the built-in 24 / 72 / 168 h by severity applies.
+model ComplaintSlaRule {
+  id        Int      @id @default(autoincrement())
+  unitId    Int?
+  category  String?
+  severity  String? // 'low' | 'medium' | 'high'
+  hours     Int
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([unitId, category, severity])
+}
+
+// ─── Quality — hospital units, HODs and the escalation matrix ───────────
+//
+// HospitalUnit is the hospital's functional department as Quality sees it
+// (Nursing, Pharmacy, Billing, Cardiology…) — deliberately separate from
+// Department, which is the doctors' specialty list. A user may be HOD or
+// deputy of several units. Cases find their unit from an explicit pick, else
+// the IPD ward, else the encounter's department string (specialty name or a
+// legacy free-text value), via HospitalUnitMapping.
+
+model HospitalUnit {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  type         String // 'clinical' | 'nursing' | 'diagnostic' | 'support' | 'administrative'
+  hodUserId    Int?
+  deputyUserId Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  mappings HospitalUnitMapping[]
+
+  @@index([hodUserId])
+  @@index([deputyUserId])
+}
+
+model HospitalUnitMapping {
+  id     Int          @id @default(autoincrement())
+  unitId Int
+  unit   HospitalUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  kind   String // 'department' (specialty name or legacy free text) | 'ward' (IpdWard.id)
+  value  String
+
+  @@unique([kind, value])
+  @@index([unitId])
+}
+
+// One row per module × severity × level. When a case is still open
+// `afterMinutes` after its escalation clock started, the next level fires and
+// alerts `targets` — comma-separated tokens: hod | quality_manager |
+// patient_relations | admin_type:<adminType> | user:<id>. Module/severity
+// pairs with no rows use the built-in default matrix (quality-escalation.ts).
+model QualityEscalationRule {
+  id           Int      @id @default(autoincrement())
+  module       String // 'incident' | 'complaint'
+  severity     String // incident: near_miss|minor|moderate|major|sentinel; complaint: low|medium|high
+  level        Int
+  afterMinutes Int
+  targets      String   @db.Text
+  label        String?
+  // Also alert the level's recipients on their phone (User.phoneNumber).
+  // Off unless STAFF_ALERTS_*_ENABLED is set and the template is approved.
+  notifyWhatsapp Boolean  @default(false)
+  notifySms      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([module, severity, level])
 }
 
 // ─── Phase 9.26 — NABH/QCI Quality Indicator framework ──────────────────
@@ -6688,6 +6926,117 @@ model QualityIndicatorRca {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Quality audit checklists (eFeedor gap #1) ──────────────────────────
+//
+// A checklist library the Quality Manager edits; audits are scheduled per
+// unit, conducted item by item (yes / no / n.a.) and submitted. Every "no" is
+// a non-compliance (NC) finding that can carry corrective actions; the next
+// audit of the same checklist + unit shows whether each NC was fixed. Items
+// tagged with an audit-backed qiCode also write QualityAuditObservation rows
+// on submit, so those indicators keep computing.
+
+model AuditChecklist {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique // e.g. HAND_HYGIENE (starter library) or CUSTOM_<n>
+  name        String
+  group       String // 'clinical' | 'quality' | 'facility'
+  description String?  @db.Text
+  frequency   String? // suggested cadence: weekly | monthly | quarterly
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items AuditChecklistItem[]
+  runs  AuditRun[]
+}
+
+model AuditChecklistItem {
+  id          Int            @id @default(autoincrement())
+  checklistId Int
+  checklist   AuditChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  sortOrder   Int            @default(0)
+  section     String? // optional sub-heading within the checklist
+  text        String         @db.Text
+  critical    Boolean        @default(false) // an NC here alerts the unit HOD + Quality Manager
+  qiCode      String? // audit-backed indicator this answer feeds
+  isActive    Boolean        @default(true) // retired items keep their history
+
+  responses AuditRunResponse[]
+
+  @@index([checklistId, sortOrder])
+}
+
+model AuditRun {
+  id          String         @id @default(uuid())
+  code        String         @unique // AUD-YYYY-NNNN
+  checklistId Int
+  checklist   AuditChecklist @relation(fields: [checklistId], references: [id])
+  unitId      Int?
+  location    String?
+  dueDate     DateTime?
+  status      String         @default("scheduled") // scheduled | in_progress | completed | cancelled
+  auditorId   Int?
+  auditor     String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  notes       String?        @db.Text
+
+  // Scores, set on submit.
+  applicableCount Int?
+  compliantCount  Int?
+  ncCount         Int?
+  criticalNcCount Int?
+  compliancePct   Float?
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  responses AuditRunResponse[]
+  actions   AuditFindingAction[]
+
+  @@index([status, dueDate])
+  @@index([checklistId, unitId, completedAt])
+  @@index([auditorId, status])
+}
+
+model AuditRunResponse {
+  id     String             @id @default(uuid())
+  runId  String
+  run    AuditRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  itemId Int
+  item   AuditChecklistItem @relation(fields: [itemId], references: [id])
+  result String // 'yes' | 'no' | 'na'
+  remark String?            @db.Text
+
+  @@unique([runId, itemId])
+}
+
+// Corrective action against one NC finding (an item answered "no").
+model AuditFindingAction {
+  id          String   @id @default(uuid())
+  runId       String
+  run         AuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  itemId      Int
+  description String   @db.Text
+  owner       String?
+  ownerId     Int?
+  dueDate     DateTime?
+
+  status         String    @default("open") // 'open' | 'done' | 'dropped'
+  completedAt    DateTime?
+  completedBy    String?
+  completionNote String?   @db.Text
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([runId])
+  @@index([status, dueDate])
+  @@index([ownerId, status])
 }
 
 // ─── Phase 9.26 / Phase 5a — Generic audit observation log ─────────────

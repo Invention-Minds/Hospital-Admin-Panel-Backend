@@ -6,7 +6,11 @@ import { runComplaintSlaSweep } from './complaint-sla.cron';
 import {
   findPossibleDuplicateComplaints, createWithComplaintCode, deriveComplaintDepartment,
 } from '../../service/incident-complaint-link';
-import { complaintReadScope } from '../_shared/quality-roles';
+import { complaintReadScope, isComplaintHandler } from '../_shared/quality-roles';
+import {
+  assertUnit, resolveUnitId, isHodOfUnit, unitHeadUserIds, caseUnitSummary, escalationTimeline,
+} from '../../service/quality-escalation';
+import { COMPLAINT_CATEGORIES, isComplaintCategory, complaintDueAt, resolveComplaintSla } from '../../service/complaint-sla';
 
 // Phase 9.25 / Phase 4 — Complaint workflow.
 //
@@ -74,8 +78,12 @@ async function parseDepartment(value: unknown): Promise<string | null | undefine
   return dept.name;
 }
 
-function slaHoursFor(severity: 'low' | 'medium' | 'high'): number {
-  return severity === 'high' ? 24 : severity === 'medium' ? 72 : 168;
+/** undefined → unchanged, null/'' → clear, otherwise a COMPLAINT_CATEGORIES key. */
+function parseCategory(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (!isComplaintCategory(value)) throw new ValidationError(`category must be one of: ${COMPLAINT_CATEGORIES.map((c) => c.key).join(', ')}`);
+  return value;
 }
 
 /** Whether the caller's read scope (quality-roles.complaintReadScope) covers this complaint. */
@@ -83,6 +91,47 @@ async function canReadComplaint(id: string, userId: number | undefined): Promise
   const scope = await complaintReadScope(userId);
   if (!scope) return true;
   return (await prisma.complaint.count({ where: { AND: [{ id }, scope] } })) > 0;
+}
+
+export interface ComplaintPermissions {
+  canUpdateStatus: boolean; // status + resolution notes
+  canAssign: boolean;
+  canChangeUnit: boolean;   // unit + department
+}
+
+/**
+ * Complaint handlers: everything. HOD / deputy of the complaint's unit: work
+ * it and assign within the unit, but not move it elsewhere. Assignee: status +
+ * notes only.
+ */
+export async function complaintPermissions(
+  userId: number | undefined, c: { unitId: number | null; assignedToId: number | null },
+): Promise<ComplaintPermissions> {
+  if (await isComplaintHandler(userId)) return { canUpdateStatus: true, canAssign: true, canChangeUnit: true };
+  if (await isHodOfUnit(userId, c.unitId)) return { canUpdateStatus: true, canAssign: true, canChangeUnit: false };
+  const isAssignee = typeof userId === 'number' && c.assignedToId === userId;
+  return { canUpdateStatus: isAssignee, canAssign: false, canChangeUnit: false };
+}
+
+/** "New complaint" bell to the owning unit's HOD / deputy (handlers see the inbox). */
+export async function notifyComplaintRaised(c: { id: string; code: string; severity: string; unitId: number | null }): Promise<void> {
+  try {
+    const heads = await unitHeadUserIds(c.unitId);
+    if (heads.length === 0) return;
+    await prisma.notification.createMany({
+      data: heads.map((userId) => ({
+        type: 'complaint_raised',
+        title: `New complaint for your unit · ${c.code}`,
+        message: `[${c.severity.toUpperCase()}] A patient complaint was routed to your unit — open it to respond.`,
+        status: 'unread',
+        entityId: 0,
+        entityType: `Complaint:${c.id}`,
+        userId,
+      })),
+    });
+  } catch (err) {
+    console.warn('[complaint:notify-raised] failed:', (err as Error).message);
+  }
 }
 
 type NotifyKind = 'complaint_assigned' | 'complaint_resolved';
@@ -121,6 +170,8 @@ interface CreateBody {
   emergencyId?: number | string | null;
   // Operator override — proceed even when possibleDuplicates were surfaced.
   proceedDespiteDuplicate?: boolean;
+  unitId?: number | string | null; // HospitalUnit — else resolved from ward / department
+  category?: string | null;        // complaint type (COMPLAINT_CATEGORIES)
 }
 
 export const createComplaint = async (req: Request, res: Response): Promise<void> => {
@@ -143,6 +194,7 @@ export const createComplaint = async (req: Request, res: Response): Promise<void
       res.status(400).json({ message: `channel must be one of: ${VALID_CHANNELS.join(', ')}` });
       return;
     }
+    const category = parseCategory(body.category) ?? null;
     const appointmentId = parseIdField(body.appointmentId, 'appointmentId') ?? null;
     const emergencyId = parseIdField(body.emergencyId, 'emergencyId') ?? null;
     const admissionId = parseStringField(body.admissionId, 'admissionId')?.trim() || null;
@@ -153,6 +205,9 @@ export const createComplaint = async (req: Request, res: Response): Promise<void
     const patientPrn = body.patientPrn != null ? String(body.patientPrn).trim() || null : null;
     const department = (await parseDepartment(body.department))
       ?? await deriveComplaintDepartment({ appointmentId, admissionId, emergencyId });
+    let pickedUnit: number | null;
+    try { pickedUnit = await assertUnit(body.unitId); } catch (e) { throw new ValidationError((e as Error).message); }
+    const unitId = await resolveUnitId({ unitId: pickedUnit, admissionId, department });
 
     // Phase 6 / Option A — surface possible duplicates (same encounter or PRN,
     // last 30d, still open). Doesn't block — operator can resubmit with
@@ -170,7 +225,7 @@ export const createComplaint = async (req: Request, res: Response): Promise<void
     }
 
     const severity = body.severity as 'low' | 'medium' | 'high';
-    const slaDueAt = new Date(Date.now() + slaHoursFor(severity) * 60 * 60 * 1000);
+    const slaDueAt = await complaintDueAt(new Date(), { unitId, category, severity });
     const row = await createWithComplaintCode((code) => prisma.complaint.create({
       data: {
         code,
@@ -180,15 +235,19 @@ export const createComplaint = async (req: Request, res: Response): Promise<void
         source: 'manual',
         description: (body.description as string).trim(),
         severity,
+        category,
         slaDueAt,
         department,
         raisedById: userId,
         appointmentId,
         admissionId,
         emergencyId,
+        unitId,
+        escalationStartAt: new Date(),
       },
     }));
-    await auditLog(req, { module: 'complaint', action: 'CREATE', entityType: 'Complaint', entityId: row.id, payload: { code: row.code, department } });
+    await auditLog(req, { module: 'complaint', action: 'CREATE', entityType: 'Complaint', entityId: row.id, payload: { code: row.code, department, unitId } });
+    void notifyComplaintRaised(row);
     res.status(201).json({ data: row });
   } catch (error) {
     if (error instanceof ValidationError) { res.status(400).json({ message: error.message }); return; }
@@ -206,6 +265,8 @@ export const listComplaints = async (req: Request, res: Response): Promise<void>
     const source = str('source');
     const patientPrn = str('patientPrn');
     const department = str('department');
+    const category = str('category');
+    const unitId = parseIdField(q['unitId'], 'unitId');
     const from = parseDateQuery(q['from'], 'from');
     const to = parseDateQuery(q['to'], 'to');
     const take = Math.max(1, parseIntQuery(q['take'], 'take', LIST_DEFAULT_TAKE, LIST_MAX_TAKE));
@@ -221,6 +282,8 @@ export const listComplaints = async (req: Request, res: Response): Promise<void>
       ...(source && { source }),
       ...(patientPrn && { patientPrn }),
       ...(department && { department }),
+      ...(category && { category: category === 'none' ? null : category }),
+      ...(unitId && { unitId }),
       ...(assigneeFilter !== undefined && { assignedToId: assigneeFilter }),
       ...((from || to) && { raisedAt: { ...(from && { gte: from }), ...(to && { lte: to }) } }),
     };
@@ -264,8 +327,21 @@ export const getComplaint = async (req: Request, res: Response): Promise<void> =
       ? await prisma.user.findUnique({ where: { id: row.raisedById }, select: { username: true, fullName: true } })
       : null;
 
+    const [unit, permissions, escalations, sla] = await Promise.all([
+      caseUnitSummary(row.unitId),
+      complaintPermissions(req.user?.id, row),
+      escalationTimeline('Complaint', row.id),
+      resolveComplaintSla({ unitId: row.unitId, category: row.category, severity: row.severity }),
+    ]);
+
     res.status(200).json({
-      data: { ...row, relatedIncidents, raisedByName: raisedBy ? raisedBy.fullName || raisedBy.username : null },
+      data: {
+        ...row, relatedIncidents, raisedByName: raisedBy ? raisedBy.fullName || raisedBy.username : null,
+        unit, permissions, escalations,
+        // The rule that applies today (the stored slaDueAt was set when the
+        // complaint was raised / last re-timed, so it may predate a rule edit).
+        slaRule: { hours: sla.hours, ruleId: sla.ruleId, label: sla.label },
+      },
     });
   } catch (error) {
     console.error('[complaint] get failed:', error);
@@ -279,11 +355,21 @@ interface StatusBody {
   assignedToId?: number | string | null;
   resolutionNotes?: string | null;
   department?: string | null;
+  unitId?: number | string | null;
+  category?: string | null;
 }
 
-/** Stamps for a status move — shared by the single and bulk endpoints. */
+/** A move back into active handling — gets a fresh deadline from now. */
+const restartsSla = (from: Status, to: Status): boolean =>
+  to === 'acknowledged' && (from === 'resolved' || from === 'escalated');
+
+/**
+ * Stamps for a status move — shared by the single and bulk endpoints.
+ * `freshDueAt` is the new deadline (complaintDueAt from now) and is required
+ * when restartsSla(from, to).
+ */
 function transitionData(
-  from: Status, to: Status, req: Request, escalatedAt: Date | null, now: Date,
+  from: Status, to: Status, req: Request, escalatedAt: Date | null, now: Date, freshDueAt: Date | null,
 ): Prisma.ComplaintUpdateManyMutationInput {
   const data: Prisma.ComplaintUpdateManyMutationInput = { status: to };
   if (from === to) return data;
@@ -293,12 +379,23 @@ function transitionData(
     data.resolvedById = typeof req.user?.id === 'number' ? req.user.id : null;
   }
   if (to === 'escalated' && !escalatedAt) data.escalatedAt = now;
-  // Reopen — resolution stamps no longer apply.
+  // Reopen — resolution stamps no longer apply. (The old notes are kept in
+  // the audit log by the caller.)
   if (from === 'resolved') {
     data.resolvedAt = null;
     data.resolvedBy = null;
     data.resolvedById = null;
     data.resolutionNotes = null;
+    // Reopened — the escalation matrix starts over from level 0.
+    data.escalationLevel = 0;
+    data.escalationStartAt = now;
+    data.lastEscalatedAt = null;
+  }
+  // Back into active handling (reopen, or de-escalate) — fresh SLA window and
+  // a cleared escalation stamp, so the SLA sweep can escalate it again.
+  if (restartsSla(from, to)) {
+    if (freshDueAt) data.slaDueAt = freshDueAt;
+    data.escalatedAt = null;
   }
   return data;
 }
@@ -308,11 +405,39 @@ export const updateComplaintStatus = async (req: Request, res: Response): Promis
     const id = req.params.id;
     const existing = await prisma.complaint.findUnique({
       where: { id },
-      select: { id: true, status: true, assignedToId: true, resolutionNotes: true, escalatedAt: true },
+      select: {
+        id: true, status: true, assignedToId: true, resolutionNotes: true, escalatedAt: true, severity: true, unitId: true,
+        category: true, raisedAt: true,
+      },
     });
     if (!existing) { res.status(404).json({ message: 'Complaint not found' }); return; }
 
     const body = (req.body ?? {}) as StatusBody;
+
+    // Handlers: everything. Unit HOD: work + assign, not move it. Assignee:
+    // status + resolution notes only.
+    const perms = await complaintPermissions(req.user?.id, existing);
+    if (!perms.canUpdateStatus) {
+      res.status(403).json({ message: 'Only complaint handlers, the unit HOD or the assignee can update this complaint' });
+      return;
+    }
+    if (!perms.canAssign && (body.assignedTo !== undefined || body.assignedToId !== undefined)) {
+      res.status(403).json({ message: 'Only complaint handlers or the unit HOD can reassign a complaint' });
+      return;
+    }
+    if (!perms.canChangeUnit && (body.department !== undefined || body.unitId !== undefined)) {
+      res.status(403).json({ message: 'Only complaint handlers can move a complaint to another unit or department' });
+      return;
+    }
+    if (!perms.canAssign && body.category !== undefined) {
+      res.status(403).json({ message: 'Only complaint handlers or the unit HOD can change the complaint type' });
+      return;
+    }
+    const newCategory = parseCategory(body.category);
+    let newUnitId: number | null | undefined;
+    if (body.unitId !== undefined) {
+      try { newUnitId = await assertUnit(body.unitId); } catch (e) { throw new ValidationError((e as Error).message); }
+    }
     if (!body.status || !VALID_STATUSES.includes(body.status as Status)) {
       res.status(400).json({ message: `status must be one of: ${VALID_STATUSES.join(', ')}` });
       return;
@@ -346,23 +471,56 @@ export const updateComplaintStatus = async (req: Request, res: Response): Promis
       }
     }
 
-    const data: Prisma.ComplaintUpdateInput = {
+    // Deadline: a move back into active handling restarts it from now; a unit
+    // or type change (with no restart) re-times it from when it was raised.
+    const now = new Date();
+    const unitChanged = newUnitId !== undefined && newUnitId !== existing.unitId;
+    const categoryChanged = newCategory !== undefined && newCategory !== existing.category;
+    const slaInput = {
+      unitId: newUnitId !== undefined ? newUnitId : existing.unitId,
+      category: newCategory !== undefined ? newCategory : existing.category,
+      severity: existing.severity,
+    };
+    const restart = isTransition && restartsSla(from, to);
+    const freshDueAt = restart ? await complaintDueAt(now, slaInput) : null;
+    const retimedDueAt = !restart && (unitChanged || categoryChanged) && to !== 'resolved'
+      ? await complaintDueAt(existing.raisedAt, slaInput) : null;
+
+    const data: Prisma.ComplaintUpdateManyMutationInput = {
       ...(assignedTo !== undefined && { assignedTo: assignedTo?.trim() || null }),
       ...(assignedToId !== undefined && { assignedToId }),
       ...(resolutionNotes !== undefined && { resolutionNotes: resolutionNotes?.trim() || null }),
       ...(department !== undefined && { department }),
-      ...transitionData(from, to, req, existing.escalatedAt, new Date()),
+      ...(newUnitId !== undefined && { unitId: newUnitId }),
+      ...(newCategory !== undefined && { category: newCategory }),
+      ...(retimedDueAt && { slaDueAt: retimedDueAt }),
+      ...transitionData(from, to, req, existing.escalatedAt, now, freshDueAt),
     };
 
-    const row = await prisma.complaint.update({ where: { id }, data });
+    // Conditional on the status we validated against — a concurrent change
+    // (e.g. the SLA sweep escalating it) isn't silently overwritten.
+    const { count } = await prisma.complaint.updateMany({ where: { id, status: from }, data });
+    if (count !== 1) {
+      res.status(409).json({ message: 'Complaint was changed by someone else — reload and try again' });
+      return;
+    }
+    const row = await prisma.complaint.findUniqueOrThrow({ where: { id } });
+    // Resolution notes are overwritten (or cleared on reopen) — keep the old
+    // text in the audit trail.
+    const notesChanged = existing.resolutionNotes != null && row.resolutionNotes !== existing.resolutionNotes;
     await auditLog(req, {
       module: 'complaint', action: 'STATUS_CHANGE', entityType: 'Complaint', entityId: id,
       payload: {
         from, to,
         ...(assignedToId !== undefined && { assignedToId }),
         ...(department !== undefined && { department }),
+        ...(newUnitId !== undefined && newUnitId !== existing.unitId && { unitFrom: existing.unitId, unitTo: newUnitId }),
+        ...(categoryChanged && { categoryFrom: existing.category, categoryTo: newCategory }),
+        ...((retimedDueAt || freshDueAt) && { slaDueAt: (retimedDueAt ?? freshDueAt)!.toISOString() }),
+        ...(notesChanged && { previousResolutionNotes: existing.resolutionNotes }),
       },
     });
+    if (newUnitId !== undefined && newUnitId !== existing.unitId) void notifyComplaintRaised(row);
 
     if (assignedToId && assignedToId !== existing.assignedToId) {
       void notifyComplaint({
@@ -418,7 +576,10 @@ export const bulkUpdateStatus = async (req: Request, res: Response): Promise<voi
 
     const rows = await prisma.complaint.findMany({
       where: { id: { in: ids } },
-      select: { id: true, code: true, status: true, escalatedAt: true, raisedById: true, severity: true, description: true },
+      select: {
+        id: true, code: true, status: true, escalatedAt: true, raisedById: true, severity: true,
+        description: true, resolutionNotes: true, unitId: true, category: true,
+      },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
     const now = new Date();
@@ -434,12 +595,20 @@ export const bulkUpdateStatus = async (req: Request, res: Response): Promise<voi
         skipped.push({ id, code: row.code, reason: `cannot move from '${from}' to '${to}'` });
         continue;
       }
-      const data = transitionData(from, to, req, row.escalatedAt, now);
+      const freshDueAt = restartsSla(from, to)
+        ? await complaintDueAt(now, { unitId: row.unitId, category: row.category, severity: row.severity }) : null;
+      const data = transitionData(from, to, req, row.escalatedAt, now, freshDueAt);
       if (to === 'resolved') data.resolutionNotes = resolutionNotes;
       // Conditional on the status we validated against — a concurrent change skips the row.
       const result = await prisma.complaint.updateMany({ where: { id, status: from }, data });
       if (result.count !== 1) { skipped.push({ id, code: row.code, reason: 'changed concurrently' }); continue; }
       updated += 1;
+      if (from === 'resolved' && row.resolutionNotes) {
+        await auditLog(req, {
+          module: 'complaint', action: 'STATUS_CHANGE', entityType: 'Complaint', entityId: id,
+          payload: { from, to, previousResolutionNotes: row.resolutionNotes },
+        });
+      }
       if (to === 'resolved' && row.raisedById && row.raisedById !== req.user?.id) {
         void notifyComplaint({
           kind: 'complaint_resolved', complaintId: row.id, code: row.code,
@@ -517,11 +686,14 @@ export async function createComplaintRecord(input: {
   appointmentId?: number | null;
   admissionId?: string | null;
   emergencyId?: number | null;
+  category?: string | null;
 }) {
   const severity = input.severity ?? 'medium';
-  const slaDueAt = new Date(Date.now() + slaHoursFor(severity) * 60 * 60 * 1000);
+  const category = isComplaintCategory(input.category) ? input.category : null;
   const department = await deriveComplaintDepartment(input);
-  return createWithComplaintCode((code) => prisma.complaint.create({
+  const unitId = await resolveUnitId({ admissionId: input.admissionId ?? null, department });
+  const slaDueAt = await complaintDueAt(new Date(), { unitId, category, severity });
+  const row = await createWithComplaintCode((code) => prisma.complaint.create({
     data: {
       code,
       patientPrn: input.patientPrn ?? null,
@@ -530,11 +702,16 @@ export async function createComplaintRecord(input: {
       source: 'manual',
       description: input.description.trim(),
       severity,
+      category,
       slaDueAt,
       department,
       appointmentId: input.appointmentId ?? null,
       admissionId: input.admissionId ?? null,
       emergencyId: input.emergencyId ?? null,
+      unitId,
+      escalationStartAt: new Date(),
     },
   }));
+  void notifyComplaintRaised(row);
+  return row;
 }

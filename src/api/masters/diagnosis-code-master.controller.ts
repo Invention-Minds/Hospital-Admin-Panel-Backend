@@ -6,27 +6,46 @@ import prisma from '../../service/prisma-client';
 // snapshot at write time.
 
 const VALID_CATEGORIES = ['icd', 'cpt'];
+// Specialty tag: a code tagged here shows in that specialty's own diagnosis
+// search (e.g. the eye prescription). null = general. IPD / OT search all codes.
+const VALID_SPECIALTIES = ['ophthalmology'];
 
 interface MasterBody {
   category: string;
   code: string;
   description: string;
   isActive?: boolean;
+  specialty?: string | null;
+}
+
+/** undefined = not sent; null = general; otherwise a valid specialty. Throws on an unknown one. */
+function parseSpecialty(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value === 'string' && VALID_SPECIALTIES.includes(value)) return value;
+  throw new Error(`specialty must be empty or one of: ${VALID_SPECIALTIES.join(', ')}`);
 }
 
 export const listDiagnosisMaster = async (req: Request, res: Response): Promise<void> => {
   try {
     const category = req.query.category as string | undefined;
+    const specialty = req.query.specialty as string | undefined;
     const search = (req.query.search as string | undefined)?.trim() ?? '';
     const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10) || 50, 200);
     if (category && !VALID_CATEGORIES.includes(category)) {
       res.status(400).json({ message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
       return;
     }
+    // ?specialty=ophthalmology → only that specialty; ?specialty=general → untagged; omitted → all.
+    if (specialty && specialty !== 'general' && !VALID_SPECIALTIES.includes(specialty)) {
+      res.status(400).json({ message: `specialty must be general or one of: ${VALID_SPECIALTIES.join(', ')}` });
+      return;
+    }
     const rows = await prisma.diagnosisCodeMaster.findMany({
       where: {
         isActive: true,
         ...(category && { category }),
+        ...(specialty && { specialty: specialty === 'general' ? null : specialty }),
         ...(search && {
           OR: [
             { code: { contains: search } },
@@ -55,12 +74,15 @@ export const createDiagnosisMaster = async (req: Request, res: Response): Promis
       res.status(400).json({ message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
       return;
     }
+    let specialty: string | null | undefined;
+    try { specialty = parseSpecialty(body.specialty); } catch (e) { res.status(400).json({ message: (e as Error).message }); return; }
     const row = await prisma.diagnosisCodeMaster.create({
       data: {
         category: body.category,
         code: body.code.trim(),
         description: body.description.trim(),
         isActive: body.isActive ?? true,
+        specialty: specialty ?? null,
         createdBy: req.user?.username ?? null,
       },
     });
@@ -85,6 +107,8 @@ export const updateDiagnosisMaster = async (req: Request, res: Response): Promis
       res.status(400).json({ message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
       return;
     }
+    let specialty: string | null | undefined;
+    try { specialty = parseSpecialty(body.specialty); } catch (e) { res.status(400).json({ message: (e as Error).message }); return; }
     const row = await prisma.diagnosisCodeMaster.update({
       where: { id },
       data: {
@@ -92,6 +116,7 @@ export const updateDiagnosisMaster = async (req: Request, res: Response): Promis
         ...(body.code && { code: body.code.trim() }),
         ...(body.description && { description: body.description.trim() }),
         ...(body.isActive !== undefined && { isActive: body.isActive }),
+        ...(specialty !== undefined && { specialty }),
       },
     });
     res.status(200).json({ data: row });

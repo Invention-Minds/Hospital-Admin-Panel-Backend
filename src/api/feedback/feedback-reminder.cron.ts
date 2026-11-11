@@ -3,14 +3,12 @@ import { complaintHandlerUserIds } from './complaint-sla.cron';
 
 // Phase 9.25 / Phase 6d — Feedback survey reminder sweep.
 //
-// One-shot bell to the complaint handlers (Quality Manager + Patient
-// Relations) when a survey has been pending/sent but unanswered for >72h (and
-// isn't yet expired). Nothing sets sentAt until SMS/WhatsApp delivery is
-// wired, so age falls back to createdAt. The bell carries the kiosk path so a
-// coordinator can chase manually.
+// Each survey pending/sent but unanswered for >72h (and not yet expired) is
+// counted once (lastReminderAt), and the complaint handlers (Quality Manager +
+// Patient Relations) get one digest bell per sweep. Age is sentAt when the
+// WhatsApp send went out, else createdAt.
 
 const REMINDER_HOURS = 72;
-const KIOSK_PATH = '/feedback/k/'; // appended with the token
 
 export interface ReminderSweepReport {
   checked: number;
@@ -35,8 +33,7 @@ export async function runFeedbackReminderSweep(): Promise<ReminderSweepReport> {
       ],
     },
     select: {
-      id: true, token: true, template: true, patientPrn: true, patientName: true,
-      sentAt: true, createdAt: true,
+      id: true, template: true,
     },
     take: 500,
   });
@@ -46,37 +43,16 @@ export async function runFeedbackReminderSweep(): Promise<ReminderSweepReport> {
   };
   if (!stale.length) return report;
 
-  const handlerIds = await complaintHandlerUserIds();
-
+  // Conditional flip per row = one-shot dedupe even if a manual sweep overlaps.
+  const flippedIds: string[] = [];
   for (const s of stale) {
     try {
-      // Conditional flip = one-shot dedupe even if a manual sweep overlaps.
       const flipped = await prisma.feedbackSurvey.updateMany({
         where: { id: s.id, lastReminderAt: null },
         data: { lastReminderAt: now },
       });
       if (flipped.count !== 1) continue;
-
-      try {
-        if (handlerIds.length > 0) {
-          const since = s.sentAt ? `Sent ${s.sentAt.toISOString()}` : `Created ${s.createdAt.toISOString()}`;
-          await prisma.notification.createMany({
-            data: handlerIds.map((userId) => ({
-              type: 'feedback_reminder',
-              title: `Survey pending · ${s.patientName ?? s.patientPrn ?? s.template}`,
-              message: `${since} · ${REMINDER_HOURS}h+ unanswered. Kiosk path: ${KIOSK_PATH}${s.token}`,
-              status: 'unread',
-              isCritical: false,
-              entityId: 0, // entityId is Int; surveys are uuid → put real id in entityType
-              entityType: `FeedbackSurvey:${s.id}`,
-              userId,
-            })),
-          });
-        }
-      } catch (err) {
-        console.warn('[feedback-reminder:notify] failed:', (err as Error).message);
-      }
-
+      flippedIds.push(s.id);
       report.reminded += 1;
       report.details.push({ surveyId: s.id, outcome: 'reminded' });
     } catch (err) {
@@ -84,6 +60,36 @@ export async function runFeedbackReminderSweep(): Promise<ReminderSweepReport> {
       report.details.push({ surveyId: s.id, outcome: 'failed', error: (err as Error).message });
       console.warn(`[feedback-reminder:${s.id}] failed:`, (err as Error).message);
     }
+  }
+  if (flippedIds.length === 0) return report;
+
+  // One digest bell per handler per sweep — not one per survey (that was
+  // handlers × every unanswered visit). No tokens in the text: a bell is not
+  // the place for a live, unauthenticated survey link.
+  try {
+    const handlerIds = await complaintHandlerUserIds();
+    if (handlerIds.length > 0) {
+      const byTemplate = new Map<string, number>();
+      for (const s of stale) {
+        if (flippedIds.includes(s.id)) byTemplate.set(s.template, (byTemplate.get(s.template) ?? 0) + 1);
+      }
+      const breakdown = [...byTemplate.entries()].map(([t, n]) => `${t}: ${n}`).join(', ');
+      const n = flippedIds.length;
+      await prisma.notification.createMany({
+        data: handlerIds.map((userId) => ({
+          type: 'feedback_reminder',
+          title: `${n} feedback survey${n === 1 ? '' : 's'} unanswered > ${REMINDER_HOURS}h`,
+          message: `${breakdown}. Open the feedback inbox to follow up.`,
+          status: 'unread',
+          isCritical: false,
+          entityId: 0,
+          entityType: 'FeedbackSurvey:digest',
+          userId,
+        })),
+      });
+    }
+  } catch (err) {
+    console.warn('[feedback-reminder:notify] failed:', (err as Error).message);
   }
 
   return report;

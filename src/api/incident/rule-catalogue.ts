@@ -31,6 +31,9 @@ export interface IncidentContext {
   occurredAt?: Date | null;
   qiCode?: string | null;
   qiPeriod?: string | null;
+  // Per-occurrence key (e.g. 'InvestigationResult:<id>') — dedupes on the
+  // triggering record instead of the encounter. See raiseAutoIncident.
+  sourceRef?: string | null;
   // extra free-form data baked into title/description
   extras?: Record<string, string | number | null | undefined>;
 }
@@ -43,6 +46,7 @@ export interface RuleDef {
   defaultSeverity: Severity;
   nabhClause: string;
   thresholdMinutes?: number;
+  subCategory?: string; // incident-taxonomy sub-type set on raised incidents
   mode: 'on-write' | 'cron';
   buildTitle: (ctx: IncidentContext) => string;
   buildDescription: (ctx: IncidentContext) => string;
@@ -202,6 +206,44 @@ export const RULE_CATALOGUE: Record<string, RuleDef> = {
     buildTitle: (ctx) => `ER referral unacknowledged — escalation L${ctx.extras?.['escalationLevel'] ?? '?'}`,
     buildDescription: (ctx) => `Emergency referral remains pending after climbing the escalation chain. Patient may be receiving delayed specialist input. ${fmtExtras(ctx)}`,
   },
+  // Phase 3 — more automatic incidents from data the system already records.
+  OT_UNPLANNED_RETURN: {
+    key: 'OT_UNPLANNED_RETURN',
+    name: 'Unplanned return to OT',
+    description: 'OT outcome recorded as an unplanned return to theatre for an earlier surgery.',
+    category: 'clinical',
+    subCategory: 'unplanned_return_ot',
+    defaultSeverity: 'major',
+    nabhClause: 'PSQ.3',
+    mode: 'cron',
+    buildTitle: (ctx) => `Unplanned return to OT — ${ctx.extras?.['procedure'] ?? 'procedure'}`,
+    buildDescription: (ctx) => `The OT outcome for this surgery is recorded as an unplanned return to theatre. Review the original procedure and post-op course. ${fmtExtras(ctx)}`,
+  },
+  OT_SURGICAL_SITE_INFECTION: {
+    key: 'OT_SURGICAL_SITE_INFECTION',
+    name: 'Surgical site infection recorded',
+    description: 'OT outcome flagged with a surgical site infection (within 30 days post-op).',
+    category: 'infection',
+    subCategory: 'ssi',
+    defaultSeverity: 'moderate',
+    nabhClause: 'HIC.4',
+    mode: 'cron',
+    buildTitle: (ctx) => `Surgical site infection — ${ctx.extras?.['procedure'] ?? 'procedure'}`,
+    buildDescription: (ctx) => `A surgical site infection was recorded against this surgery. Review asepsis, antibiotic prophylaxis and wound care. ${fmtExtras(ctx)}`,
+  },
+  ICU_RESTRAINT_REVIEW_OVERDUE: {
+    key: 'ICU_RESTRAINT_REVIEW_OVERDUE',
+    name: 'Restraint without 4-hourly review',
+    description: 'Patient restraint still in place with no nursing review in the last 4 hours (+30 min grace).',
+    category: 'clinical',
+    subCategory: 'restraint',
+    defaultSeverity: 'moderate',
+    nabhClause: 'PRE.2',
+    thresholdMinutes: 270,
+    mode: 'cron',
+    buildTitle: (ctx) => `Restraint review overdue — ${ctx.extras?.['restraintType'] ?? 'restraint'}`,
+    buildDescription: (ctx) => `A restraint ordered for this patient is still in place and the 4-hourly nursing review is overdue (last review ${ctx.extras?.['hoursSinceReview'] ?? '?'}h ago). ${fmtExtras(ctx)}`,
+  },
 };
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -245,6 +287,11 @@ export async function raiseByRule(key: string, ctx: IncidentContext): Promise<{ 
       occurredAt: ctx.occurredAt ?? null,
       qiCode,
       qiPeriod,
+      sourceRef: ctx.sourceRef ?? null,
+      subCategory: def.subCategory ?? null,
+      // Cron rules re-check standing conditions every 15 min — a closed or
+      // cancelled incident for the same encounter must not be raised again.
+      dedupeAnyStatus: def.mode === 'cron',
     });
     return result;
   } catch (err) {
@@ -402,6 +449,9 @@ async function runCriticalLabUnacked(): Promise<RunnerOut> {
       admissionId,
       appointmentId,
       occurredAt: reportedAt,
+      // One incident per critical result — a second unacknowledged result on
+      // the same admission is its own event.
+      sourceRef: `InvestigationResult:${r.id}`,
       extras: {
         testName: r.testName,
         minutesSince: mins,
@@ -458,7 +508,100 @@ async function runReferralChainExhausted(): Promise<RunnerOut> {
   return { checked: rows.length, raised };
 }
 
+/** OT outcomes flagged unplanned-return / SSI in the lookback window — one incident per outcome flag. */
+async function runOtOutcomeFlags(): Promise<RunnerOut> {
+  const floor = lookbackFloor();
+  const rows = await prisma.otOutcome.findMany({
+    where: {
+      OR: [
+        { unplannedReturn: true, updatedAt: { gte: floor } },
+        { surgicalSiteInfection: true, OR: [{ ssiDetectedAt: { gte: floor } }, { ssiDetectedAt: null, updatedAt: { gte: floor } }] },
+      ],
+    },
+    select: {
+      id: true, unplannedReturn: true, surgicalSiteInfection: true, ssiDetectedAt: true, ssiOrganism: true, ssiClassification: true, updatedAt: true,
+      schedule: { select: { prn: true, patientName: true, admissionId: true, procedureName: true, surgeonName: true, actualStart: true } },
+    },
+    take: 500,
+  });
+  let raised = 0;
+  for (const o of rows) {
+    const s = o.schedule;
+    const base = {
+      patientPrn: s?.prn ?? null, patientName: s?.patientName ?? null, admissionId: s?.admissionId ?? null,
+      department: null as string | null,
+    };
+    if (s?.admissionId) {
+      const adm = await prisma.ipdAdmission.findUnique({ where: { id: s.admissionId }, select: { department: true } }).catch(() => null);
+      base.department = adm?.department ?? null;
+    }
+    if (o.unplannedReturn && o.updatedAt >= floor) {
+      const r = await raiseByRule('OT_UNPLANNED_RETURN', {
+        ...base, occurredAt: o.updatedAt, sourceRef: `OtOutcome:${o.id}:return`,
+        extras: { procedure: s?.procedureName, surgeon: s?.surgeonName },
+      });
+      if (r?.created) raised += 1;
+    }
+    if (o.surgicalSiteInfection && (o.ssiDetectedAt ?? o.updatedAt) >= floor) {
+      const r = await raiseByRule('OT_SURGICAL_SITE_INFECTION', {
+        ...base, occurredAt: o.ssiDetectedAt ?? o.updatedAt, sourceRef: `OtOutcome:${o.id}:ssi`,
+        extras: { procedure: s?.procedureName, surgeon: s?.surgeonName, organism: o.ssiOrganism, classification: o.ssiClassification },
+      });
+      if (r?.created) raised += 1;
+    }
+  }
+  return { checked: rows.length, raised };
+}
+
+/** Last review time on a restraint: newest reviewLog entry, else when it was ordered. */
+export function lastRestraintReview(orderedAt: Date, reviewLog: string | null): Date {
+  let last = orderedAt;
+  if (reviewLog) {
+    try {
+      const entries = JSON.parse(reviewLog);
+      if (Array.isArray(entries)) {
+        for (const e of entries) {
+          const d = e?.reviewedAt ? new Date(e.reviewedAt) : null;
+          if (d && !Number.isNaN(d.getTime()) && d > last) last = d;
+        }
+      }
+    } catch { /* malformed log — fall back to orderedAt */ }
+  }
+  return last;
+}
+
+/** Active restraints (ordered in the last 30 days) whose 4-hourly review is > 4.5h overdue — one incident per restraint episode. */
+async function runRestraintReviewOverdue(): Promise<RunnerOut> {
+  const now = Date.now();
+  const rows = await prisma.icuRestraintLog.findMany({
+    where: { discontinuedAt: null, orderedAt: { gte: new Date(now - 30 * 24 * 3_600_000) } },
+    select: {
+      id: true, orderedAt: true, reviewLog: true, restraintType: true, bodyPart: true,
+      admission: { select: { id: true, prn: true, department: true, status: true, ward: { select: { wardName: true } } } },
+    },
+    take: 500,
+  });
+  let raised = 0;
+  for (const r of rows) {
+    if (r.admission && !['admitted', 'BED_ACCEPTED'].includes(r.admission.status)) continue; // discharged — stale order
+    const last = lastRestraintReview(r.orderedAt, r.reviewLog);
+    const mins = (now - last.getTime()) / 60_000;
+    if (mins < (RULE_CATALOGUE.ICU_RESTRAINT_REVIEW_OVERDUE.thresholdMinutes as number)) continue;
+    const out = await raiseByRule('ICU_RESTRAINT_REVIEW_OVERDUE', {
+      admissionId: r.admission?.id ?? null, patientPrn: r.admission?.prn ?? null,
+      department: r.admission?.department ?? null, ward: r.admission?.ward?.wardName ?? null,
+      occurredAt: new Date(last.getTime() + 4 * 3_600_000),
+      sourceRef: `IcuRestraintLog:${r.id}`,
+      extras: { restraintType: r.restraintType, bodyPart: r.bodyPart, hoursSinceReview: Math.floor(mins / 60) },
+    });
+    if (out?.created) raised += 1;
+  }
+  return { checked: rows.length, raised };
+}
+
 export const CRON_RUNNERS: Array<{ key: string; run: () => Promise<RunnerOut> }> = [
+  { key: 'OT_OUTCOME_FLAGS', run: runOtOutcomeFlags },
+  { key: 'ICU_RESTRAINT_REVIEW_OVERDUE', run: runRestraintReviewOverdue },
   { key: 'IPD_INITIAL_ASSESSMENT_LATE', run: runInitialAssessmentLate },
   { key: 'DISCHARGE_SUMMARY_NOT_SIGNED', run: runDischargeSummaryUnsigned },
   { key: 'CRITICAL_LAB_NOT_ACKNOWLEDGED', run: runCriticalLabUnacked },

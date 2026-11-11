@@ -112,6 +112,40 @@ export const auditLogSystem = async (
   }
 };
 
+/**
+ * Audit row for an actor known from context rather than from req.user —
+ * e.g. the login itself, before the session token exists. IP / device come
+ * from the request. Never throws.
+ */
+export const auditLogAs = async (
+  req: Request | null,
+  actor: { id: number | null; username: string | null; role?: string | null },
+  data: AppAuditLogInput,
+): Promise<void> => {
+  try {
+    await prisma.appAuditLog.create({
+      data: {
+        module: data.module,
+        action: data.action,
+        entityType: data.entityType ?? null,
+        entityId: data.entityId != null ? String(data.entityId) : null,
+        payload: data.payload ? JSON.stringify(data.payload) : null,
+        notes: data.notes ?? null,
+        actorId: actor.id,
+        actorName: actor.username,
+        actorRole: actor.role ?? null,
+        ipAddress: extractIp(req),
+        userAgent: req?.headers?.['user-agent']?.toString() ?? null,
+      },
+    });
+  } catch (error) {
+    console.error('[app-audit] failed to persist audit row:', {
+      module: data.module, action: data.action,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 const extractIp = (req: Request | null): string | null => {
   if (!req) return null;
   const xff = req.headers['x-forwarded-for'];

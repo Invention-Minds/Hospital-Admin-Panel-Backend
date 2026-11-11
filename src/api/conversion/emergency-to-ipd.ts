@@ -1,4 +1,5 @@
 import prisma from '../../service/prisma-client';
+import { resolveAdmittingDoctorId } from '../../service/doctor-name-match';
 import { pushIpdAdmission } from '../hmis-sync/hmis-client';
 import { syncWithHmis } from '../hmis-sync/hmis-sync-wrapper';
 import { generatePRN } from '../patient/patient-helper';
@@ -108,6 +109,7 @@ export const convertEmergencyToIpd = async (
         referralMlcId: mlcCase?.id?.toString(), // Link to MLC if it exists
         referringDoctor: emergency.hmisEmergencyId ? 'Emergency Department' : 'Self Referred',
         admittingDoctor: admittingDoctorName,
+        admittingDoctorId: await resolveAdmittingDoctorId(admittingDoctorId, admittingDoctorName),
         department: 'General',
         wardId,
         bedId,

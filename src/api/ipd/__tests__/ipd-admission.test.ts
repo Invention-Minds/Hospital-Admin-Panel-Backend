@@ -12,6 +12,10 @@ jest.mock('../../../service/prisma-client', () => ({
       create: jest.fn(),
       update: jest.fn(),
     },
+    doctor: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+    },
   },
 }));
 
@@ -31,6 +35,7 @@ import { createIpdAdmission, buildIpdHmisPushPayload } from '../ipd.controller';
 const mockedPrisma = prisma as unknown as {
   ipdBed: { findUnique: jest.Mock; update: jest.Mock };
   ipdAdmission: { findFirst: jest.Mock; create: jest.Mock; update: jest.Mock };
+  doctor: { findUnique: jest.Mock; findMany: jest.Mock };
 };
 const mockedPushIpdAdmission = pushIpdAdmission as jest.MockedFunction<
   typeof pushIpdAdmission
@@ -88,6 +93,9 @@ beforeEach(() => {
   mockedPrisma.ipdAdmission.findFirst.mockResolvedValue(null);
   mockedPrisma.ipdAdmission.create.mockResolvedValue(admissionFixture);
   mockedPrisma.ipdBed.update.mockResolvedValue({});
+  // No doctor id in the request — 'Dr. Smith' resolves by name to the one Smith.
+  mockedPrisma.doctor.findUnique.mockResolvedValue(null);
+  mockedPrisma.doctor.findMany.mockResolvedValue([{ id: 12, name: 'Smith' }, { id: 13, name: 'Dr. Rao' }]);
   mockedCreateHmisAuditLog.mockResolvedValue({
     id: 999,
     direction: 'push',
@@ -131,6 +139,9 @@ describe('createIpdAdmission — happy path (HMIS 2xx)', () => {
       await createIpdAdmission(buildReq(), res);
 
       expect(mockedPrisma.ipdAdmission.create).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.ipdAdmission.create.mock.calls[0][0].data).toEqual(
+        expect.objectContaining({ admittingDoctor: 'Dr. Smith', admittingDoctorId: 12 }),
+      );
       expect(mockedPrisma.ipdBed.update).toHaveBeenCalledWith({
         where: { id: 'bed-1' },
         data: { status: 'occupied' },

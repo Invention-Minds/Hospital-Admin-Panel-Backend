@@ -11,7 +11,7 @@ import prisma from './prisma-client';
 //  - Tokens are random, tied to a PRN, and expire (default 24h).
 //  - Every list/send/view is written to PatientRecordAccessLog.
 
-export const PRIVATE_DIR = process.env.PRIVATE_STORAGE_DIR || '/var/www/docminds/private';
+export const PRIVATE_DIR = process.env.PRIVATE_STORAGE_DIR || '/var/www/docminds-files/private';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const LINK_TTL_HOURS = Number(process.env.RECORD_LINK_TTL_HOURS) || 24;
 

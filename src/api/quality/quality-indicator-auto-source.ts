@@ -188,11 +188,19 @@ export const psq025_fallWithInjuryRate: AutoSourceFn = async (periodStart, perio
 // numeratorDef: Number of adverse clinical events reported
 // denominatorDef: Total admissions
 // multiplier: 100
+//
+// Only staff-reported incidents count. Every auto-rule (late assessment,
+// unacknowledged critical lab, stuck ER referral, …) flags a process /
+// timeliness lapse, not an adverse event that reached the patient.
 
 export const psq028_adverseClinicalEvents: AutoSourceFn = async (periodStart, periodEnd) => {
   const [events, admissions] = await Promise.all([
     prisma.incident.count({
-      where: incidentWhere(periodStart, periodEnd, { category: 'clinical' }, effectiveSeverityIn(['moderate', 'major', 'sentinel'])),
+      where: incidentWhere(
+        periodStart, periodEnd,
+        { category: 'clinical' }, { ruleKey: null },
+        effectiveSeverityIn(['moderate', 'major', 'sentinel']),
+      ),
     }),
     prisma.ipdAdmission.count({
       where: { admissionDate: { gte: periodStart, lte: periodEnd } },

@@ -1,12 +1,13 @@
 import express from 'express';
 import {
   createSurvey, listSurveys, surveyStats, getSurveyByToken, submitSurveyByToken,
-  triggerExpirySweep, triggerReminderSweep, requestWalkUpOtp, verifyWalkUpOtp,
+  triggerExpirySweep, triggerReminderSweep, requestWalkUpOtp, verifyWalkUpOtp, recordReviewClick,
 } from './feedback.controller';
+import { feedbackAnalytics, getFeedbackConfig, updateFeedbackConfig } from './feedback-analytics.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { rateLimit } from '../../middleware/rate-limit';
 import {
-  requireComplaintHandler, requireFeedbackCollector, requireFeedbackViewer,
+  requireComplaintHandler, requireFeedbackCollector, requireFeedbackViewer, requireQualityTeam,
 } from '../_shared/quality-roles';
 
 const router = express.Router();
@@ -25,6 +26,7 @@ const publicPostLimiter = rateLimit({
 // No JWT; the token in the URL is the auth.
 router.get('/surveys/by-token/:token', getSurveyByToken);
 router.post('/surveys/by-token/:token/respond', publicPostLimiter, submitSurveyByToken);
+router.post('/surveys/by-token/:token/review-click', publicPostLimiter, recordReviewClick);
 // Walk-up kiosk: patient scans a permanent poster QR, enters their PRN and
 // verifies an SMS OTP; only then is a survey minted.
 router.post('/surveys/walk-up/request-otp', publicPostLimiter, requestWalkUpOtp);
@@ -32,6 +34,10 @@ router.post('/surveys/walk-up/verify', publicPostLimiter, verifyWalkUpOtp);
 
 // Authenticated (staff) endpoints.
 router.get('/surveys/stats', authenticateToken, requireFeedbackViewer, surveyStats);
+// Analytics + thresholds (satisfied rating, complaint / incident NPS cut-offs).
+router.get('/analytics', authenticateToken, requireFeedbackViewer, feedbackAnalytics);
+router.get('/config', authenticateToken, requireFeedbackViewer, getFeedbackConfig);
+router.put('/config', authenticateToken, requireQualityTeam, updateFeedbackConfig);
 router.get('/surveys', authenticateToken, requireComplaintHandler, listSurveys);
 router.post('/surveys', authenticateToken, requireFeedbackCollector, createSurvey);
 

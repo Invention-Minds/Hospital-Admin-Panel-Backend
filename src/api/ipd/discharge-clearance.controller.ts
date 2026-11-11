@@ -9,13 +9,20 @@ import {
   finalizeDischargeIfReady,
   abandonDischargeChain,
 } from '../../service/discharge-clearance';
+import { runDischargeDraft } from '../discharge-ai/discharge-ai.controller';
 
 // Phase D — Discharge clearance HTTP layer.
 //
 // Routes are mounted under /api/ipd/admission/:admissionId/discharge/...
 // and /api/discharge/... for the per-department queues.
 
-type NotifyKind = 'discharge_clearance_cleared' | 'discharge_clearance_rejected' | 'discharge_finalized' | 'discharge_chain_abandoned';
+type NotifyKind =
+  | 'discharge_clearance_cleared'
+  | 'discharge_clearance_rejected'
+  | 'discharge_finalized'
+  | 'discharge_chain_abandoned'
+  | 'discharge_summary_drafted'
+  | 'discharge_summary_draft_failed';
 
 async function notifyDischarge(opts: {
   kind: NotifyKind;
@@ -246,7 +253,40 @@ export const finalize = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-interface ReadyBody { ready?: boolean }
+interface ReadyBody {
+  ready?: boolean;
+  /** Draft the discharge summary with AI in the background (default true). */
+  autoDraft?: boolean;
+}
+
+/**
+ * Fire-and-forget: draft the summary from every clinical source, then tell the
+ * doctor it's waiting for review. Skipped when a draft already exists — a
+ * doctor's edits must never be overwritten by an automatic re-draft.
+ */
+async function autoDraftOnReady(admissionId: string, admissionNo: string, actorUsername: string | null, actorUserId: number | null) {
+  const existing = await prisma.ipdDischarge.findUnique({
+    where: { admissionId },
+    select: { summaryStatus: true },
+  });
+  if (existing && existing.summaryStatus !== 'NONE') return;
+
+  try {
+    await runDischargeDraft(admissionId, actorUsername);
+    await notifyDischarge({
+      kind: 'discharge_summary_drafted', admissionId, department: 'Summary',
+      message: `Discharge summary for ${admissionNo} is drafted — review and approve.`,
+      userId: actorUserId,
+    });
+  } catch (err) {
+    console.warn('[discharge:auto-draft] failed:', (err as Error).message);
+    await notifyDischarge({
+      kind: 'discharge_summary_draft_failed', admissionId, department: 'Summary',
+      message: `Couldn't draft the discharge summary for ${admissionNo} automatically. Open it and tap Generate draft.`,
+      userId: actorUserId,
+    });
+  }
+}
 
 /** POST /admission/:admissionId/discharge/ready —
  * Doctor toggles "ready for discharge". Triggers MT queue + diet/billing
@@ -304,7 +344,17 @@ export const setReadyForDischarge = async (req: Request, res: Response): Promise
       });
     }
 
-    res.status(200).json({ data: { admissionId, dischargeReadyAt: updated.dischargeReadyAt } });
+    const autoDraft = ready && body.autoDraft !== false;
+    if (autoDraft) {
+      void autoDraftOnReady(
+        admissionId,
+        admission.admissionNo,
+        req.user?.username ?? null,
+        typeof req.user?.id === 'number' ? req.user.id : null,
+      );
+    }
+
+    res.status(200).json({ data: { admissionId, dischargeReadyAt: updated.dischargeReadyAt, drafting: autoDraft } });
   } catch (error) {
     console.error('[discharge-clearance] setReady failed:', error);
     res.status(500).json({ error: 'Failed to set ready-for-discharge' });

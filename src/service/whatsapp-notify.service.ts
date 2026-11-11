@@ -158,5 +158,6 @@ export const notifyDoorstepStatus = (phone: string, name: string, service: strin
 export const notifyEnquiryAck = (phone: string, name: string, enquiryType: string, hours: string, refId: string) =>
   notifyPatient({ phone, template: TEMPLATES.ENQUIRY_ACKNOWLEDGEMENT, params: [name, enquiryType, hours], refType: 'CallbackRequest', refId });
 
-export const notifyFeedbackRequest = (prn: number | null, phone: string, name: string, visitDate: string, token: string, refId: string) =>
+// phone null → resolved from the PRN's registered number.
+export const notifyFeedbackRequest = (prn: number | null, phone: string | null, name: string, visitDate: string, token: string, refId: string) =>
   notifyPatient({ prn, phone, template: TEMPLATES.FEEDBACK_REQUEST, params: [name, visitDate], urlToken: token, refType: 'FeedbackSurvey', refId });

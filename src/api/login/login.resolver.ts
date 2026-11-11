@@ -27,7 +27,6 @@ export const validateMobileRefreshToken = async (token: string) => {
 
 export const loginUser = async (password: string, employeeId: string) => {
   const user = await loginRepository.findUserByEmployeeId(employeeId)
-  console.log("user", user);
   if (!user) return null;
   if (user.isActive === false) return { inactive: true } as any;
   if (bcrypt.compareSync(password, user.password)) {
@@ -45,7 +44,6 @@ export const loginUser = async (password: string, employeeId: string) => {
 };
 export const loginDoctor = async (password: string, userId: number) => {
   const user = await loginRepository.findUserById(userId)
-  console.log("user", user);
   if (!user) return null;
   if (user.isActive === false) return { inactive: true } as any;
   if (bcrypt.compareSync(password, user.password)) {

@@ -59,6 +59,7 @@ import {
   setGlucoseFrequency,
 } from './insulin-infusion.controller';
 import { getDischargeContext } from './discharge-summary.controller';
+import { getMyPatients } from './doctor-mobile.controller';
 import {
   listForAdmission as listHandovers,
   upsertHandover,
@@ -99,6 +100,8 @@ router.post('/admission', authenticateToken, requireClinicalActor, createIpdAdmi
 // authenticateToken added (NS-3) so getIpdAdmissions can ward-scope to the
 // logged-in nurse. The frontend attaches the Bearer token to every request.
 router.get('/admissions', authenticateToken, getIpdAdmissions);
+// Doctor mobile app — the logged-in doctor's admitted patients + discharge state.
+router.get('/my-patients', authenticateToken, getMyPatients);
 router.get('/admission/:id', getIpdAdmission);
 router.put('/admission/:id', authenticateToken, requireClinicalActor, updateIpdAdmission);
 

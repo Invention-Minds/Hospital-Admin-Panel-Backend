@@ -18,6 +18,7 @@ router.post('/sla-sweep', authenticateToken, requireComplaintHandler, triggerSla
 router.put('/bulk-status', authenticateToken, requireComplaintHandler, bulkUpdateStatus);
 router.post('/', authenticateToken, createComplaint);
 router.get('/:id', authenticateToken, getComplaint);
-router.put('/:id/status', authenticateToken, requireComplaintHandler, updateComplaintStatus);
+// Handlers, or the assignee (status + notes only) — checked in the controller.
+router.put('/:id/status', authenticateToken, updateComplaintStatus);
 
 export default router;

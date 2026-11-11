@@ -12,7 +12,7 @@ import { deleteUserById } from './login.resolver';
 import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import { isOpdStationNurse, isIpdScopedNurse } from '../_shared/nursing-roles';
-import { auditLog } from '../../service/app-audit';
+import { auditLog, auditLogAs } from '../../service/app-audit';
 const prisma = new PrismaClient();
 
 
@@ -48,13 +48,11 @@ const generateToken = (user: any) => {
 
 export const userLogin = async (req: Request, res: Response) => {
   try {
-    console.log(req.body);
     const { password, employeeId, phoneNumber, client } = req.body;
     let doctors;
     let user;
     let therapists;
 
-    console.log(password, employeeId, phoneNumber);
     if (phoneNumber) {
       const doctor = await prisma.doctor.findFirst({
         where: { phone_number: phoneNumber },  // Check if phone number exists
@@ -65,7 +63,6 @@ export const userLogin = async (req: Request, res: Response) => {
         select: { userId: true, id: true },
       });
 
-      console.log(doctor)
 
       if (doctor && doctor.userId) {
         // doctors = await prisma.user.findUnique({
@@ -85,7 +82,6 @@ export const userLogin = async (req: Request, res: Response) => {
       user = await loginUser(password, employeeId);
     }
 
-    console.log(user, 'user in login controller')
 
     if (user && (user as any).inactive) {
       res.status(403).json({ error: 'Your account is inactive. Please contact the administrator.' });
@@ -105,8 +101,13 @@ export const userLogin = async (req: Request, res: Response) => {
         res.status(200).json({ challenge: await buildChallenge(account, false, step) });
         return;
       }
-      await completeLogin(res, user, client, therapists?.id);
+      await completeLogin(res, user, client, therapists?.id, req, phoneNumber ? 'phone' : 'employee-id');
     } else {
+      // Failed login for the activity log — the identifier tried, never the password.
+      void auditLogAs(req, { id: null, username: null }, {
+        module: 'auth', action: 'LOGIN_FAILED',
+        payload: employeeId ? { employeeId: String(employeeId).slice(0, 40) } : { phoneLast4: String(phoneNumber ?? '').slice(-4) },
+      });
       res.status(401).json({ error: 'Invalid username or password' });
     }
   } catch (error) {
@@ -128,7 +129,7 @@ async function buildChallenge(user: User, mfaPassed: boolean, step: LoginStep) {
 }
 
 /** After a step succeeds: either the next challenge or the full login response. */
-async function advanceChallenge(res: Response, userId: number, mfaPassed: boolean) {
+async function advanceChallenge(res: Response, userId: number, mfaPassed: boolean, req: Request) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     res.status(401).json({ error: 'Invalid login session.' });
@@ -140,7 +141,7 @@ async function advanceChallenge(res: Response, userId: number, mfaPassed: boolea
     return;
   }
   const therapist = await prisma.therapist.findFirst({ where: { userId: user.id }, select: { id: true } });
-  await completeLogin(res, user, undefined, therapist?.id);
+  await completeLogin(res, user, undefined, therapist?.id, req, 'security-steps');
 }
 
 function sendSecurityError(res: Response, error: unknown, label: string) {
@@ -164,7 +165,7 @@ export const challengeMfa = async (req: Request, res: Response) => {
   try {
     const { user } = await challengeAt(req.body?.challengeToken, ['mfa', 'mfa_setup']);
     await verifyMfaCode(user, req.body?.code);
-    await advanceChallenge(res, user.id, true);
+    await advanceChallenge(res, user.id, true, req);
   } catch (error) {
     sendSecurityError(res, error, 'challengeMfa');
   }
@@ -191,7 +192,7 @@ export const challengeEmailVerify = async (req: Request, res: Response) => {
     const taken = await prisma.user.findFirst({ where: { email, NOT: { id: user.id } }, select: { id: true } });
     if (taken) throw new SecurityError(409, 'This email is already linked to another account.');
     await prisma.user.update({ where: { id: user.id }, data: { email, emailVerifiedAt: new Date() } });
-    await advanceChallenge(res, user.id, mfaPassed);
+    await advanceChallenge(res, user.id, mfaPassed, req);
   } catch (error) {
     sendSecurityError(res, error, 'challengeEmailVerify');
   }
@@ -207,7 +208,7 @@ export const challengePassword = async (req: Request, res: Response) => {
       throw new SecurityError(400, 'Your new password must be different from the current one.');
     }
     await loginRepository.updatePasswordByUserId(user.id, bcrypt.hashSync(newPassword, 10), user.username, new Date());
-    await advanceChallenge(res, user.id, mfaPassed);
+    await advanceChallenge(res, user.id, mfaPassed, req);
   } catch (error) {
     sendSecurityError(res, error, 'challengePassword');
   }
@@ -258,9 +259,16 @@ async function completeLogin(
   user: Pick<User, 'id' | 'username' | 'role' | 'isReceptionist' | 'employeeId' | 'subAdminType' | 'adminType'> & { department?: string | null },
   client: string | undefined,
   therapistId: number | undefined,
+  req: Request,
+  method: string,
 ) {
       const role = user.role;
       const token = generateToken(user); // Generate JWT token
+      // Activity log — every session issued, with IP / device (no token stored).
+      void auditLogAs(req, { id: user.id, username: user.username, role: user.role }, {
+        module: 'auth', action: 'LOGIN', entityType: 'User', entityId: user.id,
+        payload: { method, client: client ?? 'web' },
+      });
       const usEasternTime = moment.tz("America/New_York");
 
       // Convert US Eastern Time to Indian Standard Time (IST)
@@ -287,12 +295,7 @@ async function completeLogin(
           loggedInTime: generatedTime,
         },
       });
-      console.log('Creating ActiveToken with data:', {
-        userId: user.id,
-        token: token,
-        loggedInAt: generatedDate,
-        lastActive: generatedTime,
-      });
+      // Never log the token itself — it is a live credential until it expires.
       // Create an active token
       try {
         await prisma.activeToken.create({
@@ -356,11 +359,20 @@ export const mobileRefresh = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * A user record safe to send to the browser: never the password hash or the
+ * (encrypted) authenticator secret — only whether a secret is set, which the
+ * settings screen needs to show "Setup pending" and the reset button.
+ */
+function publicUser<T extends { password?: unknown; totpSecret?: unknown }>(u: T) {
+  const { password: _password, totpSecret, ...rest } = u;
+  return { ...rest, mfaSecretSet: !!totpSecret };
+}
+
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await loginRepository.getAllUsers();
-    console.log("loginRepository", users);
-    res.status(200).json(users);
+    res.status(200).json(users.map(publicUser));
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -498,12 +510,45 @@ export const userRegister = async (req: Request, res: Response): Promise<void> =
 
 
 
+/** The signed-in caller (id, username, role), or null if the token's user is gone / inactive. */
+async function callerOf(req: Request): Promise<{ id: number; username: string; role: string } | null> {
+  const id = req.user?.id;
+  if (typeof id !== 'number') return null;
+  const u = await prisma.user.findUnique({ where: { id }, select: { id: true, username: true, role: true, isActive: true } });
+  return u && u.isActive ? { id: u.id, username: u.username, role: String(u.role) } : null;
+}
+const isUserAdmin = (role: string) => role === 'admin' || role === 'super_admin';
+
+/**
+ * Another user's account may be managed by admins / super_admin; only a
+ * super_admin may manage a super_admin. Everyone may act on their own account.
+ */
+function mayManage(caller: { id: number; role: string }, target: { id: number; role: unknown }): boolean {
+  if (caller.id === target.id) return true;
+  if (!isUserAdmin(caller.role)) return false;
+  return String(target.role) !== 'super_admin' || caller.role === 'super_admin';
+}
+
 export const userResetPassword = async (req: Request, res: Response) => {
   try {
-    console.log(req.body);
-    const { employeeId, newPassword,updatedBy } = req.body;
-
-    await resetPassword(employeeId, newPassword,updatedBy);
+    const caller = await callerOf(req);
+    if (!caller) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    const { employeeId, newPassword } = req.body ?? {};
+    if (typeof employeeId !== 'string' || !employeeId.trim() || typeof newPassword !== 'string' || newPassword.length < 6) {
+      res.status(400).json({ error: 'employeeId and a new password of at least 6 characters are required' });
+      return;
+    }
+    const target = await loginRepository.findUserByEmployeeId(employeeId);
+    if (!target) { res.status(404).json({ error: 'User not found' }); return; }
+    // Was enforced only in the browser — any signed-in user could reset anyone's password.
+    if (!mayManage(caller, target)) {
+      await auditLog(req, { module: 'auth', action: 'PASSWORD_RESET_DENIED', entityType: 'User', entityId: target.id, payload: {} });
+      res.status(403).json({ error: 'You can only reset your own password' });
+      return;
+    }
+    // updatedBy comes from the token, not the request body.
+    await resetPassword(employeeId, newPassword, caller.username);
+    await auditLog(req, { module: 'auth', action: 'PASSWORD_RESET', entityType: 'User', entityId: target.id, payload: { self: caller.id === target.id } });
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -512,8 +557,17 @@ export const userResetPassword = async (req: Request, res: Response) => {
 
 export const userChangePassword = async (req: Request, res: Response) => {
   try {
-    const { userId, oldPassword, newPassword, updatedBy } = req.body;
-    await changePassword(userId, oldPassword, newPassword, updatedBy);
+    const caller = await callerOf(req);
+    if (!caller) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    const { oldPassword, newPassword } = req.body ?? {};
+    if (typeof oldPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 6) {
+      res.status(400).json({ error: 'oldPassword and a new password of at least 6 characters are required' });
+      return;
+    }
+    // Always the caller's own account (a userId in the body is ignored).
+    const updated = await changePassword(caller.id, oldPassword, newPassword, caller.username);
+    if (!updated) { res.status(400).json({ error: 'Current password is incorrect' }); return; }
+    await auditLog(req, { module: 'auth', action: 'PASSWORD_CHANGE', entityType: 'User', entityId: caller.id, payload: {} });
     res.status(200).json({ message: 'Password change successful' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -527,13 +581,16 @@ export const getUserDetails = async (req: Request, res: Response): Promise<void>
       res.status(400).json({ error: 'Bad Request: Invalid User ID' });
       return;
     }
+    const caller = await callerOf(req);
+    if (!caller) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
     const user = await loginRepository.findUserById(userId);
-    console.log(user);
 
-    if (user) {
+    // Own profile, or an admin / super_admin looking someone up. Same 404 for
+    // "not yours" and "doesn't exist" so ids can't be probed.
+    if (user && (caller.id === user.id || isUserAdmin(caller.role))) {
       const role = extractRoleFromUsername(user.username); // Extract role from username if needed
-      res.status(200).json({ userId: user.id, username: user.username, role, user }); // Include userId in the response
+      res.status(200).json({ userId: user.id, username: user.username, role, user: publicUser(user) }); // Include userId in the response
     }
     else {
       res.status(404).json({ error: 'User not found' });
@@ -553,7 +610,6 @@ export const deleteUserByUsername = async (req: Request, res: Response): Promise
 
   try {
     const user = await loginRepository.findUserByUsername(username);
-    console.log(user);
 
     if (!user) {
       res.status(404).json({ error: 'User not found' });

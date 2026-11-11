@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../../service/prisma-client';
 import { requireRole } from '../../middleware/require-role';
 import { NURSING_SUPERINTENDENT } from './nursing-roles';
+import { QUALITY_EXECUTIVES, unitIdsHeadedBy } from '../../service/quality-escalation';
 
 /**
  * Single source of truth for who may do what in the Incident + Quality modules.
@@ -11,12 +12,18 @@ import { NURSING_SUPERINTENDENT } from './nursing-roles';
  * super_admin always passes.
  *
  *   Incidents
- *     raise / view own + assigned ..... any authenticated staff
+ *     raise / view own + assigned ..... any authenticated staff (incl. owners
+ *                                       of a CAPA action, who can complete it)
  *     view their department ........... DEPARTMENT_VIEWER (other admins +
  *                                       Nursing Superintendent) — read-only,
  *                                       matched on User.department; the
  *                                       superintendent also sees every ward incident
  *     view all + every action ......... INCIDENT_MANAGER (Quality Manager admin)
+ *     unit HOD / deputy ............... view + triage / investigate / CAPA for
+ *                                       their HospitalUnit(s); closing stays
+ *                                       with the incident manager
+ *     view all (read-only) ............ QUALITY_EXECUTIVES (Medical
+ *                                       Superintendent / Director, CEO)
  *
  *   Complaints
  *     raise / view own-raised + assigned ... any authenticated staff
@@ -76,6 +83,10 @@ const loadActor = async (userId: number | undefined): Promise<Actor | null> => {
 const isManagerActor = (u: Actor): boolean =>
   u.role === 'super_admin' || (u.role === 'admin' && u.adminType === QUALITY_MANAGER);
 
+/** Medical Superintendent / Director / CEO — read every incident + complaint. */
+const isExecutiveActor = (u: Actor): boolean =>
+  u.role === 'admin' && !!u.adminType && QUALITY_EXECUTIVES.includes(u.adminType);
+
 /** Controller-side check for incident actions (mirrors requireIncidentManager). */
 export const isIncidentManager = async (userId: number | undefined): Promise<boolean> => {
   const u = await loadActor(userId);
@@ -89,12 +100,18 @@ export const isIncidentManager = async (userId: number | undefined): Promise<boo
 export const incidentReadScope = async (userId: number | undefined): Promise<Prisma.IncidentWhereInput | null> => {
   const u = await loadActor(userId);
   if (!u || typeof userId !== 'number') return { id: '__none__' };
-  if (isManagerActor(u)) return null;
+  if (isManagerActor(u) || isExecutiveActor(u)) return null;
 
-  const or: Prisma.IncidentWhereInput[] = [{ reportedById: userId }, { assignedToId: userId }];
+  const or: Prisma.IncidentWhereInput[] = [
+    { reportedById: userId }, { assignedToId: userId },
+    { capaActions: { some: { ownerId: userId } } }, // owners of a CAPA action
+    { participants: { some: { userId } } },         // staff "also involved"
+  ];
   const isDeptViewer = u.role === 'admin' || u.subAdminType === NURSING_SUPERINTENDENT;
   if (isDeptViewer && u.department?.trim()) or.push({ department: u.department.trim() });
   if (u.subAdminType === NURSING_SUPERINTENDENT) or.push({ ward: { not: null } });
+  const headed = await unitIdsHeadedBy(userId);
+  if (headed.length > 0) or.push({ unitId: { in: headed } });
   return { OR: or };
 };
 
@@ -116,11 +133,13 @@ export const isComplaintHandler = async (userId: number | undefined): Promise<bo
 export const complaintReadScope = async (userId: number | undefined): Promise<Prisma.ComplaintWhereInput | null> => {
   const u = await loadActor(userId);
   if (!u || typeof userId !== 'number') return { id: '__none__' };
-  if (isComplaintHandlerActor(u)) return null;
+  if (isComplaintHandlerActor(u) || isExecutiveActor(u)) return null;
 
   const or: Prisma.ComplaintWhereInput[] = [{ raisedById: userId }, { assignedToId: userId }];
   const isDeptViewer = u.role === 'admin' || u.subAdminType === NURSING_SUPERINTENDENT;
   if (isDeptViewer && u.department?.trim()) or.push({ department: u.department.trim() });
   if (u.subAdminType === NURSING_SUPERINTENDENT) or.push({ admissionId: { not: null } });
+  const headed = await unitIdsHeadedBy(userId);
+  if (headed.length > 0) or.push({ unitId: { in: headed } });
   return { OR: or };
 };

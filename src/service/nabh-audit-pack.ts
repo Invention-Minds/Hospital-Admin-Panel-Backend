@@ -17,7 +17,7 @@ import prisma from './prisma-client';
  *   wf-3     — daily care (medication logs + daily closures)
  *   wf-4     — ICU transfers
  *   wf-5     — discharges (with AI-draft + sign-off chain)
- *   incident — staff handovers (used as the contingency surface in this build)
+ *   incident — incident register (with CAPA), complaints, staff handovers
  *   hmis     — HMIS audit log + dead-letters + conflicts
  */
 
@@ -154,14 +154,33 @@ export async function buildAuditPack(input: AuditPackInput): Promise<AuditPackRe
     total += discharges.length;
   }
 
-  // ─── Incident / staff handover ──────────────────────────────────────
+  // ─── Incident register (+ CAPA), grievances, staff handovers ────────
   if (includeAll || scope === 'incident') {
-    const handovers = await prisma.staffHandover.findMany({
-      where: { raisedAt: range },
-      take: TAKE,
-    });
+    const [incidents, complaints, handovers] = await Promise.all([
+      prisma.incident.findMany({
+        where: { reportedAt: range },
+        include: {
+          capa: true,
+          capaActions: { orderBy: { createdAt: 'asc' } },
+          effectivenessReviews: { orderBy: { dueAt: 'asc' } },
+        },
+        orderBy: { reportedAt: 'asc' },
+        take: TAKE,
+      }),
+      prisma.complaint.findMany({
+        where: { raisedAt: range },
+        orderBy: { raisedAt: 'asc' },
+        take: TAKE,
+      }),
+      prisma.staffHandover.findMany({
+        where: { raisedAt: range },
+        take: TAKE,
+      }),
+    ]);
+    bundle['incident_register'] = incidents;
+    bundle['incident_complaints'] = complaints;
     bundle['incident_staffHandovers'] = handovers;
-    total += handovers.length;
+    total += incidents.length + complaints.length + handovers.length;
   }
 
   // ─── HMIS sync ──────────────────────────────────────────────────────

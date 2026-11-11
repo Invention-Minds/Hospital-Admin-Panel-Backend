@@ -32,14 +32,42 @@ export interface DischargeAiDraft {
   followUpDoctor?: string;
   modelVersion: string;
   generatedAt: string;
+  /** Which records the draft was built from — shown to the reviewing doctor. */
+  sources?: DraftSources;
+}
+
+/** Per-source record counts fed to the model, so the reviewer can see what the draft rests on. */
+export interface DraftSources {
+  initialAssessment: boolean;
+  allergies: number;
+  diagnosisCodes: number;
+  progressNotes: number;
+  icuProgressNotes: number;
+  vitalsReadings: number;
+  labRadiologyResults: number;
+  criticalResults: number;
+  operativeNotes: number;
+  nonDrugOrders: number;
+  prescriptions: number;
+  marEntries: number;
+  dailyClosures: number;
 }
 
 const MODEL = process.env.DISCHARGE_AI_MODEL || 'gpt-4o-mini';
 
+/** Trim long free-text so one verbose note can't crowd the rest of the record out of the prompt. */
+const clip = (s: string | null | undefined, n = 1200): string | null =>
+  s == null ? null : s.length > n ? `${s.slice(0, n)}…` : s;
+
 /**
- * Pull all the clinical context the model needs. Kept narrow on purpose —
- * we do NOT send PII like phone, address, or full DOB. Names and PRN are
- * needed so the model can address the summary correctly.
+ * Pull every clinical source the discharge summary draws on. Kept narrow on
+ * PII — we do NOT send phone, address, or full DOB. Names and PRN are needed
+ * so the model can address the summary correctly.
+ *
+ * Sources: admission + initial assessment, allergies, ICD codes, ward and ICU
+ * progress notes, vitals (admission vs latest), lab/radiology results within
+ * the stay, OT operative notes, non-drug orders (consults/procedures),
+ * prescriptions, MAR, and nursing daily closures.
  */
 async function aggregateContext(admissionId: string) {
   const admission = await prisma.ipdAdmission.findUnique({
@@ -47,20 +75,70 @@ async function aggregateContext(admissionId: string) {
     include: {
       ward: true,
       bed: true,
+      initialAssessment: true,
+      diagnosisCodes: { orderBy: { createdAt: 'asc' } },
       progressNotes: { orderBy: { createdAt: 'asc' }, take: 50 },
+      icuProgressNotes: { orderBy: { noteDate: 'asc' }, take: 30 },
+      nonDrugOrders: { where: { status: { not: 'CANCELLED' } }, orderBy: { orderedAt: 'asc' }, take: 60 },
       prescriptions: { orderBy: { prescribedDate: 'asc' } },
       dailyClosures: { orderBy: { closureDate: 'asc' } },
     },
   });
   if (!admission) throw new Error('Admission not found');
 
-  const marLogs = await prisma.ipdMedicationLog.findMany({
-    where: { admissionId },
-    orderBy: { administeredAt: 'asc' },
-    take: 200,
-  });
+  // Results drawn during this stay only (one day of slack for pre-admission labs).
+  const stayStart = new Date(new Date(admission.admissionDate).getTime() - 24 * 60 * 60 * 1000);
 
-  return { admission, marLogs };
+  const [marLogs, firstVitals, latestVitals, vitalsCount, allergies, otSchedules, results] = await Promise.all([
+    prisma.ipdMedicationLog.findMany({ where: { admissionId }, orderBy: { administeredAt: 'asc' }, take: 200 }),
+    prisma.ipdVitalsReading.findFirst({ where: { admissionId }, orderBy: { recordedAt: 'asc' } }),
+    prisma.ipdVitalsReading.findMany({ where: { admissionId }, orderBy: { recordedAt: 'desc' }, take: 3 }),
+    prisma.ipdVitalsReading.count({ where: { admissionId } }),
+    admission.prn
+      ? prisma.allergy.findMany({ where: { prn: admission.prn }, select: { genericName: true } }).catch(() => [])
+      : Promise.resolve([] as { genericName: string | null }[]),
+    prisma.otSchedule.findMany({
+      where: { admissionId },
+      select: {
+        procedureName: true, surgeonName: true, anaesthesiologistName: true, actualStart: true,
+        intraOpNotes: {
+          select: { anaesthesiaType: true, findings: true, procedureDone: true, complications: true },
+          orderBy: { noteNumber: 'asc' },
+        },
+      },
+      orderBy: { plannedStart: 'asc' },
+    }),
+    admission.prn
+      ? prisma.investigationResult.findMany({
+          where: { prn: admission.prn, isDeleted: false, createdAt: { gte: stayStart } },
+          orderBy: { createdAt: 'asc' },
+          take: 80,
+          select: {
+            testName: true, department: true, result: true, unit: true,
+            referenceRange: true, impression: true, reportedAt: true, criticalFlag: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const operativeNotes = otSchedules.reduce((n, s) => n + s.intraOpNotes.length, 0);
+  const sources: DraftSources = {
+    initialAssessment: !!admission.initialAssessment,
+    allergies: allergies.length,
+    diagnosisCodes: admission.diagnosisCodes.length,
+    progressNotes: admission.progressNotes.length,
+    icuProgressNotes: admission.icuProgressNotes.length,
+    vitalsReadings: vitalsCount,
+    labRadiologyResults: results.length,
+    criticalResults: results.filter((r) => !!r.criticalFlag).length,
+    operativeNotes,
+    nonDrugOrders: admission.nonDrugOrders.length,
+    prescriptions: admission.prescriptions.length,
+    marEntries: marLogs.length,
+    dailyClosures: admission.dailyClosures.length,
+  };
+
+  return { admission, marLogs, firstVitals, latestVitals, allergies, otSchedules, results, sources };
 }
 
 /**
@@ -108,10 +186,74 @@ function buildPrompt(ctx: Awaited<ReturnType<typeof aggregateContext>>): string 
     nursingSummary: c.nursingSummary,
   }));
 
+  const ia = a.initialAssessment;
+  const comorbidities = ia
+    ? ([
+        ia.hasHypertension && `Hypertension${ia.hypertensionSince ? ` since ${ia.hypertensionSince}` : ''}`,
+        ia.hasDiabetes && `Diabetes${ia.diabetesSince ? ` since ${ia.diabetesSince}` : ''}`,
+        ia.hasCardiacDisease && 'Cardiac disease',
+        ia.hasCopd && 'COPD',
+        ia.hasThyroidDisorder && 'Thyroid disorder',
+        ia.hasCva && 'CVA',
+        ia.hasRecurrentInfection && 'Recurrent infection',
+      ].filter(Boolean) as string[])
+    : [];
+
+  const vitalsOf = (v: NonNullable<typeof ctx.firstVitals>) => ({
+    when: v.recordedAt,
+    tempF: v.temperatureF ?? (v.temperatureC != null ? +(v.temperatureC * 9 / 5 + 32).toFixed(1) : null),
+    pulse: v.pulse,
+    rr: v.respiration,
+    bp: v.bpSystolic != null ? `${v.bpSystolic}/${v.bpDiastolic ?? '?'}` : null,
+    spo2: v.spo2,
+  });
+
+  const icuNotes = (a.icuProgressNotes ?? []).map((n) => ({
+    when: n.noteDate,
+    icuDay: n.icuDayNumber,
+    by: n.doctorName,
+    assessment: clip(n.assessment),
+    plan: clip(n.plan),
+    trajectory: n.trajectory,
+  }));
+
+  const ot = ctx.otSchedules.map((s) => ({
+    procedure: s.procedureName,
+    surgeon: s.surgeonName,
+    anaesthetist: s.anaesthesiologistName,
+    date: s.actualStart,
+    notes: s.intraOpNotes.map((n) => ({
+      anaesthesia: n.anaesthesiaType,
+      procedureDone: clip(n.procedureDone),
+      findings: clip(n.findings),
+      complications: clip(n.complications, 400),
+    })),
+  }));
+
+  const results = ctx.results.map((r) => ({
+    test: r.testName,
+    dept: r.department,
+    result: clip(r.result, 300),
+    unit: r.unit,
+    range: r.referenceRange,
+    impression: clip(r.impression, 600),
+    reportedAt: r.reportedAt,
+    critical: r.criticalFlag || undefined,
+  }));
+
+  const orders = (a.nonDrugOrders ?? []).map((o) => ({
+    when: o.orderedAt,
+    category: o.category,
+    order: clip(o.orderText, 300),
+    status: o.status,
+    outcome: clip(o.completionNotes, 300),
+  }));
+
   return [
     `You are a senior physician drafting an NABH-compliant IPD discharge summary.`,
     `Use only the data below. Where data is missing, say "Not documented" — do NOT invent findings.`,
     `Keep medical language formal but readable for the patient and family.`,
+    `Where a statement is inferred rather than directly documented, append "(verify)" so the reviewing doctor checks it.`,
     ``,
     `## Admission`,
     JSON.stringify({
@@ -120,12 +262,48 @@ function buildPrompt(ctx: Awaited<ReturnType<typeof aggregateContext>>): string 
       department: a.department,
       admittingDoctor: a.admittingDoctor,
       admissionDate: a.admissionDate,
+      admissionType: a.admissionType,
       diagnosis: a.diagnosis,
       ward: a.ward?.wardName,
+      icuAdmittedAt: a.icuAdmittedAt,
+      icuDischargedAt: a.icuDischargedAt,
     }, null, 2),
+    ``,
+    `## Allergies`,
+    JSON.stringify(ctx.allergies.map((x) => x.genericName).filter(Boolean)),
+    ``,
+    `## Initial assessment (at admission)`,
+    JSON.stringify(ia ? {
+      chiefComplaints: clip(ia.chiefComplaints),
+      presentingIllness: clip(ia.presentingIllness, 2000),
+      comorbidities,
+      surgicalHistory: clip(ia.surgicalHistory, 600),
+      medicationHistory: clip(ia.medicationHistory, 600),
+    } : 'Not documented', null, 2),
+    ``,
+    `## Coded diagnoses (ICD-10 / CPT)`,
+    JSON.stringify(a.diagnosisCodes.map((d) => ({ category: d.category, code: d.code, description: d.description })), null, 2),
+    ``,
+    `## Vitals — at admission vs latest`,
+    JSON.stringify({
+      atAdmission: ctx.firstVitals ? vitalsOf(ctx.firstVitals) : null,
+      latest: ctx.latestVitals.map(vitalsOf),
+    }, null, 2),
+    ``,
+    `## Investigations during the stay (lab + radiology)`,
+    JSON.stringify(results, null, 2),
+    ``,
+    `## Operations / procedures (OT)`,
+    JSON.stringify(ot, null, 2),
     ``,
     `## Progress notes`,
     JSON.stringify(progressBullets, null, 2),
+    ``,
+    `## ICU progress notes`,
+    JSON.stringify(icuNotes, null, 2),
+    ``,
+    `## Non-drug orders (consults, procedures, diet, mobility)`,
+    JSON.stringify(orders, null, 2),
     ``,
     `## Prescriptions`,
     JSON.stringify(rxList, null, 2),
@@ -136,7 +314,11 @@ function buildPrompt(ctx: Awaited<ReturnType<typeof aggregateContext>>): string 
     `## Daily closures`,
     JSON.stringify(closures, null, 2),
     ``,
-    `Return a discharge summary in the strict JSON schema you've been given. The`,
+    `Return a discharge summary in the strict JSON schema you've been given.`,
+    `\`dischargeSummary\` is the hospital course: presentation, key and abnormal investigation`,
+    `findings (state values with units), treatment given, any ICU stay, and response.`,
+    `\`proceduresDone\` lists procedures from the OT notes and completed procedure orders, or "None".`,
+    `Mention documented allergies in \`advice\`. The`,
     `\`medications\` array should contain ONLY the prescriptions the patient should`,
     `continue at home (i.e. status='active' and not discontinued). Suggest a`,
     `\`followUpInDays\` based on the diagnosis (commonly 7, 14, or 30). Set`,
@@ -232,6 +414,7 @@ export async function generateDischargeDraft(admissionId: string): Promise<Disch
     ...parsed,
     modelVersion: MODEL,
     generatedAt: new Date().toISOString(),
+    sources: ctx.sources,
   };
 }
 
@@ -256,6 +439,7 @@ export interface TemplatedDischargeDraft {
   templatedValueMap: Record<string, unknown>;
   modelVersion: string;
   generatedAt: string;
+  sources?: DraftSources;
 }
 
 /**
@@ -378,5 +562,6 @@ export async function generateTemplatedDischargeDraft(
     templatedValueMap: parsed,
     modelVersion: MODEL,
     generatedAt: new Date().toISOString(),
+    sources: ctx.sources,
   };
 }

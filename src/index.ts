@@ -107,6 +107,11 @@ import { registerFeedbackSendCron } from './api/feedback/feedback-send.cron';
 import { registerComplaintSlaCron } from './api/feedback/complaint-sla.cron';
 import { registerFeedbackExpiryCron } from './api/feedback/feedback-expiry.cron';
 import { registerFeedbackReminderCron } from './api/feedback/feedback-reminder.cron';
+import { registerQualityEscalationCron } from './api/quality/quality-escalation.cron';
+import { registerCapaReminderCron } from './api/incident/incident-capa-reminder.cron';
+import qualityUnitRoutes from './api/quality/quality-units.routes';
+import qualityAuditRoutes from './api/quality/quality-audits.routes';
+import activityLogRoutes from './api/activity-log/activity-log.routes';
 import { registerMealOrderCron } from './api/dietetics/meal-order.cron';
 import { clearAllPriorities } from './api/priority/priority.controller';
 import { hmisSyncQueue } from './api/hmis-sync/hmis-sync.queue';
@@ -224,6 +229,10 @@ app.use('/api/emergency-codes', emergencyCodesRoutes);
 app.use('/api/incidents', incidentRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/complaints', complaintRoutes);
+// Before the generic /api/quality router so its routes can't shadow /units.
+app.use('/api/quality/units', qualityUnitRoutes);
+app.use('/api/quality/audits', qualityAuditRoutes);
+app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/quality/indicators', qualityIndicatorRoutes);
 app.use('/api/quality/rcas', qualityRcaRoutes);
@@ -357,6 +366,12 @@ app.listen(PORT, () => {
     // Phase 9.25 / Phase 6d — Feedback survey expiry (hourly) + reminder (4h)
     registerFeedbackExpiryCron();
     registerFeedbackReminderCron();
+
+    // Quality escalation matrix — incidents + complaints, per unit HOD (every 10 min)
+    registerQualityEscalationCron();
+
+    // Incident CAPA — overdue actions + due effectiveness checks (daily 09:00 IST)
+    registerCapaReminderCron();
 
     // Phase 9.26 / Phase 2 — Monthly QI auto-source (1st of month, 02:00)
     registerQualityAutoSourceCron();
