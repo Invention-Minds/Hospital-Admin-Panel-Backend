@@ -21,6 +21,7 @@ import {
   subjectSnapshot,
 } from '../../service/appointment-event';
 import { auditLog } from '../../service/app-audit';
+import { backfillPatientPhone } from '../patient/patient-helper';
 import { getNurseAllowedDepartments } from '../_shared/nursing-roles';
 
 const prisma = new PrismaClient();
@@ -1209,6 +1210,20 @@ export const checkInAppointment = async (req: Request, res: Response) => {
         }),
       },
     });
+
+    // Patient is at the desk, so this is the one place the booking phone is
+    // trusted enough to fill a registered record that has no number at all.
+    // Best-effort: a failure is logged and check-in still succeeds.
+    let phoneBackfilled: string | null = null;
+    const effectivePrn = updatedAppointment.prnNumber;
+    if (effectivePrn) {
+      try {
+        phoneBackfilled = await backfillPatientPhone(effectivePrn, updatedAppointment.phoneNumber);
+      } catch (err) {
+        console.error(`[checkin] phone backfill failed for PRN ${effectivePrn}:`, err);
+      }
+    }
+
     await recordAppointmentEvent(req, {
       appointmentId: updatedAppointment.id,
       eventType: 'CHECKED_IN',
@@ -1224,6 +1239,7 @@ export const checkInAppointment = async (req: Request, res: Response) => {
         // that runs just before this endpoint, so the row already carries it
         // here. Recorded so undo-checkin can clear what this flow entered.
         typeAtCheckin: appointment.type,
+        ...(phoneBackfilled && { phoneBackfilledToPrn: effectivePrn, phoneBackfilled }),
         ...(capturedPrn !== null && {
           prnCapturedAtCheckin: capturedPrn,
           patientRecordFound,

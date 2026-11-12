@@ -58,6 +58,45 @@ export const syncPatientToHmis = async (patientData: {
 };
 
 /**
+ * Fill in the registered patient's mobile from an appointment, but only when
+ * the record has NO number on file. Never overwrites: mobileNo/contactNo is
+ * where the WhatsApp bot sends the record-access OTP (record-access.service
+ * getRegisteredNumber), so replacing a number would hand records to whoever
+ * typed it. Call only from staff-authenticated flows (check-in), never from
+ * public website / bot bookings.
+ *
+ * Returns the 10-digit number written, or null when nothing changed (unknown
+ * PRN, number already on file, or the appointment phone isn't 10 digits).
+ */
+export const backfillPatientPhone = async (
+  prn: number,
+  phone: string | null | undefined,
+): Promise<string | null> => {
+  const digits = (phone ?? "").replace(/\D/g, "").slice(-10);
+  if (digits.length !== 10) return null;
+
+  const patient = await prisma.patientDetails.findUnique({
+    where: { prn },
+    select: { id: true, mobileNo: true, contactNo: true },
+  });
+  if (!patient) return null;
+
+  const hasNumber = (v: string | null) => (v ?? "").replace(/\D/g, "").length > 0;
+  if (hasNumber(patient.mobileNo) || hasNumber(patient.contactNo)) return null;
+
+  // Conditional write so a concurrent edit that just added a number wins.
+  const result = await prisma.patientDetails.updateMany({
+    where: {
+      id: patient.id,
+      OR: [{ mobileNo: null }, { mobileNo: "" }],
+      AND: [{ OR: [{ contactNo: null }, { contactNo: "" }] }],
+    },
+    data: { mobileNo: digits },
+  });
+  return result.count > 0 ? digits : null;
+};
+
+/**
  * Create or get patient with PRN sync
  */
 export const createOrGetPatient = async (patientData: {

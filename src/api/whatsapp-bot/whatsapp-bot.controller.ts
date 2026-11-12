@@ -62,7 +62,7 @@ const EMERGENCY_NUMBER = process.env.HOSPITAL_EMERGENCY_NUMBER || HELPLINE;
 
 // Media retention notice (deletion handled by the cleanup cron).
 const MEDIA_RETENTION_DAYS = Number(process.env.WHATSAPP_MEDIA_RETENTION_DAYS) || 5;
-const MEDIA_NOTE = `Note: documents/images you send are securely stored for follow-up only and are automatically deleted after ${MEDIA_RETENTION_DAYS} days. If needed later, please send them again.`;
+const MEDIA_NOTE = `Note: Documents and images you send are stored securely for follow-up only and are deleted automatically after ${MEDIA_RETENTION_DAYS} days. If you need them later, please send them again.`;
 
 // Doorstep services — free radius from the hospital.
 const HOSPITAL_LAT = process.env.HOSPITAL_LAT ? Number(process.env.HOSPITAL_LAT) : null;
@@ -200,7 +200,7 @@ async function sendMainMenu(to: string, greet = true): Promise<void> {
   await sendList(
     to,
     HOSPITAL_NAME,
-    `${greet ? `Hello, and a warm welcome to ${HOSPITAL_NAME}! I'm your virtual assistant.\n` : ''}How can we help you today?`,
+    `${greet ? `Hello, and a warm welcome to ${HOSPITAL_NAME}! I'm your virtual assistant.\n` : ''}How can I help you today?`,
     'Main menu',
     [
       { id: 'APPT', title: 'Doctor Appointment' },
@@ -285,7 +285,7 @@ async function startOtp(from: string, name: string, flow: string): Promise<void>
   await sendText(
     from,
     ok
-      ? 'We have sent a 6-digit OTP to your number. Enter it to continue (valid 2 minutes). Reply "resend" for a new code.'
+      ? 'We have sent a 6-digit OTP to your number. Please enter it to continue (valid for 2 minutes). Reply "resend" for a new code.'
       : `We couldn't send the OTP right now. Please try again later or call ${HELPLINE}.`,
   );
 }
@@ -345,20 +345,29 @@ async function getFreeSlots(doctorId: number, dateISO: string): Promise<string[]
   return free.slice(0, 30); // paginated 9/page downstream
 }
 
-// Next bookable dates for a doctor (IST): only weekdays they're available, and
-// excluding their leave / unavailable dates. Scans up to 21 days, returns `count`.
-async function availableDates(doctorId: number, count = 7): Promise<{ id: string; title: string }[]> {
+// Date list covers the next DATE_LIST_DAYS days (paged); anything later up to
+// MAX_BOOKING_DAYS is typed in by the patient ("Pick a later date").
+const DATE_LIST_DAYS = 30;
+const MAX_BOOKING_DAYS = 90;
+
+async function doctorWorkdays(doctorId: number): Promise<Set<string>> {
   const avails = await prisma.doctorAvailability.findMany({ where: { doctorId }, select: { day: true } });
-  const days = new Set(avails.map((a) => (a.day ?? '').toLowerCase()).filter(Boolean));
+  return new Set(avails.map((a) => (a.day ?? '').toLowerCase()).filter(Boolean));
+}
+
+// Bookable dates for a doctor (IST): only weekdays they're available, and
+// excluding their leave / unavailable dates, over the next `horizonDays` days.
+async function availableDates(doctorId: number, horizonDays = DATE_LIST_DAYS): Promise<{ id: string; title: string }[]> {
+  const days = await doctorWorkdays(doctorId);
   const since = moment().tz(TZ).startOf('day').toDate();
-  const horizon = moment().tz(TZ).add(21, 'days').endOf('day').toDate();
+  const horizon = moment().tz(TZ).add(horizonDays, 'days').endOf('day').toDate();
   const [unav, leave] = await Promise.all([
     prisma.unavailableDates.findMany({ where: { doctorId, date: { gte: since, lte: horizon } }, select: { date: true } }),
     prisma.leaveDates.findMany({ where: { doctorId, date: { gte: since, lte: horizon } }, select: { date: true } }),
   ]);
   const blocked = new Set([...unav, ...leave].map((x) => istYmd(x.date)));
   const out: { id: string; title: string }[] = [];
-  for (let i = 0; i < 21 && out.length < count; i++) {
+  for (let i = 0; i < horizonDays; i++) {
     const m = moment().tz(TZ).add(i, 'days');
     const ymd = m.format('YYYY-MM-DD');
     const wd = m.format('ddd').toLowerCase();
@@ -369,18 +378,62 @@ async function availableDates(doctorId: number, count = 7): Promise<{ id: string
   return out;
 }
 
+// Parse a typed date ("25/12/2026", "25-12-26", "25 Dec 2026", "25 Dec") into
+// YYYY-MM-DD (IST). Without a year: this year, or next year if already past.
+function parseTypedDate(input: string): string | null {
+  const t = input.trim();
+  const withYear = moment.tz(t, ['D/M/YYYY', 'D-M-YYYY', 'D.M.YYYY', 'D/M/YY', 'D-M-YY', 'D MMM YYYY', 'D MMMM YYYY', 'MMM D YYYY', 'MMMM D YYYY'], true, TZ);
+  if (withYear.isValid()) return withYear.format('YYYY-MM-DD');
+  const noYear = moment.tz(t, ['D/M', 'D-M', 'D MMM', 'D MMMM', 'MMM D', 'MMMM D'], true, TZ);
+  if (!noYear.isValid()) return null;
+  const today = moment().tz(TZ).startOf('day');
+  noYear.year(today.year());
+  if (noYear.isBefore(today)) noYear.add(1, 'year');
+  return noYear.format('YYYY-MM-DD');
+}
+
+// Why a typed date can't be booked, or null if the doctor is available that day.
+async function typedDateProblem(doctorId: number, ymd: string): Promise<string | null> {
+  const day = moment.tz(ymd, 'YYYY-MM-DD', TZ);
+  const today = moment().tz(TZ).startOf('day');
+  const diff = day.diff(today, 'days');
+  const label = day.format('ddd, DD MMM YYYY');
+  if (diff < 0) return `${label} is in the past. Please type a future date.`;
+  if (diff > MAX_BOOKING_DAYS) {
+    return `Appointments can be booked up to ${MAX_BOOKING_DAYS} days ahead. Please type a date on or before ${today.clone().add(MAX_BOOKING_DAYS, 'days').format('DD/MM/YYYY')}.`;
+  }
+  const days = await doctorWorkdays(doctorId);
+  if (days.size && !days.has(day.format('ddd').toLowerCase())) {
+    return `The doctor is not available on ${day.format('dddd')}s. Please type another date.`;
+  }
+  const range = { gte: day.clone().startOf('day').toDate(), lte: day.clone().endOf('day').toDate() };
+  const [unav, leave] = await Promise.all([
+    prisma.unavailableDates.count({ where: { doctorId, date: range } }),
+    prisma.leaveDates.count({ where: { doctorId, date: range } }),
+  ]);
+  if (unav + leave > 0) return `The doctor is not available on ${label}. Please type another date.`;
+  return null;
+}
+
 // Paginated list. If everything fits (≤9) show it plainly. Otherwise page by 8
 // and add "« Previous" (id PREV) / "Show more »" (id MORE) nav rows — 8 + 2 nav
 // = WhatsApp's 10-row max. Item ids are stable, so selection works on any page.
 const PAGE_SIZE = 8;
 type ListItem = { id: string; title: string; description?: string };
-async function sendPagedList(from: string, header: string, body: string, button: string, items: ListItem[], page: number): Promise<void> {
+// `lastRow` (optional) is appended after the final item — on the last page only.
+async function sendPagedList(from: string, header: string, body: string, button: string, items: ListItem[], page: number, lastRow?: ListItem): Promise<void> {
   const toRow = (it: ListItem): ListItem => ({ id: it.id, title: it.title, ...(it.description ? { description: it.description } : {}) });
-  if (items.length <= 9) { await sendList(from, header, body, button, items.slice(0, 9).map(toRow)); return; }
+  if (items.length <= 9) {
+    const rows = items.slice(0, 9).map(toRow);
+    if (lastRow) rows.push(lastRow);
+    await sendList(from, header, body, button, rows);
+    return;
+  }
   const start = page * PAGE_SIZE;
   const rows: ListItem[] = items.slice(start, start + PAGE_SIZE).map(toRow);
   if (page > 0) rows.unshift({ id: 'PREV', title: '« Previous' });
   if (start + PAGE_SIZE < items.length) rows.push({ id: 'MORE', title: 'Show more »' });
+  else if (lastRow) rows.push(lastRow);
   await sendList(from, header, body, button, rows);
 }
 
@@ -392,19 +445,28 @@ async function listDoctorsByDept(departmentId: number) {
 }
 async function sendDepartments(from: string, page = 0): Promise<void> {
   const deps = await listDepartments();
-  if (!deps.length) { await sendText(from, `No departments are configured. Please call ${HELPLINE}.`); return; }
+  if (!deps.length) { await sendText(from, `No departments are available right now. Please call ${HELPLINE}.`); return; }
   const items: ListItem[] = [{ id: 'DEPT_HELP', title: 'Not sure / Help me choose' }, ...deps.map((d) => ({ id: `DEP_${d.id}`, title: d.name }))];
   await sendPagedList(from, 'Select department', 'Choose the department, or let us suggest one.', 'Departments', items, page);
 }
 async function sendDoctorsForDept(from: string, departmentId: number, page = 0): Promise<void> {
   const docs = await listDoctorsByDept(departmentId);
-  if (!docs.length) { await sendText(from, 'No doctors are available in that department right now. Reply "menu".'); return; }
+  if (!docs.length) { await sendText(from, 'No doctors are available in that department right now. Reply "menu" to go back.'); return; }
   await sendPagedList(from, 'Select doctor', 'Choose your doctor.', 'Doctors', docs.map((d) => ({ id: `DOC_${d.id}`, title: d.name })), page);
 }
-async function sendDateOptions(from: string, doctorId: number): Promise<void> {
+function typedDatePrompt(): string {
+  const example = moment().tz(TZ).add(45, 'days').format('DD/MM/YYYY');
+  return `Please type the date you’d like, for example ${example}. You can book up to ${MAX_BOOKING_DAYS} days ahead.`;
+}
+async function sendDateOptions(from: string, doctorId: number, page = 0): Promise<void> {
   const dates = await availableDates(doctorId);
-  if (!dates.length) { await sendText(from, `No available dates for this doctor in the next few weeks. Please call ${HELPLINE}.`); return; }
-  await sendList(from, 'Select date', 'Choose a preferred date.', 'Dates', dates.map((d) => ({ id: `DATE_${d.id}`, title: d.title })));
+  if (!dates.length) {
+    await sendText(from, `There are no available dates for this doctor in the next ${DATE_LIST_DAYS} days. ${typedDatePrompt()} Or call ${HELPLINE}.`);
+    return;
+  }
+  await sendPagedList(from, 'Select date', 'Choose your preferred date.', 'Dates',
+    dates.map((d) => ({ id: `DATE_${d.id}`, title: d.title })), page,
+    { id: 'DATE_OTHER', title: 'Pick a later date' });
 }
 function slotItems(slots: string[]): ListItem[] {
   return slots.map((s, i) => ({ id: `SLOT_${i}`, title: s }));
@@ -420,7 +482,7 @@ const LANGS: { id: string; title: string; code: string }[] = [
   { id: 'LANG_te', title: 'Telugu', code: 'te' },
 ];
 async function sendLangList(from: string): Promise<void> {
-  await sendList(from, 'Select language', 'Choose the language you’ll describe your problem in.', 'Languages', LANGS.map((l) => ({ id: l.id, title: l.title })));
+  await sendList(from, 'Select language', 'Choose the language you’ll use to describe your problem.', 'Languages', LANGS.map((l) => ({ id: l.id, title: l.title })));
 }
 
 function matchMenuKeywords(input: string): string | null {
@@ -539,8 +601,8 @@ async function proceedWithSymptoms(from: string, symptoms: string): Promise<void
   if (!dept || !docs.length) {
     await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'APPT_DEPT' } });
     await sendText(from, dept
-      ? `The suggested ${dept.name} department has no doctors available for booking right now. Please choose another:`
-      : 'I couldn’t auto-detect a department. Please choose one:');
+      ? `The suggested ${dept.name} department has no doctors available for booking right now. Please choose another department:`
+      : 'I couldn’t find a suitable department. Please choose one:');
     await sendDepartments(from, 0);
     return;
   }
@@ -613,7 +675,7 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
       .catch((e) => console.warn('[whatsapp-bot] appt notify failed:', (e as Error).message));
     await finishWithThanks(
       from,
-      `Thank you, ${sc.name}. Your ${sc.type === 'followup' ? 'free follow-up' : 'appointment'} request with ${sc.doctorName} on ${sc.date} at ${sc.slot} is received and is PENDING. Our teleconsultation team will call you shortly to confirm.`,
+      `Thank you, ${sc.name}. Your ${sc.type === 'followup' ? 'free follow-up' : 'appointment'} request with ${sc.doctorName} on ${moment.tz(sc.date, 'YYYY-MM-DD', TZ).format('ddd, DD MMM')} at ${sc.slot} has been received and is pending confirmation. Our teleconsultation team will call you shortly to confirm it.`,
     );
     return;
   }
@@ -685,7 +747,7 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
     else charge = 'Our team will confirm any applicable charges.';
     await finishWithThanks(
       from,
-      `Thank you, ${sc.name}. Your ${serviceLabel} request (${refNo}) is received and is PENDING. ${charge} Our team will call you shortly to arrange it.`,
+      `Thank you, ${sc.name}. Your ${serviceLabel} request (${refNo}) has been received and is pending confirmation. ${charge} Our team will call you shortly to arrange it.`,
     );
     return;
   }
@@ -714,7 +776,8 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
         },
       })
       .catch((e) => console.warn('[whatsapp-bot] enquiry notify failed:', (e as Error).message));
-    await finishWithThanks(from, `Thank you, ${sc.name}. Your ${isSurgery ? 'surgery estimation' : isInsurance ? 'insurance' : ''} enquiry is received. Our team will call you back shortly.`);
+    const enquiryLabel = isSurgery ? 'surgery estimation enquiry' : isInsurance ? 'insurance enquiry' : 'enquiry';
+    await finishWithThanks(from, `Thank you, ${sc.name}. Your ${enquiryLabel} has been received. Our team will call you back shortly.`);
     return;
   }
 
@@ -742,13 +805,13 @@ async function finalizeFlow(from: string, session: { flow: string | null; scratc
         })),
       });
     })().catch((e) => console.warn('[whatsapp-bot] complaint notify failed:', (e as Error).message));
-    await finishWithThanks(from, `Thank you, ${sc.name}. Your complaint (${c.code}) has been registered. Our team will follow up.`);
+    await finishWithThanks(from, `Thank you, ${sc.name}. Your complaint (${c.code}) has been registered. Our team will follow up with you.`);
     return;
   }
 
   // Fallback.
   await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU', flow: null, scratch: null } });
-  await sendText(from, 'Done. Reply "menu" for options.');
+  await sendText(from, 'Done. Reply "menu" to see the options.');
   void now;
 }
 
@@ -772,19 +835,19 @@ async function startFlow(from: string, intent: string): Promise<boolean> {
       return true;
     case 'ENQ_REPORT':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'AWAITING_PRN', flow: 'REPORT', prn: null, doctorId: null, doctorName: null, activeQueryId: null, prnAttempts: 0, scratch: null } });
-      await sendText(from, 'Report follow-up. Please reply with your *PRN* (Patient Registration Number).');
+      await sendText(from, 'For a report follow-up, please reply with your *PRN* (Patient Registration Number).');
       return true;
     case 'ENQ_SURGERY':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_S_NAME', flow: 'ENQ_SURGERY', scratch: null } });
-      await sendText(from, 'Surgery estimation enquiry. Please type your full name.');
+      await sendText(from, 'For a surgery estimation enquiry, please type your full name.');
       return true;
     case 'ENQ_INSURANCE':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_I_NAME', flow: 'ENQ_INSURANCE', scratch: null } });
-      await sendText(from, 'Insurance enquiry. Please type your full name.');
+      await sendText(from, 'For an insurance enquiry, please type your full name.');
       return true;
     case 'ENQ_COMPLAINT':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_C_NAME', flow: 'ENQ_COMPLAINT', scratch: null } });
-      await sendText(from, 'Raise a complaint. Please type your full name.');
+      await sendText(from, 'To raise a complaint, please type your full name.');
       return true;
     case 'OTHERS':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'OTHERS_NAME', flow: 'OTHERS', scratch: null } });
@@ -792,7 +855,7 @@ async function startFlow(from: string, intent: string): Promise<boolean> {
       return true;
     case 'RECORDS':
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'RECORDS_PRN', flow: 'RECORDS', scratch: null } });
-      await sendText(from, 'To protect your privacy, medical records are shared only with the mobile number registered against the PRN.\n\nPlease enter your *PRN*.');
+      await sendText(from, 'To protect your privacy, medical records are shared only with the mobile number registered with your PRN.\n\nPlease enter your *PRN*.');
       return true;
     default:
       return false;
@@ -841,7 +904,7 @@ async function startRecordsOtp(from: string, name: string, registeredNumber: str
   await sendText(
     from,
     ok
-      ? `We have sent a 6-digit OTP by SMS to the registered mobile number ending ${maskNumber(registeredNumber)}. Enter it here to continue (valid 2 minutes). Reply "resend" for a new code.`
+      ? `We have sent a 6-digit OTP by SMS to the registered mobile number ending in ${maskNumber(registeredNumber)}. Please enter it here to continue (valid for 2 minutes). Reply "resend" for a new code.`
       : `We couldn't send the OTP right now. Please try again later or call ${HELPLINE}.`,
   );
 }
@@ -1026,22 +1089,22 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
           where: { phone: from },
           data: { state: 'AWAITING_PRN', flow: 'REPORT', prn: null, doctorId: null, doctorName: null, activeQueryId: null, prnAttempts: 0 },
         });
-        await sendText(from, 'Report follow-up. Please reply with your *PRN* (Patient Registration Number).');
+        await sendText(from, 'For a report follow-up, please reply with your *PRN* (Patient Registration Number).');
         return;
       }
       if (choice === 'ENQ_SURGERY') {
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_S_NAME', flow: 'ENQ_SURGERY', scratch: null } });
-        await sendText(from, 'Surgery estimation enquiry. Please type your full name.');
+        await sendText(from, 'For a surgery estimation enquiry, please type your full name.');
         return;
       }
       if (choice === 'ENQ_INSURANCE') {
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_I_NAME', flow: 'ENQ_INSURANCE', scratch: null } });
-        await sendText(from, 'Insurance enquiry. Please type your full name.');
+        await sendText(from, 'For an insurance enquiry, please type your full name.');
         return;
       }
       if (choice === 'ENQ_COMPLAINT') {
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_C_NAME', flow: 'ENQ_COMPLAINT', scratch: null } });
-        await sendText(from, 'Raise a complaint. Please type your full name.');
+        await sendText(from, 'To raise a complaint, please type your full name.');
         return;
       }
       if (await routeFreeText(from, text)) return; // AI intent fallback
@@ -1073,7 +1136,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { prnAttempts: attempts } });
         await sendText(from, attempts >= MAX_PRN_ATTEMPTS
           ? `We couldn't verify your PRN. Please call our helpline: ${HELPLINE}`
-          : `No record found for PRN ${prn}. Please check and resend.`);
+          : `No record found for PRN ${prn}. Please check it and send it again.`);
         return;
       }
       // Identity is proved by an OTP sent to the REGISTERED mobile (via SMS).
@@ -1083,7 +1146,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       if (!registered) {
         await logRecordAccess({ prn, phone: from, itemType: 'list', action: 'denied' });
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU', flow: null, scratch: null } });
-        await sendText(from, `We don't have a mobile number registered against PRN ${prn}, so we can't verify your identity here. Please contact reception to update it, or call ${HELPLINE}.`);
+        await sendText(from, `We don't have a mobile number registered with PRN ${prn}, so we can't verify your identity here. Please contact reception to update it, or call ${HELPLINE}.`);
         return;
       }
       // Audit when records are pulled from a phone other than the registered one.
@@ -1109,7 +1172,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         return;
       }
       if (entry.replace(/\D/g, '') !== session.otpCode) {
-        await sendText(from, 'Incorrect OTP. Please re-enter, or reply "resend".');
+        await sendText(from, 'Incorrect OTP. Please re-enter it, or reply "resend".');
         return;
       }
       await prisma.whatsappBotSession.update({
@@ -1149,7 +1212,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         where: { phone: from },
         data: { state: 'RECORDS_LIST', scratch: JSON.stringify({ ...sc, recKind: kind, _recItems: items, _recPage: 0 }) },
       });
-      await sendPagedList(from, 'Select document', 'Choose the document to receive:', 'Documents',
+      await sendPagedList(from, 'Select document', 'Choose the document you’d like to receive:', 'Documents',
         items.map((it) => ({ id: `REC_${it.ref}`, title: it.title })), 0);
       return;
     }
@@ -1167,7 +1230,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       if (replyId === 'MORE' || replyId === 'PREV') {
         const page = replyId === 'PREV' ? Math.max(0, (sc._recPage || 0) - 1) : (sc._recPage || 0) + 1;
         await mergeScratch(from, session, { _recPage: page });
-        await sendPagedList(from, 'Select document', 'Choose the document to receive:', 'Documents', listRows, page);
+        await sendPagedList(from, 'Select document', 'Choose the document you’d like to receive:', 'Documents', listRows, page);
         return;
       }
       let ref: string | undefined;
@@ -1215,12 +1278,12 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       const prn = parseInt((text ?? '').replace(/\D/g, ''), 10);
       if (!prn || Number.isNaN(prn)) { await sendText(from, 'Please enter a valid PRN (numbers only), or reply "new".'); return; }
       const pd = await prisma.patientDetails.findUnique({ where: { prn } });
-      if (!pd) { await sendText(from, `No record for PRN ${prn}. Re-enter, or reply "new" for a first visit.`); return; }
+      if (!pd) { await sendText(from, `No record was found for PRN ${prn}. Please re-enter it, or reply "new" if this is your first visit.`); return; }
       if (sc.type === 'followup') {
         const fuDocs = await recentVisitDoctors(prn);
         if (!fuDocs.length) {
           await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU', flow: null, scratch: null } });
-          await sendText(from, 'A free follow-up applies only within 7 days of a completed visit, and we don’t see an eligible recent visit on this PRN. You can book a New visit — reply "menu".');
+          await sendText(from, 'A free follow-up applies only within 7 days of a completed visit, and we don’t see an eligible recent visit for this PRN. You can book a new visit instead. Reply "menu".');
           return;
         }
         await mergeScratch(from, session, { prn, name: pd.name, _fuDocPage: 0 });
@@ -1273,7 +1336,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       if (!lang) { await sendLangList(from); return; }
       await mergeScratch(from, session, { helpLang: lang.code });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'APPT_HELP_INPUT' } });
-      await sendText(from, 'Please describe what you are suffering from — type it, or send a voice message in your chosen language.');
+      await sendText(from, 'Please describe your symptoms. You can type them or send a voice message in your chosen language.');
       return;
     }
 
@@ -1282,19 +1345,19 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       const typed = (text ?? '').trim();
       if (typed) { await proceedWithSymptoms(from, typed); return; } // typed text — they already see it
       if (media && media.type === 'audio') {
-        await sendText(from, 'Got your voice message — understanding it…');
+        await sendText(from, 'Got your voice message. Processing it…');
         const dl = await downloadMedia(media.id);
         const transcript = (dl ? await transcribeAudio(dl.buffer, sc.helpLang || 'en') : null)?.trim();
         if (!transcript) { await sendText(from, 'Sorry, I couldn’t understand the audio. Please try again, or type your problem.'); return; }
         await mergeScratch(from, session, { symptoms: transcript });
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'APPT_HELP_CONFIRM' } });
-        await sendButtons(from, `I understood:\n\n"${transcript}"\n\nIs that correct?`, [
+        await sendButtons(from, `Here’s what I understood:\n\n"${transcript}"\n\nIs that correct?`, [
           { id: 'HELP_YES', title: 'Yes, proceed' },
           { id: 'HELP_NO', title: 'Re-record' },
         ]);
         return;
       }
-      await sendText(from, 'Please describe your problem as text, or send a voice message.');
+      await sendText(from, 'Please type your problem, or send a voice message.');
       return;
     }
 
@@ -1334,7 +1397,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       let doc = replyId?.startsWith('DOC_') ? docs.find((d) => `DOC_${d.id}` === replyId) : undefined;
       if (!doc && text) doc = docs.find((d) => d.name.toLowerCase() === text.trim().toLowerCase());
       if (!doc) { await sendDoctorsForDept(from, sc.departmentId, sc._docPage || 0); return; }
-      await mergeScratch(from, session, { doctorId: doc.id, doctorName: doc.name });
+      await mergeScratch(from, session, { doctorId: doc.id, doctorName: doc.name, _datePage: 0 });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'APPT_DATE' } });
       await sendDateOptions(from, doc.id);
       return;
@@ -1356,7 +1419,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         await sendPagedList(from, 'Select doctor', 'Please pick the doctor you consulted.', 'Doctors', fuDocs.map((d) => ({ id: `DOC_${d.id}`, title: d.name })), sc._fuDocPage || 0);
         return;
       }
-      await mergeScratch(from, session, { doctorId: doc.id, doctorName: doc.name, department: doc.department ?? '' });
+      await mergeScratch(from, session, { doctorId: doc.id, doctorName: doc.name, department: doc.department ?? '', _datePage: 0 });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'APPT_DATE' } });
       await sendDateOptions(from, doc.id);
       return;
@@ -1364,13 +1427,31 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
 
     case 'APPT_DATE': {
       const scd = readScratch(session);
+      if (replyId === 'MORE' || replyId === 'PREV') {
+        const page = replyId === 'PREV' ? Math.max(0, (scd._datePage || 0) - 1) : (scd._datePage || 0) + 1;
+        await mergeScratch(from, session, { _datePage: page });
+        await sendDateOptions(from, scd.doctorId, page);
+        return;
+      }
+      if (replyId === 'DATE_OTHER') { await sendText(from, typedDatePrompt()); return; }
       let ymd: string | undefined = replyId?.startsWith('DATE_') ? replyId.slice(5) : undefined;
-      if (!ymd && text) ymd = (await availableDates(scd.doctorId)).find((d) => d.title.toLowerCase() === text.trim().toLowerCase())?.id;
-      if (!ymd) { await sendDateOptions(from, scd.doctorId); return; }
-      const sc = await mergeScratch(from, session, { date: ymd });
+      if (!ymd && text) {
+        ymd = (await availableDates(scd.doctorId)).find((d) => d.title.toLowerCase() === text.trim().toLowerCase())?.id;
+        if (!ymd) {
+          // Typed date (e.g. beyond the listed 30 days) — validate against the doctor's schedule.
+          const typed = parseTypedDate(text);
+          if (typed) {
+            const problem = await typedDateProblem(scd.doctorId, typed);
+            if (problem) { await sendText(from, problem); return; }
+            ymd = typed;
+          }
+        }
+      }
+      if (!ymd) { await sendDateOptions(from, scd.doctorId, scd._datePage || 0); return; }
+      const sc = await mergeScratch(from, session, { date: ymd, _datePage: 0 });
       const slots = await getFreeSlots(sc.doctorId, ymd);
       if (!slots.length) {
-        await sendText(from, `No free slots for ${sc.doctorName} on ${moment.tz(ymd, 'YYYY-MM-DD', TZ).format('ddd, DD MMM')}. Please pick another date.`);
+        await sendText(from, `There are no free slots for ${sc.doctorName} on ${moment.tz(ymd, 'YYYY-MM-DD', TZ).format('ddd, DD MMM')}. Please pick another date.`);
         await sendDateOptions(from, sc.doctorId);
         return;
       }
@@ -1431,7 +1512,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       const prn = parseInt((text ?? '').replace(/\D/g, ''), 10);
       if (!prn || Number.isNaN(prn)) { await sendText(from, 'Please enter a valid PRN (numbers only), or reply "new".'); return; }
       const pd = await prisma.patientDetails.findUnique({ where: { prn } });
-      if (!pd) { await sendText(from, `No record for PRN ${prn}. Re-enter, or reply "new".`); return; }
+      if (!pd) { await sendText(from, `No record was found for PRN ${prn}. Please re-enter it, or reply "new".`); return; }
       await mergeScratch(from, session, { prn, name: pd.name });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'DOORSTEP_ADDRESS' } });
       await sendText(from, 'Please type your full address (house/flat, street, area, landmark, pincode).');
@@ -1452,7 +1533,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       if (address.length < 6) { await sendText(from, 'Please type your full address.'); return; }
       await mergeScratch(from, session, { address });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'DOORSTEP_LOCATION' } });
-      await sendText(from, `Optionally share your location pin (WhatsApp attach → Location) so we can check free-service eligibility (within ${DOORSTEP_FREE_RADIUS_KM} km). Or reply "skip".`);
+      await sendText(from, `You can also share your location pin (Attach → Location) so we can check whether you're eligible for the free service (within ${DOORSTEP_FREE_RADIUS_KM} km). Or reply "skip".`);
       return;
     }
 
@@ -1491,7 +1572,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
     }
     case 'ENQ_S_PROC': {
       const proc = (text ?? '').trim();
-      if (proc.length < 2) { await sendText(from, 'Please type the surgery / procedure name.'); return; }
+      if (proc.length < 2) { await sendText(from, 'Please type the surgery or procedure name.'); return; }
       const sc = await mergeScratch(from, session, { procedure: proc });
       await startOtp(from, sc.name, 'ENQ_SURGERY');
       return;
@@ -1508,15 +1589,15 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
     }
     case 'ENQ_I_PROC': {
       const proc = (text ?? '').trim();
-      if (proc.length < 2) { await sendText(from, 'Please type the surgery / procedure name.'); return; }
+      if (proc.length < 2) { await sendText(from, 'Please type the surgery or procedure name.'); return; }
       await mergeScratch(from, session, { procedure: proc });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'ENQ_I_PLAN' } });
-      await sendText(from, 'Please share your insurance provider / plan details.');
+      await sendText(from, 'Please share your insurance provider and plan details.');
       return;
     }
     case 'ENQ_I_PLAN': {
       const plan = (text ?? '').trim();
-      if (plan.length < 2) { await sendText(from, 'Please type your insurance provider / plan.'); return; }
+      if (plan.length < 2) { await sendText(from, 'Please type your insurance provider and plan.'); return; }
       const sc = await mergeScratch(from, session, { insurance: plan });
       await startOtp(from, sc.name, 'ENQ_INSURANCE');
       return;
@@ -1545,7 +1626,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       if (name.length < 2) { await sendText(from, 'Please type your full name.'); return; }
       await mergeScratch(from, session, { name });
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'OTHERS_MSG' } });
-      await sendText(from, 'Please type your message / request.');
+      await sendText(from, 'Please type your message or request.');
       return;
     }
     case 'OTHERS_MSG': {
@@ -1566,7 +1647,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         return;
       }
       if (entry.replace(/\D/g, '') !== session.otpCode) {
-        await sendText(from, 'Incorrect OTP. Please re-enter, or reply "resend".');
+        await sendText(from, 'Incorrect OTP. Please re-enter it, or reply "resend".');
         return;
       }
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { otpCode: null } });
@@ -1580,7 +1661,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       });
       if (choice === 'CONSENT_NO') {
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'MENU', flow: null, scratch: null } });
-        await sendText(from, 'Understood. Without your consent we can’t process this request. Reply "menu" anytime.');
+        await sendText(from, 'Understood. Without your consent, we can’t process this request. Reply "menu" anytime.');
         return;
       }
       if (choice !== 'CONSENT_YES') { await askConsent(from); return; }
@@ -1603,20 +1684,20 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         if (attempts >= MAX_PRN_ATTEMPTS) {
           await sendText(from, `We couldn't verify your PRN after several attempts. Please call our helpline: ${HELPLINE}`);
         } else {
-          await sendText(from, `No record found for PRN ${prn}. Please check and resend, or contact reception.`);
+          await sendText(from, `No record found for PRN ${prn}. Please check it and send it again, or contact reception.`);
         }
         return;
       }
       const docs = await doctorsForPrn(prn);
       if (docs.length === 0) {
-        await sendText(from, `Hi ${patient.name}, we couldn’t find a consulting doctor on PRN ${prn}. Please call our helpline: ${HELPLINE}`);
+        await sendText(from, `Hi ${patient.name}, we couldn’t find a consulting doctor for PRN ${prn}. Please call our helpline: ${HELPLINE}`);
         return;
       }
       await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'AWAITING_DOCTOR', prn, prnAttempts: 0 } });
       await sendList(
         from,
         'Select a doctor',
-        `Found your record, ${patient.name}.\nWhich doctor would you like to connect with?`,
+        `We found your record, ${patient.name}.\nWhich doctor would you like to connect with?`,
         'Choose doctor',
         docs.map((d) => ({ id: String(d.id), title: d.name })),
       );
@@ -1647,7 +1728,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
         where: { phone: from },
         data: { state: 'AWAITING_QUESTION', doctorId: picked.id, doctorName: picked.name },
       });
-      await sendText(from, `Please type your question about the investigation report for *${picked.name}*.`);
+      await sendText(from, `Please type your question about your investigation report for *${picked.name}*.`);
       return;
     }
 
@@ -1659,7 +1740,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       }
       if (!session.prn || !session.doctorId) {
         await prisma.whatsappBotSession.update({ where: { phone: from }, data: { state: 'AWAITING_PRN' } });
-        await sendText(from, 'Session expired. Please resend your *PRN*.');
+        await sendText(from, 'Your session has expired. Please send your *PRN* again.');
         return;
       }
       // Abuse guard: cap new queries per phone per day.
@@ -1705,7 +1786,7 @@ async function routeMessage({ from, text, replyId, media, location }: Inbound): 
       });
       await prisma.whatsappQuery.update({ where: { id: q.id }, data: { status: 'open', lastPatientMsgAt: now } });
       await notifyDoctor(q.doctorId, q.id, q.prn, q.patientName ?? from, bodyText);
-      await sendText(from, `Added to your conversation with ${q.doctorName} (${q.refNo}). Reply "menu" or "stop" to end.${media ? `\n\n${MEDIA_NOTE}` : ''}`);
+      await sendText(from, `Your message has been added to your conversation with ${q.doctorName} (${q.refNo}). Reply "menu" or "stop" to end it.${media ? `\n\n${MEDIA_NOTE}` : ''}`);
       return;
     }
 
