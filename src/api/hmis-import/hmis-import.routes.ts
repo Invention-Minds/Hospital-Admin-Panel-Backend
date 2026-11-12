@@ -36,7 +36,7 @@ const uploadFiles: RequestHandler = (req, res, next) => {
   });
 };
 
-const importer = requireRole({ subAdminTypes: ['Nursing Superintendent'] });
+const importer = requireRole({ subAdminTypes: ['Nursing Superintendent', 'Estimator'] });
 
 const handle = (apply: boolean) => async (req: Request, res: Response): Promise<void> => {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
