@@ -46,6 +46,16 @@ import {
   createAssessment, createNote, getNutritionForAdmission, getRoundsList,
 } from './nutrition.controller';
 
+import {
+  listNightAck, acknowledgeNight, receiveTray,
+  createQualityCheck, listQualityChecks, createFeedback, listFeedback,
+} from './dietary-care.controller';
+
+import {
+  listMenuOptions, addMenuOption, removeMenuOption,
+  getTakeOrderList, setTrayChoice, listFeeds, updateFeed,
+} from './dietary-orders.controller';
+
 const router = express.Router();
 
 // ─── Write permissions (checked against the DB, mirrors the sidebar) ──
@@ -74,6 +84,12 @@ const orderSync = requireRole({ subAdminTypes: [...CANTEEN, ...NURSE_SUBTYPES, .
 const extraFood = requireRole({ subAdminTypes: [...CANTEEN, ...DIETICIAN, ...NURSES] });
 /** Billed flag. */
 const billing = requireRole({ subAdminTypes: [...CANTEEN, ...BILLING] });
+/** Night diet acknowledgement — any doctor (dietitian is off duty at night). */
+const doctor = requireRole({ roles: ['doctor'] });
+/** Ward nurse confirms a tray was received. */
+const wardNurse = requireRole({ subAdminTypes: NURSES });
+/** RT feed given — ward nurses (kitchen prepares). */
+const feedFloor = requireRole({ subAdminTypes: [...CANTEEN, ...NURSES] });
 
 // ─── Masters — diets, meals, allergens, slots, menus, textures, supplements ─
 // Reads: any authenticated user. Writes: super_admin only.
@@ -167,6 +183,28 @@ router.get('/extra-food', authenticateToken, listExtraFood);
 router.post('/extra-food', authenticateToken, extraFood, requireClinicalActor, createExtraFood);
 router.post('/extra-food/bill', authenticateToken, billing, requireClinicalActor, markExtraFoodBilled);
 router.post('/extra-food/:id/:action', authenticateToken, canteenFloor, requireClinicalActor, updateExtraFood);
+
+// ─── Night diet acknowledgement (any doctor) ────────────────────────
+router.get('/night-ack', authenticateToken, listNightAck);
+router.post('/night-ack/:admissionId', authenticateToken, doctor, requireClinicalActor, acknowledgeNight);
+
+// ─── Ward receipt, food quality, patient feedback ───────────────────
+router.post('/meal-orders/:id/receive', authenticateToken, wardNurse, requireClinicalActor, receiveTray);
+router.get('/quality-checks', authenticateToken, listQualityChecks);
+router.post('/quality-checks', authenticateToken, dietary, requireClinicalActor, createQualityCheck);
+router.get('/feedback', authenticateToken, listFeedback);
+router.post('/feedback', authenticateToken, extraFood, requireClinicalActor, createFeedback);
+
+// ─── Menu options + patient's choice ("take order") ─────────────────
+router.get('/menu-options', authenticateToken, listMenuOptions);
+router.post('/menu-options', authenticateToken, setupAdmin, requireClinicalActor, addMenuOption);
+router.delete('/menu-options/:id', authenticateToken, setupAdmin, requireClinicalActor, removeMenuOption);
+router.get('/take-order', authenticateToken, getTakeOrderList);
+router.post('/meal-orders/:id/choice', authenticateToken, canteenFloor, requireClinicalActor, setTrayChoice);
+
+// ─── RT feed doses ──────────────────────────────────────────────────
+router.get('/feeds', authenticateToken, listFeeds);
+router.post('/feeds/:id/:action', authenticateToken, feedFloor, requireClinicalActor, updateFeed);
 
 // ─── Dietary alerts ─────────────────────────────────────────────────
 router.get('/alerts', authenticateToken, listAlerts);

@@ -102,7 +102,7 @@ import { registerReferralEscalationCron } from './api/emergency/referral-escalat
 import { registerIncidentRulesCron } from './api/incident/incident-rules.cron';
 import { registerQualityAutoSourceCron } from './api/quality/quality-indicator-auto.cron';
 import { registerQualityOutlierCron } from './api/quality/quality-outlier.cron';
-import { registerQualityDataQualityCron } from './api/quality/quality-data-quality';
+import { registerQiDeadlineCron } from './api/quality/quality-qi-deadline';
 import { registerFeedbackSendCron } from './api/feedback/feedback-send.cron';
 import { registerComplaintSlaCron } from './api/feedback/complaint-sla.cron';
 import { registerFeedbackExpiryCron } from './api/feedback/feedback-expiry.cron';
@@ -111,6 +111,9 @@ import { registerQualityEscalationCron } from './api/quality/quality-escalation.
 import { registerCapaReminderCron } from './api/incident/incident-capa-reminder.cron';
 import qualityUnitRoutes from './api/quality/quality-units.routes';
 import qualityAuditRoutes from './api/quality/quality-audits.routes';
+import qualityMobileRoutes from './api/quality/quality-mobile.routes';
+import mobilePushRoutes from './api/mobile-push/mobile-push.routes';
+import { registerMobilePushCron } from './api/mobile-push/mobile-push.cron';
 import activityLogRoutes from './api/activity-log/activity-log.routes';
 import { registerMealOrderCron } from './api/dietetics/meal-order.cron';
 import { clearAllPriorities } from './api/priority/priority.controller';
@@ -232,6 +235,8 @@ app.use('/api/complaints', complaintRoutes);
 // Before the generic /api/quality router so its routes can't shadow /units.
 app.use('/api/quality/units', qualityUnitRoutes);
 app.use('/api/quality/audits', qualityAuditRoutes);
+app.use('/api/quality/mobile', qualityMobileRoutes); // doctor/management mobile app
+app.use('/api/mobile/push', mobilePushRoutes); // mobile app push-token registration
 app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/quality/indicators', qualityIndicatorRoutes);
@@ -363,6 +368,9 @@ app.listen(PORT, () => {
     // Phase 9.25 / Phase 6a — Complaint SLA breach auto-escalation (every 15 min)
     registerComplaintSlaCron();
 
+    // Mobile app push alerts (critical results, patient queries, discharge drafts, 8 AM digest). Off unless MOBILE_PUSH_ENABLED=true.
+    registerMobilePushCron();
+
     // Phase 9.25 / Phase 6d — Feedback survey expiry (hourly) + reminder (4h)
     registerFeedbackExpiryCron();
     registerFeedbackReminderCron();
@@ -379,8 +387,10 @@ app.listen(PORT, () => {
     // Phase 9.26 / Phase 4 — Single-case outlier scanner (every 30 min)
     registerQualityOutlierCron();
 
-    // Phase 9.26 / Phase 4 — Missing-record data-quality sweep (Mon 09:00)
-    registerQualityDataQualityCron();
+    // Monthly QI submission deadline reminders (daily 09:00 IST). Replaces the
+    // weekly per-indicator data-quality sweep (still runnable by hand via
+    // POST /api/quality/indicators/data-quality-sweep).
+    registerQiDeadlineCron();
 
     // Security logging — aggregated threat-alert flush (~5 min) + daily log prune.
     registerSecurityAlertCron();

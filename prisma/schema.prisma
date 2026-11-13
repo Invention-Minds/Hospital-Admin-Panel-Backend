@@ -4828,6 +4828,7 @@ model MealMaster {
   compatibleDiets DietMealCompat[]
   allergens       MealAllergen[]
   menuRows        MenuPlan[]
+  menuOptions     MenuOption[]
   mealOrders      MealOrder[]
 }
 
@@ -4875,6 +4876,22 @@ model MenuPlan {
   @@index([dietMasterId])
 }
 
+// MenuOption — extra dishes a patient on this diet may choose for a meal,
+// beside the MenuPlan default. Canteen staff take the patient's choice
+// ("Take order") and the tray carries the chosen dish.
+model MenuOption {
+  id             String     @id @default(uuid())
+  dietMasterId   String
+  mealTimeSlotId String
+  dayOfWeek      Int
+  mealMasterId   String
+  meal           MealMaster @relation(fields: [mealMasterId], references: [id], onDelete: Cascade)
+  createdAt      DateTime   @default(now())
+
+  @@unique([dietMasterId, mealTimeSlotId, dayOfWeek, mealMasterId])
+  @@index([dietMasterId, mealTimeSlotId, dayOfWeek])
+}
+
 // DietPlan — one row per IPD admission per dietician re-assessment.
 model DietPlan {
   id           String     @id @default(uuid())
@@ -4917,6 +4934,18 @@ model DietPlan {
   feedVolumeMl       Int?
   feedIntervalHours  Float?
   feedNotes          String?      @db.Text
+  // Doctor's feed order, captured once: first feed time and the daily window
+  // feeds run in ("06:00", "06:00"–"22:00"). Doses + labels are generated from these.
+  feedStartTime      String?
+  feedWindowFrom     String?
+  feedWindowUntil    String?
+  // Night cover: between the night window (dietitian off duty) any doctor
+  // acknowledges a new admission / diet change; the dietitian confirms next day.
+  doctorAckAt        DateTime?
+  doctorAckBy        String?
+  doctorAckNote      String?      @db.Text
+  // Why an ACTIVE/INTERIM plan stopped (DISCHARGE | NURSING_CLEARANCE | ...).
+  endReason          String?
   // "Check" — something on this patient's diet needs verifying.
   needsCheck         Boolean      @default(false)
   checkNote          String?
@@ -4930,6 +4959,7 @@ model DietPlan {
   createdBy String?
 
   mealOrders MealOrder[]
+  feedDoses  FeedDose[]
 
   @@index([admissionId, status])
   @@index([status])
@@ -4971,6 +5001,15 @@ model MealOrder {
   billed   Boolean   @default(false)
   billedAt DateTime?
   billedBy String?
+
+  // Ward nurse confirms the tray reached the patient (after the kitchen's Serve).
+  receivedAt     DateTime?
+  receivedBy     String?
+  receivedByName String?
+
+  // Patient's own dish choice taken by canteen staff (overrides the menu default).
+  choiceTakenAt DateTime?
+  choiceTakenBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5177,6 +5216,9 @@ model DietCensusLine {
   npoFrom         DateTime?
   feedText        String?
   disposablePlate Boolean     @default(false)
+  // Entered by the nurse (prefilled from the doctor's initial assessment).
+  foodAllergy     String?     @db.Text
+  foodPreference  String?
   remarks         String?     @db.Text
   // NEW | UNCHANGED | CHANGED — vs the patient's current diet when submitted.
   changeFlag      String      @default("UNCHANGED")
@@ -5257,6 +5299,76 @@ model ExtraFoodOrder {
 
   @@index([requestedFor, status])
   @@index([admissionId])
+}
+
+// FeedDose — one RT / tube feed due at a clock time, generated from the
+// plan's feed order (start time + every N hours inside the feed window).
+// Kitchen prepares it (with a label), the nurse records it given.
+model FeedDose {
+  id           String    @id @default(uuid())
+  admissionId  String
+  dietPlanId   String
+  dietPlan     DietPlan  @relation(fields: [dietPlanId], references: [id], onDelete: Cascade)
+  scheduledFor DateTime
+  volumeMl     Int?
+  status       String    @default("ORDERED") // ORDERED | PREPARED | GIVEN | SKIPPED
+  preparedAt   DateTime?
+  preparedBy   String?
+  givenAt      DateTime?
+  givenBy      String?
+  givenByName  String?
+  skipReason   String?   @db.Text
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([admissionId, scheduledFor])
+  @@index([scheduledFor, status])
+  @@index([dietPlanId])
+}
+
+// FoodQualityCheck — dietary team's food quality / tasting record for a meal.
+// Ten parameters rated 1-5 (Unacceptable..Excellent), total out of 50 → grade.
+model FoodQualityCheck {
+  id               String   @id @default(uuid())
+  checkDate        DateTime
+  mealTimeSlotId   String?
+  dietMasterId     String?
+  item             String?
+  // { appearance, taste, aroma, texture, portion, temperature, freshness, hygiene, recipe, therapeutic }: 1-5
+  ratings          String   @db.Text
+  totalScore       Int
+  ratedCount       Int
+  grade            String
+  observations     String?  @db.Text
+  correctiveAction String?  @db.Text
+  checkedBy        String?
+  checkedById      Int?
+  createdAt        DateTime @default(now())
+
+  @@index([checkDate])
+}
+
+// DietFeedback — Patient Dietary Service Feedback Form (one per patient visit).
+model DietFeedback {
+  id             String   @id @default(uuid())
+  admissionId    String
+  feedbackDate   DateTime @default(now())
+  // { taste, temperature, timeliness, courtesy, qualityHygiene, overall }: 1-5
+  ratings        String   @db.Text
+  averageScore   Float
+  correctDiet    Boolean?
+  comments       String?  @db.Text
+  respondent     String   @default("PATIENT") // PATIENT | ATTENDANT
+  respondentName String?
+  signatureId    String?
+  staffName      String?
+  createdBy      String?
+  createdById    Int?
+  createdAt      DateTime @default(now())
+
+  @@index([admissionId])
+  @@index([feedbackDate])
 }
 
 // NutritionAssessment — the hospital's screening forms, one row per screening.
@@ -6454,7 +6566,7 @@ model IncidentCapaAction {
   incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   kind        String // 'corrective' | 'preventive'
-  description String @db.Text
+  description String    @db.Text
   owner       String?
   ownerId     Int?
   dueDate     DateTime?
@@ -6554,14 +6666,14 @@ model FeedbackSurvey {
   // Feedback analytics — encounter context copied from the visit when the
   // survey is created (OPD appointment / IPD admission / ER), so breakdowns
   // don't need joins and survive later edits to the visit.
-  department    String?
-  doctorId      Int? // OPD only; IPD stores the admitting doctor as free text
-  doctorName    String?
-  wardName      String?
-  unitId        Int? // HospitalUnit the department / ward routes to
-  collectedById Int? // staff member who created it at the desk (null = auto / walk-up)
-  language      String? // language the patient answered in: en | kn | ml | hi
-  choiceReasons String? @db.Text // JSON string[] — "why did you choose us"
+  department      String?
+  doctorId        Int? // OPD only; IPD stores the admitting doctor as free text
+  doctorName      String?
+  wardName        String?
+  unitId          Int? // HospitalUnit the department / ward routes to
+  collectedById   Int? // staff member who created it at the desk (null = auto / walk-up)
+  language        String? // language the patient answered in: en | kn | ml | hi
+  choiceReasons   String?   @db.Text // JSON string[] — "why did you choose us"
   reviewClickedAt DateTime? // patient tapped "Share on Google" on the thank-you screen
 
   complaints Complaint[]
@@ -6644,16 +6756,16 @@ model DownloadLog {
 }
 
 model FeedbackWalkUpOtp {
-  id          String    @id @default(uuid())
-  patientPrn  String
-  phoneLast4  String? // shown to the patient ("sent to ••••1234")
-  codeHash    String // sha256 of the OTP
-  expiresAt   DateTime
-  attempts    Int       @default(0) // wrong-code tries; locked at the cap
-  verifiedAt  DateTime?
-  consumedAt  DateTime? // set when a survey is minted from this challenge
-  requestIp   String?
-  createdAt   DateTime  @default(now())
+  id         String    @id @default(uuid())
+  patientPrn String
+  phoneLast4 String? // shown to the patient ("sent to ••••1234")
+  codeHash   String // sha256 of the OTP
+  expiresAt  DateTime
+  attempts   Int       @default(0) // wrong-code tries; locked at the cap
+  verifiedAt DateTime?
+  consumedAt DateTime? // set when a survey is minted from this challenge
+  requestIp  String?
+  createdAt  DateTime  @default(now())
 
   @@index([patientPrn, createdAt])
   @@index([requestIp, createdAt])
@@ -6683,7 +6795,7 @@ model Complaint {
   // links to clinical incidents that describe the same encounter).
   relatedIncidentIds String? @db.Text
 
-  description String @db.LongText
+  description String  @db.LongText
   severity    String // 'low' | 'medium' | 'high'
   // Complaint type (service/complaint-sla.ts COMPLAINT_CATEGORIES) — drives
   // the deadline together with unit + severity (ComplaintSlaRule).
@@ -6711,8 +6823,13 @@ model Complaint {
   // this week". Nullable — legacy + non-escalated rows have null.
   escalatedAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  // Quality escalation matrix — see Incident.unitId.
+  unitId            Int?
+  escalationLevel   Int       @default(0)
+  escalationStartAt DateTime?
+  lastEscalatedAt   DateTime?
 
   @@index([status])
   @@index([severity])
@@ -6721,12 +6838,6 @@ model Complaint {
   @@index([admissionId])
   @@index([appointmentId])
   @@index([emergencyId])
-  // Quality escalation matrix — see Incident.unitId.
-  unitId            Int?
-  escalationLevel   Int       @default(0)
-  escalationStartAt DateTime?
-  lastEscalatedAt   DateTime?
-
   @@index([department])
   @@index([raisedById])
   @@index([assignedToId])
@@ -6794,19 +6905,19 @@ model HospitalUnitMapping {
 // patient_relations | admin_type:<adminType> | user:<id>. Module/severity
 // pairs with no rows use the built-in default matrix (quality-escalation.ts).
 model QualityEscalationRule {
-  id           Int      @id @default(autoincrement())
-  module       String // 'incident' | 'complaint'
-  severity     String // incident: near_miss|minor|moderate|major|sentinel; complaint: low|medium|high
-  level        Int
-  afterMinutes Int
-  targets      String   @db.Text
-  label        String?
+  id             Int      @id @default(autoincrement())
+  module         String // 'incident' | 'complaint'
+  severity       String // incident: near_miss|minor|moderate|major|sentinel; complaint: low|medium|high
+  level          Int
+  afterMinutes   Int
+  targets        String   @db.Text
+  label          String?
   // Also alert the level's recipients on their phone (User.phoneNumber).
   // Off unless STAFF_ALERTS_*_ENABLED is set and the template is approved.
   notifyWhatsapp Boolean  @default(false)
   notifySms      Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([module, severity, level])
 }
@@ -6896,6 +7007,27 @@ model QualityIndicatorRecord {
   @@index([qiCode, period])
   @@index([status])
   @@index([periodStart])
+}
+
+// Monthly QI submission deadline (eFeedor gap): data for month M is due on
+// `submissionDueDay` of month M+1. Single row, id = 1; the Quality Manager edits it.
+model QualityConfig {
+  id               Int      @id @default(1)
+  submissionDueDay Int      @default(8) // 1..28
+  updatedById      Int?
+  updatedAt        DateTime @updatedAt
+}
+
+// One row per QI deadline reminder sent, so each stage fires once per month
+// even after the bell is dismissed (a click deletes it) or two servers run.
+model QualityQiReminder {
+  id      Int      @id @default(autoincrement())
+  period  String // 'YYYY-MM' the data belongs to
+  stage   String // 'opened' | 'due_soon' | 'due_today' | 'overdue_<n>'
+  missing Int
+  sentAt  DateTime @default(now())
+
+  @@unique([period, stage])
 }
 
 model QualityIndicatorRca {
@@ -7016,11 +7148,11 @@ model AuditRunResponse {
 
 // Corrective action against one NC finding (an item answered "no").
 model AuditFindingAction {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   runId       String
-  run         AuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run         AuditRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   itemId      Int
-  description String   @db.Text
+  description String    @db.Text
   owner       String?
   ownerId     Int?
   dueDate     DateTime?
@@ -7826,4 +7958,35 @@ model OphthalmologyDiagramMark {
   prescription OphthalmologyPrescription @relation(fields: [prescriptionId], references: [prescriptionId], onDelete: Cascade)
 
   @@index([prescriptionId])
+}
+
+// Doctor / management mobile app — push notifications (Expo push service).
+// One row per installed app; the token is Expo's ExponentPushToken[...].
+// disabledAt is set when Expo reports DeviceNotRegistered or on sign-out.
+model MobilePushDevice {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  token      String    @unique @db.VarChar(255)
+  platform   String // 'ios' | 'android'
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lastSeenAt DateTime  @default(now())
+  disabledAt DateTime?
+
+  @@index([userId, disabledAt])
+}
+
+// One row per alert per user, so the dispatcher never sends the same alert
+// twice (restarts, overlapping scans). eventKey = '<kind>:<entityId>:<userId>'.
+model MobilePushLog {
+  id       Int      @id @default(autoincrement())
+  eventKey String   @unique @db.VarChar(191)
+  userId   Int
+  kind     String // 'critical_result' | 'patient_query' | 'discharge_ready' | 'quality_digest'
+  sentAt   DateTime @default(now())
+  devices  Int      @default(0)
+  error    String?  @db.Text
+
+  @@index([userId, sentAt])
+  @@index([kind, sentAt])
 }

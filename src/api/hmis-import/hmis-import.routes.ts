@@ -13,7 +13,7 @@ import { HmisExportError } from './hmis-export-parser';
  *   GET  /status   last applied import (time, who, counts)
  *
  * Files are parsed in memory and never stored (they carry patient data).
- * Super admin and Nursing Superintendent only.
+ * Super admin, Nursing Superintendent and Estimator only.
  */
 const router = Router();
 

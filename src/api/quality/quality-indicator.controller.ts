@@ -6,6 +6,9 @@ import { evaluateForDef, shouldCreateRca } from './quality-status-engine';
 import { runAutoSourceForPeriod, autoSourceCoverage } from './quality-indicator-auto.cron';
 import { dayWindow, monthWindow } from './quality-indicator-auto-source';
 import { runDataQualitySweep } from './quality-data-quality';
+import {
+  getSubmissionStatus, submissionPeriod, getDueDay, setDueDay, MIN_DUE_DAY, MAX_DUE_DAY,
+} from './quality-qi-deadline';
 import { ensureRcaForRecord, bridgeCriticalQiToIncident, checkTrendForRecord } from './quality-rca.controller';
 
 // Phase 9.26 / Phase 1 — NABH/QCI Quality Indicator CRUD + capture.
@@ -395,6 +398,52 @@ export const triggerDataQualitySweep = async (req: Request, res: Response): Prom
   } catch (error) {
     console.error('[quality-indicator] data-quality sweep failed:', error);
     res.status(500).json({ message: 'Data-quality sweep failed' });
+  }
+};
+
+// Monthly submission deadline — status banner + the due-day setting.
+
+export const getSubmissionStatusHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const raw = typeof req.query['period'] === 'string' ? req.query['period'] : '';
+    if (raw && (raw.length !== 7 || !monthWindow(raw))) {
+      res.status(400).json({ message: 'period must be YYYY-MM' });
+      return;
+    }
+    const data = await getSubmissionStatus(raw || submissionPeriod());
+    res.status(200).json({ data });
+  } catch (error) {
+    console.error('[quality-indicator] submission status failed:', error);
+    res.status(500).json({ message: 'Failed to load submission status' });
+  }
+};
+
+export const getSubmissionConfig = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.status(200).json({ data: { submissionDueDay: await getDueDay(), min: MIN_DUE_DAY, max: MAX_DUE_DAY } });
+  } catch (error) {
+    console.error('[quality-indicator] submission config failed:', error);
+    res.status(500).json({ message: 'Failed to load the due-day setting' });
+  }
+};
+
+export const updateSubmissionConfig = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const day = (req.body ?? {}).submissionDueDay;
+    if (!Number.isInteger(day) || day < MIN_DUE_DAY || day > MAX_DUE_DAY) {
+      res.status(400).json({ message: `Due day must be a whole number from ${MIN_DUE_DAY} to ${MAX_DUE_DAY}` });
+      return;
+    }
+    const before = await getDueDay();
+    const saved = await setDueDay(day, req.user?.id ?? null);
+    await auditLog(req, {
+      module: 'quality-indicator', action: 'SUBMISSION_DUE_DAY_UPDATE', entityType: 'QualityConfig',
+      entityId: '1', payload: { from: before, to: saved },
+    });
+    res.status(200).json({ data: { submissionDueDay: saved, min: MIN_DUE_DAY, max: MAX_DUE_DAY } });
+  } catch (error) {
+    console.error('[quality-indicator] submission config update failed:', error);
+    res.status(500).json({ message: 'Failed to save the due-day setting' });
   }
 };
 

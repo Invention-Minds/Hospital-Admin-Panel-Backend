@@ -3,6 +3,7 @@ import {
   listIndicators, getIndicator, getIndicatorStats,
   captureRecord, updateIndicator, catalogueSummary,
   triggerAutoSource, autoSourceInfo, triggerDataQualitySweep,
+  getSubmissionStatusHandler, getSubmissionConfig, updateSubmissionConfig,
 } from './quality-indicator.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireQualityTeam, requireQualityViewer } from '../_shared/quality-roles';
@@ -13,6 +14,10 @@ const router = express.Router();
 router.get('/stats', authenticateToken, requireQualityViewer, getIndicatorStats);
 router.get('/_catalogue', authenticateToken, requireQualityViewer, catalogueSummary);
 router.get('/auto-source/info', authenticateToken, requireQualityViewer, autoSourceInfo);
+// Monthly submission deadline (must sit above '/:qiCode').
+router.get('/submission-status', authenticateToken, requireQualityViewer, getSubmissionStatusHandler);
+router.get('/submission-config', authenticateToken, requireQualityViewer, getSubmissionConfig);
+router.put('/submission-config', authenticateToken, requireQualityTeam, updateSubmissionConfig);
 router.get('/', authenticateToken, requireQualityViewer, listIndicators);
 router.get('/:qiCode', authenticateToken, requireQualityViewer, getIndicator);
 

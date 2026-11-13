@@ -50,6 +50,10 @@ interface UpsertDietPlanBody {
   feedVolumeMl?: number | null;
   feedIntervalHours?: number | null;
   feedNotes?: string | null;
+  // Doctor's feed order: first feed + daily window, "HH:mm".
+  feedStartTime?: string | null;
+  feedWindowFrom?: string | null;
+  feedWindowUntil?: string | null;
   needsCheck?: boolean;
   checkNote?: string | null;
   remarks?: string | null;
@@ -70,6 +74,12 @@ const toPositiveInt = (v: unknown): number | null => {
 const toPositiveFloat = (v: unknown): number | null => {
   const n = typeof v === 'string' ? Number(v) : v;
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
+};
+/** "HH:mm" (24 h) or null. */
+const toClock = (v: unknown): string | null => {
+  const m = String(v ?? '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  return `${m[1].padStart(2, '0')}:${m[2]}`;
 };
 
 // ─── Reads ──────────────────────────────────────────────────────────
@@ -137,6 +147,18 @@ export const upsertDraft = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    // RT feed order: an interval needs a first-feed time to build the schedule.
+    const feedIntervalHours = toPositiveFloat(body.feedIntervalHours);
+    const feedStartTime = toClock(body.feedStartTime);
+    if (feedIntervalHours !== null && (feedIntervalHours < 0.5 || feedIntervalHours > 24)) {
+      res.status(400).json({ error: 'Feed interval must be between 0.5 and 24 hours' });
+      return;
+    }
+    if (feedIntervalHours !== null && !feedStartTime) {
+      res.status(400).json({ error: 'Enter the first feed time (as ordered by the doctor) for the feed schedule' });
+      return;
+    }
+
     const data = {
       admissionId: body.admissionId,
       dietMasterId: body.dietMasterId,
@@ -161,8 +183,11 @@ export const upsertDraft = async (req: Request, res: Response): Promise<void> =>
       fluidRestrictionMl: toPositiveInt(body.fluidRestrictionMl),
       disposablePlate: !!body.disposablePlate,
       feedVolumeMl: toPositiveInt(body.feedVolumeMl),
-      feedIntervalHours: toPositiveFloat(body.feedIntervalHours),
+      feedIntervalHours,
       feedNotes: body.feedNotes?.trim() || null,
+      feedStartTime,
+      feedWindowFrom: toClock(body.feedWindowFrom),
+      feedWindowUntil: toClock(body.feedWindowUntil),
       needsCheck: !!body.needsCheck,
       checkNote: body.needsCheck ? (body.checkNote?.trim() || null) : null,
       remarks: body.remarks?.trim() || null,
@@ -297,7 +322,8 @@ export const endPlan = async (req: Request, res: Response): Promise<void> => {
 export const getQueue = async (_req: Request, res: Response): Promise<void> => {
   try {
     const admitted = await prisma.ipdAdmission.findMany({
-      where: { status: 'admitted' },
+      // Nursing-cleared patients are on their way out — no diet work for them.
+      where: { status: 'admitted', dischargeClearances: { none: { department: 'NURSING', status: 'cleared' } } },
       select: {
         id: true, admissionNo: true, prn: true, admissionDate: true,
         department: true, diagnosis: true, admittingDoctor: true,
@@ -352,7 +378,13 @@ export const getQueue = async (_req: Request, res: Response): Promise<void> => {
       if (!active) {
         pending.push({
           ...row(a),
-          interimDiet: interim ? { code: interim.diet.code, name: interim.diet.name } : null,
+          interimDiet: interim
+            ? {
+                code: interim.diet.code, name: interim.diet.name, source: interim.source,
+                // Acknowledged by a doctor at night — dietitian reviews and signs.
+                doctorAckBy: interim.doctorAckBy, doctorAckAt: interim.doctorAckAt, doctorAckNote: interim.doctorAckNote,
+              }
+            : null,
         });
       } else if (reassessNeeded.has(a.id)) {
         reassess.push(row(a));

@@ -59,7 +59,7 @@ import {
   setGlucoseFrequency,
 } from './insulin-infusion.controller';
 import { getDischargeContext } from './discharge-summary.controller';
-import { getMyPatients } from './doctor-mobile.controller';
+import { getMyPatients, getRoundDetail, markSeenOnRound, addRoundProgressNote } from './doctor-mobile.controller';
 import {
   listForAdmission as listHandovers,
   upsertHandover,
@@ -102,6 +102,9 @@ router.post('/admission', authenticateToken, requireClinicalActor, createIpdAdmi
 router.get('/admissions', authenticateToken, getIpdAdmissions);
 // Doctor mobile app — the logged-in doctor's admitted patients + discharge state.
 router.get('/my-patients', authenticateToken, getMyPatients);
+router.get('/my-patients/:admissionId/round', authenticateToken, getRoundDetail);
+router.post('/my-patients/:admissionId/seen', authenticateToken, requireClinicalActor, markSeenOnRound);
+router.post('/my-patients/:admissionId/progress-note', authenticateToken, requireClinicalActor, addRoundProgressNote);
 router.get('/admission/:id', getIpdAdmission);
 router.put('/admission/:id', authenticateToken, requireClinicalActor, updateIpdAdmission);
 

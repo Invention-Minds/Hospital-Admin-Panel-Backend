@@ -15,6 +15,7 @@ import {
   unackCritical,
 } from './investigation-result.controller';
 import { handleWebhook } from './investigation-result.webhook';
+import { ackMyResult, getMyReportOrder, getMyReports } from './doctor-reports-mobile.controller';
 
 const router = express.Router();
 
@@ -37,6 +38,12 @@ router.get('/pending-orders', authenticateToken, pendingOrders);
 
 // Unacknowledged critical results — used to drive the patient/admission banner.
 router.get('/unack-critical', authenticateToken, unackCritical);
+
+// Doctor mobile app — the logged-in doctor's reports. Before '/:id' so
+// 'my-reports' is not captured as a result id.
+router.get('/my-reports', authenticateToken, getMyReports);
+router.get('/my-reports/order/:orderId', authenticateToken, getMyReportOrder);
+router.post('/my-reports/:id/ack', authenticateToken, requireClinicalActor, ackMyResult);
 
 // List
 router.get('/patient/:prn', authenticateToken, listByPrn);

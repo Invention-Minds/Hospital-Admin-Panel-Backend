@@ -94,6 +94,17 @@ export const clearPriority = (req: Request, res: Response): void => {
   res.json({ success: true, appointmentId: id });
 };
 
+/** Read-only lookup for server-side callers (doctor mobile OPD queue). */
+export const getPriorityFor = (appointmentId: number): (PriorityRecord & { appointmentId: number }) | null => {
+  const p = priorityMap.get(appointmentId);
+  return p ? { appointmentId, ...p } : null;
+};
+
+/** Same effect as PATCH /:id/clear, for server-side callers (doctor mobile start consult). */
+export const clearPriorityFor = (appointmentId: number): void => {
+  if (priorityMap.delete(appointmentId)) notifyPriorityUpdate({ appointmentId, priority: 'normal' });
+};
+
 /**
  * Used by midnight cron to wipe stale priorities at end of day
  */

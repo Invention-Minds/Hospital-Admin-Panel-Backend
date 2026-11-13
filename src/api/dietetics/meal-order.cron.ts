@@ -94,7 +94,7 @@ export async function generateOrdersForDate(
     const end = atClock(day, s.endTime);
     return end !== null && end > notBefore;
   });
-  if (openSlots.length === 0) return result;
+  // No meal left today still runs: RT feed doses keep going after the last meal.
   const openSlotIds = new Set(openSlots.map((s) => s.id));
 
   const admissionFilter = opts.admissionId ? { admissionId: opts.admissionId } : {};
@@ -105,6 +105,7 @@ export async function generateOrdersForDate(
     select: {
       id: true, admissionId: true, dietMasterId: true, status: true,
       npoFrom: true, npoUntil: true, endDate: true,
+      feedVolumeMl: true, feedIntervalHours: true, feedStartTime: true, feedWindowFrom: true, feedWindowUntil: true,
       diet: { select: { kind: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -120,7 +121,7 @@ export async function generateOrdersForDate(
     select: {
       id: true, admissionId: true, mealTimeSlotId: true,
       dietPlanId: true, mealMasterId: true, status: true,
-      kitchenNotes: true, wardId: true, bedId: true,
+      kitchenNotes: true, wardId: true, bedId: true, choiceTakenAt: true,
     },
   });
   const orderKey = (admissionId: string, slotId: string): string => `${admissionId}|${slotId}`;
@@ -134,7 +135,10 @@ export async function generateOrdersForDate(
   const [admissions, holds, cells] = admissionIds.length
     ? await Promise.all([
         prisma.ipdAdmission.findMany({
-          where: { id: { in: admissionIds }, status: 'admitted' },
+          where: {
+            id: { in: admissionIds }, status: 'admitted',
+            dischargeClearances: { none: { department: 'NURSING', status: 'cleared' } },
+          },
           select: { id: true, wardId: true, bedId: true },
         }),
         prisma.mealHold.findMany({
@@ -203,7 +207,10 @@ export async function generateOrdersForDate(
         if (noTrayReason) {
           await skip(existing.id, noTrayReason);
         } else {
-          const mealMasterId = menu?.mealMasterId ?? null;
+          // A dish the patient chose ("Take order") stays; otherwise the menu default.
+          const mealMasterId = existing.choiceTakenAt && existing.dietPlanId === plan.id
+            ? existing.mealMasterId
+            : menu?.mealMasterId ?? null;
           if (
             existing.dietPlanId !== plan.id || existing.mealMasterId !== mealMasterId
             || existing.kitchenNotes !== note || existing.wardId !== adm.wardId || existing.bedId !== adm.bedId
@@ -261,7 +268,111 @@ export async function generateOrdersForDate(
     await skip(o.id, reason);
   }
 
+  const feeds = await generateFeedDoses(day, notBefore, planByAdmission, admMap, holdsByAdmission, opts.admissionId);
+  result.created += feeds.created;
+  result.cancelled += feeds.cancelled;
+
   return result;
+}
+
+// ─── RT / tube feed doses ─────────────────────────────────────────────
+
+type FeedPlan = {
+  id: string; admissionId: string; npoFrom: Date | null; npoUntil: Date | null; endDate: Date | null;
+  feedVolumeMl: number | null; feedIntervalHours: number | null;
+  feedStartTime: string | null; feedWindowFrom: string | null; feedWindowUntil: string | null;
+};
+
+const minutesOf = (hhmm: string | null): number | null => {
+  const m = (hhmm ?? '').match(/^(\d{1,2}):(\d{2})$/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+
+/** Inside the feed window? A window like 22:00 → 06:00 wraps midnight. No window = all day. */
+function inFeedWindow(minute: number, from: number | null, until: number | null): boolean {
+  if (from === null || until === null) return true;
+  return from <= until ? minute >= from && minute <= until : minute >= from || minute <= until;
+}
+
+/** Clock minutes (0-1439) of every feed on a day: start time, then every N hours, in the window. */
+export function feedMinutes(plan: Pick<FeedPlan, 'feedIntervalHours' | 'feedStartTime' | 'feedWindowFrom' | 'feedWindowUntil'>): number[] {
+  const step = plan.feedIntervalHours ? Math.round(plan.feedIntervalHours * 60) : 0;
+  const start = minutesOf(plan.feedStartTime);
+  if (!step || step < 30 || start === null) return [];
+  const from = minutesOf(plan.feedWindowFrom);
+  const until = minutesOf(plan.feedWindowUntil);
+  const out = new Set<number>();
+  // The schedule repeats every day from the start time; walk one full day both ways.
+  for (let m = start % step; m < 24 * 60; m += step) {
+    if (inFeedWindow(m, from, until)) out.add(m);
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+/**
+ * Reconcile FeedDose rows for one day: one dose per feed time from the
+ * doctor's order (start time + every N hours inside the window), none while
+ * NPO / on hold. ORDERED doses that are no longer wanted are SKIPPED;
+ * prepared / given doses are left alone. Doses before `notBefore` untouched.
+ */
+async function generateFeedDoses(
+  day: Date,
+  notBefore: Date,
+  planByAdmission: Map<string, FeedPlan & { status: string }>,
+  admMap: Map<string, { id: string }>,
+  holdsByAdmission: Map<string, Array<{ fromAt: Date; untilAt: Date | null; reason: string }>>,
+  admissionId?: string,
+): Promise<{ created: number; cancelled: number }> {
+  const out = { created: 0, cancelled: 0 };
+  const dayEnd = new Date(day); dayEnd.setHours(23, 59, 59, 999);
+  const existing = await prisma.feedDose.findMany({
+    where: { scheduledFor: { gte: day, lte: dayEnd }, ...(admissionId ? { admissionId } : {}) },
+    select: { id: true, admissionId: true, scheduledFor: true, status: true, dietPlanId: true, volumeMl: true },
+  });
+  const key = (a: string, t: Date) => `${a}|${t.getTime()}`;
+  const existingByKey = new Map(existing.map((d) => [key(d.admissionId, d.scheduledFor), d]));
+  const wanted = new Set<string>();
+
+  for (const plan of planByAdmission.values()) {
+    if (!admMap.has(plan.admissionId)) continue;
+    if (plan.endDate && plan.endDate < day) continue;
+    for (const m of feedMinutes(plan)) {
+      const at = new Date(day); at.setHours(Math.floor(m / 60), m % 60, 0, 0);
+      if (at < notBefore) continue;
+      const npo = (plan.npoFrom || plan.npoUntil)
+        && (!plan.npoFrom || plan.npoFrom <= at) && (!plan.npoUntil || plan.npoUntil > at);
+      const hold = (holdsByAdmission.get(plan.admissionId) ?? []).some((h) => h.fromAt <= at && (!h.untilAt || h.untilAt > at));
+      if (npo || hold) continue;
+      const k = key(plan.admissionId, at);
+      wanted.add(k);
+      const cur = existingByKey.get(k);
+      if (cur) {
+        if (cur.status === 'ORDERED' && (cur.dietPlanId !== plan.id || cur.volumeMl !== plan.feedVolumeMl)) {
+          await prisma.feedDose.update({ where: { id: cur.id }, data: { dietPlanId: plan.id, volumeMl: plan.feedVolumeMl } });
+        }
+        continue;
+      }
+      try {
+        await prisma.feedDose.create({
+          data: { admissionId: plan.admissionId, dietPlanId: plan.id, scheduledFor: at, volumeMl: plan.feedVolumeMl },
+        });
+        out.created++;
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code !== 'P2002') console.error('[meal-order-cron] feed dose create failed:', err);
+      }
+    }
+  }
+
+  for (const d of existing) {
+    if (d.status !== 'ORDERED' || d.scheduledFor < notBefore || wanted.has(key(d.admissionId, d.scheduledFor))) continue;
+    const plan = planByAdmission.get(d.admissionId);
+    const reason = !admMap.has(d.admissionId) ? 'Patient no longer admitted'
+      : !plan ? 'Diet plan ended'
+      : 'Feed order changed / NPO / on hold';
+    await prisma.feedDose.update({ where: { id: d.id }, data: { status: 'SKIPPED', skipReason: reason } });
+    out.cancelled++;
+  }
+  return out;
 }
 
 /**

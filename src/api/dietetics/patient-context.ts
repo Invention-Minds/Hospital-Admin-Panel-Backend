@@ -78,7 +78,12 @@ export async function loadPatientContext(filter: {
 }): Promise<PatientContext[]> {
   const admissions = await prisma.ipdAdmission.findMany({
     where: {
-      ...(filter.admittedOnly !== false && { status: 'admitted' }),
+      // Admitted and not yet cleared by nursing for discharge (a cleared
+      // patient may still be in the building but is no longer fed / listed).
+      ...(filter.admittedOnly !== false && {
+        status: 'admitted',
+        dischargeClearances: { none: { department: 'NURSING', status: 'cleared' } },
+      }),
       ...(filter.admissionIds && { id: { in: filter.admissionIds } }),
       ...(filter.wardId && { wardId: filter.wardId }),
     },

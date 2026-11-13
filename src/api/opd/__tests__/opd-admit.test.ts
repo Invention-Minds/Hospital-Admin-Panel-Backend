@@ -19,6 +19,8 @@ jest.mock('../../../service/prisma-client', () => ({
     investigationOrder: { findMany: jest.fn() },
     ipdAdmission: { findFirst: jest.fn(), create: jest.fn() },
     ipdBed: { update: jest.fn() },
+    // admittingDoctorId resolution: the id in the request (7) is a real doctor.
+    doctor: { findUnique: jest.fn().mockResolvedValue({ id: 7 }), findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 

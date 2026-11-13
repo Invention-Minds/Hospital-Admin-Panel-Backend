@@ -72,12 +72,15 @@ function scoreForm(formType: FormType, answers: Record<string, unknown>, ageYrs:
   if (formType === 'NRS2002') {
     const initial = (answers.initial ?? {}) as Record<string, unknown>;
     const anyYes = ['bmiBelow205', 'weightLoss3m', 'reducedIntake', 'severelyIll'].some((k) => initial[k] === true);
-    if (!anyYes) {
-      return { riskScore: 0, riskLevel: 'NIL', atRisk: false, nextScreeningDue: new Date(now + 7 * DAY) };
-    }
     const n = answers.nutritionScore;
     const s = answers.severityScore;
-    if (!inSet(n, [0, 1, 2, 3]) || !inSet(s, [0, 1, 2, 3])) {
+    const finalDone = inSet(n, [0, 1, 2, 3]) && inSet(s, [0, 1, 2, 3]);
+    // All initial answers NO: the final screening is optional — the dietitian
+    // may still complete it (hospital practice); scored when filled in.
+    if (!anyYes && !finalDone) {
+      return { riskScore: 0, riskLevel: 'NIL', atRisk: false, nextScreeningDue: new Date(now + 7 * DAY) };
+    }
+    if (!finalDone) {
       return 'NRS-2002: an initial answer is YES, so the final screening (nutritional status and disease severity, 0–3 each) is required';
     }
     const total = n + s + (ageYrs !== null && ageYrs >= 70 ? 1 : 0);

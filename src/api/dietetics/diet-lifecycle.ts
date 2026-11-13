@@ -1,5 +1,6 @@
 import prisma from '../../service/prisma-client';
 import { syncOrdersForAdmission } from './meal-order.cron';
+import { notifyDiet } from './diet-notify';
 
 /**
  * Read a DietMaster list field (restrictions / targetConditions). Stored as a
@@ -77,6 +78,10 @@ export async function raiseDietAlert(
         message: text[type],
       },
     });
+    // The dietitian (and the doctor at night) must know a new patient needs a diet.
+    if (type === 'ADMISSION') {
+      await notifyDiet('diet_new_admission', 'New admission — diet needed', `${who} admitted in ${where}. No diet yet.`);
+    }
 
     // Same bed, different patient, recently — the wrong-diet risk the
     // hospital described (discharge → new admission in the same bed).
@@ -134,6 +139,40 @@ export async function closeDietOnDischarge(admissionId: string): Promise<void> {
     console.error(`[dietetics] closeDietOnDischarge failed for admission ${admissionId}:`, err);
   }
   await raiseDietAlert('DISCHARGE', admissionId);
+}
+
+/**
+ * Nursing discharge clearance is done: the patient may stay in the building
+ * until evening, but must not be fed or listed any more.
+ *   1. ACTIVE / INTERIM plan → ENDED (reason NURSING_CLEARANCE); holds lifted.
+ *   2. Trays / feed doses still ORDERED are skipped (sync).
+ *   3. Kitchen alert.
+ * Lists (census, diet sheet, rounds, queue) leave the patient out via
+ * loadPatientContext. Never throws.
+ */
+export async function stopDietOnNursingClearance(admissionId: string): Promise<void> {
+  try {
+    const ended = await prisma.dietPlan.updateMany({
+      where: { admissionId, status: { in: ['ACTIVE', 'INTERIM'] } },
+      data: { status: 'ENDED', endDate: new Date(), endReason: 'NURSING_CLEARANCE' },
+    });
+    await prisma.mealHold.updateMany({
+      where: { admissionId, liftedAt: null },
+      data: { liftedAt: new Date(), liftedBy: 'nursing clearance' },
+    });
+    await syncOrdersForAdmission(admissionId);
+    const b = await bedLabel(admissionId);
+    const where = [b.wardName, b.bedNumber].filter(Boolean).join(' / ') || 'no bed';
+    await prisma.dietaryAlert.create({
+      data: {
+        type: 'DISCHARGE', admissionId,
+        wardName: b.wardName, bedNumber: b.bedNumber,
+        message: `${b.admissionNo ?? admissionId} in ${where} cleared by nursing for discharge — stop trays${ended.count ? '' : ' (no active diet)'}. Trays not yet prepared were cancelled.`,
+      },
+    });
+  } catch (err) {
+    console.error(`[dietetics] stopDietOnNursingClearance failed for admission ${admissionId}:`, err);
+  }
 }
 
 /**

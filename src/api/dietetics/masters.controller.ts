@@ -502,6 +502,10 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   defaultScreeningForm: 'NRS2002',
   // Department names whose admissions get the Maternal form by default.
   maternalDepartments: ['OBG', 'Obstetrics', 'Gynaecology', 'OBG/Gynaec'],
+  // Dietitian off duty between these times; any doctor acknowledges new
+  // admissions / diet changes instead ("19:00" → "07:00", wraps midnight).
+  nightFrom: '19:00',
+  nightUntil: '07:00',
 };
 
 export async function readSettings(): Promise<Record<string, unknown>> {

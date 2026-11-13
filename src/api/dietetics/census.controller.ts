@@ -4,6 +4,7 @@ import { auditLog } from '../../service/app-audit';
 import { resolveWardScope } from '../_shared/nursing-roles';
 import { syncOrdersQuietly } from './meal-order.cron';
 import { loadPatientContext, loadCurrentPlans, remarkText } from './patient-context';
+import { notifyDiet } from './diet-notify';
 
 /**
  * Nursing daily census → Dietary (the hospital's "early morning nurses census").
@@ -26,8 +27,20 @@ interface CensusLineBody {
   npoFrom?: string | null;
   feedText?: string | null;
   disposablePlate?: boolean;
+  foodAllergy?: string | null;
+  foodPreference?: string | null;
   remarks?: string | null;
 }
+
+/** Allergy text the nurse starts from: the plan's avoid list, else the doctor's initial assessment. */
+function knownAllergy(p: { ia: { foodAllergy: boolean; allergyOthers: string | null } | null }, planAvoid: string | null | undefined): string {
+  if (planAvoid?.trim()) return planAvoid.trim();
+  if (p.ia?.allergyOthers?.trim()) return p.ia.allergyOthers.trim();
+  return p.ia?.foodAllergy ? 'Food allergy (details not recorded)' : '';
+}
+
+const sameText = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 const ymd = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -113,6 +126,8 @@ export const getCensusPrefill = async (req: Request, res: Response): Promise<voi
           npoFrom: (hold?.fromAt ?? plan?.npoFrom ?? null)?.toISOString() ?? null,
           feedText: plan?.feed ?? '',
           disposablePlate: plan?.disposablePlate ?? false,
+          foodAllergy: knownAllergy(p, plan?.foodAvoid),
+          foodPreference: p.ia?.dietPattern ?? '',
           remarks: '',
           isNew: isNewAdmission(p.admissionDate, lastIds, p.admissionId),
         };
@@ -197,14 +212,17 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
             // NPO already in force (dietitian NPO or a live hold) is not a change.
             const npoNow = (!!plan && (!!plan.npoFrom || !!plan.npoUntil)) || holdIds.has(l.admissionId);
             const feed = l.feedText?.trim() || '';
+            const allergy = l.foodAllergy?.trim() || '';
+            // A new / different allergy is always a change Dietary must see.
+            const allergyChanged = !!allergy && !sameText(allergy, plan?.foodAvoid ?? knownAllergy(p, null));
             // Did the nurse report anything different from what Dietary already has?
-            const changed = plan
+            const changed = allergyChanged || (plan
               ? (!!dietText && dietText !== plan.displayCode)
                 || !!l.npo !== npoNow
                 || !!l.disposablePlate !== plan.disposablePlate
                 || !!l.remarks?.trim()
                 || (!!feed && feed !== (plan.feed ?? ''))
-              : (!!l.npo && !npoNow) || !!l.dietMasterId || !!dietText || !!l.remarks?.trim() || !!feed || !!l.disposablePlate;
+              : (!!l.npo && !npoNow) || !!l.dietMasterId || !!dietText || !!l.remarks?.trim() || !!feed || !!l.disposablePlate);
             const isNew = isNewAdmission(p.admissionDate, lastIds, l.admissionId);
             return {
               admissionId: l.admissionId,
@@ -220,6 +238,8 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
               npoFrom: npoFrom && !Number.isNaN(npoFrom.getTime()) ? npoFrom : null,
               feedText: l.feedText?.trim() || null,
               disposablePlate: !!l.disposablePlate,
+              foodAllergy: allergy || null,
+              foodPreference: l.foodPreference?.trim() || null,
               remarks: l.remarks?.trim() || null,
               // NEW = newly admitted since the last census; CHANGED = nurse reported a difference.
               changeFlag: isNew ? 'NEW' : changed ? 'CHANGED' : 'UNCHANGED',
@@ -234,6 +254,15 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
       module: 'dietetics', action: 'CREATE', entityType: 'DietCensusSubmit', entityId: census.id,
       payload: { wardId, lines: census.lines.length },
     });
+    const newCount = census.lines.filter((l) => l.changeFlag === 'NEW').length;
+    const changedCount = census.lines.filter((l) => l.changeFlag === 'CHANGED').length;
+    if (newCount || changedCount) {
+      await notifyDiet(
+        changedCount ? 'diet_change' : 'diet_census',
+        `Diet census — ${ward.wardName}`,
+        `${ward.wardName}: ${newCount} new admission(s), ${changedCount} diet change(s) / request(s) to review.`,
+      );
+    }
     res.status(201).json({ id: census.id, status: census.status, submittedAt: census.submittedAt, lines: census.lines.length });
   } catch (error) {
     console.error('[dietetics] submitCensus failed:', error);
@@ -309,6 +338,8 @@ export const getCensus = async (req: Request, res: Response): Promise<void> => {
           if (l.npo && !planNpo && !holdIds.has(l.admissionId)) actions.push('NPO reported — hold will be applied on acknowledge');
           if (!l.npo && (planNpo || holdIds.has(l.admissionId))) actions.push('Census shows no NPO but an NPO is active');
           if (plan && l.disposablePlate !== plan.disposablePlate) actions.push(`Plate: census says ${l.disposablePlate ? 'disposable' : 'regular'}`);
+          if (l.foodAllergy && !sameText(l.foodAllergy, plan?.foodAvoid)) actions.push(`Food allergy: ${l.foodAllergy}`);
+          if (l.foodPreference) info.push(`Preference: ${l.foodPreference}`);
           if (l.remarks) actions.push(`Remark: ${l.remarks}`);
           return {
             ...l,
@@ -394,7 +425,9 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
             source: 'CENSUS',
             disposablePlate: l.disposablePlate,
             feedNotes: l.feedText,
-            remarks: [l.dietText ? `Census: ${l.dietText}` : null, l.remarks].filter(Boolean).join(' · ') || null,
+            foodAvoid: l.foodAllergy,
+            remarks: [l.dietText ? `Census: ${l.dietText}` : null, l.foodPreference ? `Prefers ${l.foodPreference}` : null, l.remarks]
+              .filter(Boolean).join(' · ') || null,
             createdBy: actor,
           },
         });

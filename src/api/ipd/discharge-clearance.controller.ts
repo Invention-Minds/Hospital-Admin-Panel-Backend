@@ -10,6 +10,7 @@ import {
   abandonDischargeChain,
 } from '../../service/discharge-clearance';
 import { runDischargeDraft } from '../discharge-ai/discharge-ai.controller';
+import { stopDietOnNursingClearance } from '../dietetics/diet-lifecycle';
 
 // Phase D — Discharge clearance HTTP layer.
 //
@@ -114,6 +115,10 @@ export const clearDepartment = async (req: Request, res: Response): Promise<void
       module: 'discharge-clearance', action: 'CLEAR', entityType: 'DischargeClearance',
       entityId: updated.id, payload: { admissionId, department: dept },
     });
+
+    // Nurse has cleared the patient: they may wait in the building until
+    // evening, but the kitchen must stop serving and the diet lists drop them.
+    if (dept === 'NURSING') await stopDietOnNursingClearance(admissionId);
 
     // If all gates now pass, ping Front Desk so they can finalize.
     const gate = await evaluateDischargeGate(admissionId);
