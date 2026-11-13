@@ -158,6 +158,12 @@ export const upsertDraft = async (req: Request, res: Response): Promise<void> =>
       res.status(400).json({ error: 'Enter the first feed time (as ordered by the doctor) for the feed schedule' });
       return;
     }
+    // An RT-feed diet needs the doctor's feed order, or no feed doses / labels are made.
+    const dietKind = await prisma.dietMaster.findUnique({ where: { id: body.dietMasterId }, select: { kind: true } });
+    if (dietKind?.kind === 'FEED' && (feedIntervalHours === null || !feedStartTime)) {
+      res.status(400).json({ error: 'RT feed diet: enter the feed order — every how many hours and the first feed time' });
+      return;
+    }
 
     const data = {
       admissionId: body.admissionId,

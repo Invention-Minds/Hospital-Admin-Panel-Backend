@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { resolveWardScope } from '../_shared/nursing-roles';
-import { syncOrdersQuietly } from './meal-order.cron';
+import { syncOrdersQuietly, parseFeedText } from './meal-order.cron';
 import { loadPatientContext, loadCurrentPlans, remarkText } from './patient-context';
 import { notifyDiet } from './diet-notify';
 
@@ -331,6 +331,7 @@ export const getCensus = async (req: Request, res: Response): Promise<void> => {
           if (l.changeFlag === 'NEW') actions.push('New admission since last census');
           if (!plan) {
             if (l.dietMasterId) actions.push('Interim diet will be applied on acknowledge');
+            else if (l.feedText?.trim()) actions.push(`RT feed "${l.feedText}" — interim RT-feed diet will be applied on acknowledge`);
             else info.push('No diet yet — dietitian to assess');
           } else if (l.dietText && l.dietText !== plan.displayCode) {
             actions.push(`Nurse reports "${l.dietText}" · current diet ${plan.displayCode}`);
@@ -398,6 +399,10 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
     const actor = req.user?.username ?? null;
     let holdsCreated = 0;
     let interimCreated = 0;
+    // Ward reported an RT feed but picked no diet code → interim on the RT-feed diet.
+    const feedDiet = census.lines.some((l) => !l.dietMasterId && l.feedText?.trim())
+      ? await prisma.dietMaster.findFirst({ where: { kind: 'FEED', isActive: true }, orderBy: { name: 'asc' }, select: { id: true } })
+      : null;
 
     for (const l of census.lines) {
       if (!admittedIds.has(l.admissionId)) continue;
@@ -416,15 +421,20 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
         });
         holdsCreated++;
       }
-      if (createInterim && !plan && l.dietMasterId) {
+      const interimDietId = l.dietMasterId ?? (l.feedText?.trim() ? feedDiet?.id ?? null : null);
+      if (createInterim && !plan && interimDietId) {
+        const feed = parseFeedText(l.feedText);
         await prisma.dietPlan.create({
           data: {
             admissionId: l.admissionId,
-            dietMasterId: l.dietMasterId,
+            dietMasterId: interimDietId,
             status: 'INTERIM',
             source: 'CENSUS',
             disposablePlate: l.disposablePlate,
             feedNotes: l.feedText,
+            // "200ml Q2h" from the ward → volume + interval; first feed defaults to 06:00.
+            feedVolumeMl: feed.volumeMl,
+            feedIntervalHours: feed.intervalHours,
             foodAvoid: l.foodAllergy,
             remarks: [l.dietText ? `Census: ${l.dietText}` : null, l.foodPreference ? `Prefers ${l.foodPreference}` : null, l.remarks]
               .filter(Boolean).join(' · ') || null,
@@ -437,7 +447,7 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
         module: 'dietetics', action: 'UPDATE', entityType: 'DietCensus', entityId: l.admissionId,
         payload: {
           censusId: census.id,
-          summary: `Census acknowledged (${census.wardName ?? 'ward'})${l.npo ? ' · NPO reported' : ''}${!plan && l.dietMasterId ? ' · interim diet' : ''}`,
+          summary: `Census acknowledged (${census.wardName ?? 'ward'})${l.npo ? ' · NPO reported' : ''}${!plan && interimDietId ? ' · interim diet' : ''}`,
         },
       });
     }

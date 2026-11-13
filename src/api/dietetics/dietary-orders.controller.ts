@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { loadPatientContext, loadCurrentPlans } from './patient-context';
+import { effectiveFeedOrder } from './meal-order.cron';
 
 /**
  * Patient choice and RT feeds.
@@ -193,7 +194,7 @@ export const listFeeds = async (req: Request, res: Response): Promise<void> => {
     const { start, end } = dayBounds(req.query.date as string);
     const doses = await prisma.feedDose.findMany({
       where: { scheduledFor: { gte: start, lte: end } },
-      include: { dietPlan: { include: { diet: { select: { code: true, name: true } } } } },
+      include: { dietPlan: { include: { diet: { select: { code: true, name: true, kind: true } } } } },
       orderBy: { scheduledFor: 'asc' },
     });
     const patients = await loadPatientContext({ admissionIds: Array.from(new Set(doses.map((d) => d.admissionId))), admittedOnly: false });
@@ -202,7 +203,10 @@ export const listFeeds = async (req: Request, res: Response): Promise<void> => {
     res.status(200).json(doses.flatMap((d) => {
       const p = pMap.get(d.admissionId);
       if (wardId && p?.wardId !== wardId) return [];
+      const order = effectiveFeedOrder(d.dietPlan);
       return [{
+        // Schedule came from the ward's text / Q2H-from-06:00 default — dietitian to confirm.
+        defaultSchedule: order.defaulted,
         id: d.id,
         admissionId: d.admissionId,
         scheduledFor: d.scheduledFor,
@@ -211,7 +215,7 @@ export const listFeeds = async (req: Request, res: Response): Promise<void> => {
         preparedAt: d.preparedAt, preparedBy: d.preparedBy,
         givenAt: d.givenAt, givenByName: d.givenByName ?? d.givenBy,
         skipReason: d.skipReason,
-        intervalHours: d.dietPlan.feedIntervalHours,
+        intervalHours: order.feedIntervalHours,
         feedNotes: d.dietPlan.feedNotes,
         dietCode: d.dietPlan.diet.code, dietName: d.dietPlan.diet.name,
         foodAvoid: d.dietPlan.foodAvoid,

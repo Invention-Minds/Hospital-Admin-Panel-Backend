@@ -106,6 +106,7 @@ export async function generateOrdersForDate(
       id: true, admissionId: true, dietMasterId: true, status: true,
       npoFrom: true, npoUntil: true, endDate: true,
       feedVolumeMl: true, feedIntervalHours: true, feedStartTime: true, feedWindowFrom: true, feedWindowUntil: true,
+      feedNotes: true,
       diet: { select: { kind: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -281,7 +282,55 @@ type FeedPlan = {
   id: string; admissionId: string; npoFrom: Date | null; npoUntil: Date | null; endDate: Date | null;
   feedVolumeMl: number | null; feedIntervalHours: number | null;
   feedStartTime: string | null; feedWindowFrom: string | null; feedWindowUntil: string | null;
+  feedNotes?: string | null; diet?: { kind: string };
 };
+
+/** Default RT feed schedule when the doctor's order is incomplete. */
+export const DEFAULT_FEED_INTERVAL_HOURS = 2;
+export const DEFAULT_FEED_START = '06:00';
+
+/**
+ * Read volume / interval out of free text the ward writes ("200ml Q2h",
+ * "150 ml every 2 hrs", "100ml hourly"). Unknown parts come back null.
+ */
+export function parseFeedText(text: string | null | undefined): { volumeMl: number | null; intervalHours: number | null } {
+  const t = (text ?? '').toLowerCase();
+  const vol = t.match(/(\d{2,4})\s*(ml|cc)\b/) ?? t.match(/^\s*(\d{2,4})\s*$/);
+  let interval: number | null = null;
+  const q = t.match(/q\s*(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hourly)?\b/)
+    ?? t.match(/every\s*(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours)\b/)
+    ?? t.match(/(\d+(?:\.\d+)?)\s*(hrly|hourly|-hourly|th hourly)\b/);
+  if (q) interval = Number(q[1]);
+  else if (/\bhourly\b|\bq\s*1\s*h\b/.test(t)) interval = 1;
+  return {
+    volumeMl: vol ? Number(vol[1]) : null,
+    intervalHours: interval && interval >= 0.5 && interval <= 24 ? interval : null,
+  };
+}
+
+/**
+ * The schedule actually used for a plan. An RT-feed diet always gets doses:
+ * a missing interval / first-feed time falls back to the ward's text, else
+ * Q2H from 06:00 (`defaulted` = true so screens ask the dietitian to confirm).
+ * Other diets get doses only when a full feed order was entered.
+ */
+export function effectiveFeedOrder(plan: FeedPlan): {
+  feedIntervalHours: number | null; feedStartTime: string | null; feedVolumeMl: number | null;
+  feedWindowFrom: string | null; feedWindowUntil: string | null; defaulted: boolean;
+} {
+  const isFeedDiet = plan.diet?.kind === 'FEED';
+  const parsed = parseFeedText(plan.feedNotes);
+  const interval = plan.feedIntervalHours ?? (isFeedDiet ? parsed.intervalHours ?? DEFAULT_FEED_INTERVAL_HOURS : null);
+  const start = plan.feedStartTime ?? (isFeedDiet ? DEFAULT_FEED_START : null);
+  return {
+    feedIntervalHours: interval,
+    feedStartTime: start,
+    feedVolumeMl: plan.feedVolumeMl ?? parsed.volumeMl,
+    feedWindowFrom: plan.feedWindowFrom,
+    feedWindowUntil: plan.feedWindowUntil,
+    defaulted: isFeedDiet && (!plan.feedIntervalHours || !plan.feedStartTime),
+  };
+}
 
 const minutesOf = (hhmm: string | null): number | null => {
   const m = (hhmm ?? '').match(/^(\d{1,2}):(\d{2})$/);
@@ -336,7 +385,8 @@ async function generateFeedDoses(
   for (const plan of planByAdmission.values()) {
     if (!admMap.has(plan.admissionId)) continue;
     if (plan.endDate && plan.endDate < day) continue;
-    for (const m of feedMinutes(plan)) {
+    const order = effectiveFeedOrder(plan);
+    for (const m of feedMinutes(order)) {
       const at = new Date(day); at.setHours(Math.floor(m / 60), m % 60, 0, 0);
       if (at < notBefore) continue;
       const npo = (plan.npoFrom || plan.npoUntil)
@@ -347,14 +397,14 @@ async function generateFeedDoses(
       wanted.add(k);
       const cur = existingByKey.get(k);
       if (cur) {
-        if (cur.status === 'ORDERED' && (cur.dietPlanId !== plan.id || cur.volumeMl !== plan.feedVolumeMl)) {
-          await prisma.feedDose.update({ where: { id: cur.id }, data: { dietPlanId: plan.id, volumeMl: plan.feedVolumeMl } });
+        if (cur.status === 'ORDERED' && (cur.dietPlanId !== plan.id || cur.volumeMl !== order.feedVolumeMl)) {
+          await prisma.feedDose.update({ where: { id: cur.id }, data: { dietPlanId: plan.id, volumeMl: order.feedVolumeMl } });
         }
         continue;
       }
       try {
         await prisma.feedDose.create({
-          data: { admissionId: plan.admissionId, dietPlanId: plan.id, scheduledFor: at, volumeMl: plan.feedVolumeMl },
+          data: { admissionId: plan.admissionId, dietPlanId: plan.id, scheduledFor: at, volumeMl: order.feedVolumeMl },
         });
         out.created++;
       } catch (err: unknown) {

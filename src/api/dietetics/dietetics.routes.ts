@@ -77,9 +77,9 @@ const dietary = requireRole({ subAdminTypes: [...CANTEEN, ...DIETICIAN] });
 /** F&B manager / supervisor (Canteen Staff): confirms the issued diet sheet reached the kitchen. */
 const fnbSupervisor = requireRole({ subAdminTypes: CANTEEN });
 /** Tray handling: prepare, serve, intake, skip — kitchen staff + ward nurses. */
-const canteenFloor = requireRole({ subAdminTypes: [...CANTEEN, ...NURSE_SUBTYPES] });
+const canteenFloor = requireRole({ subAdminTypes: [...CANTEEN, ...NURSES] });
 /** Regenerate / sync orders. */
-const orderSync = requireRole({ subAdminTypes: [...CANTEEN, ...NURSE_SUBTYPES, ...DIETICIAN] });
+const orderSync = requireRole({ subAdminTypes: [...CANTEEN, ...NURSES, ...DIETICIAN] });
 /** Extra food requests: anyone on the ward or in dietary. */
 const extraFood = requireRole({ subAdminTypes: [...CANTEEN, ...DIETICIAN, ...NURSES] });
 /** Billed flag. */

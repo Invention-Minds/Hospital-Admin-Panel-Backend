@@ -14,6 +14,7 @@ import {
   startMyConsultation,
   finishMyConsultation,
   saveMyAssessment,
+  sendMyNotes,
 } from './doctor-opd-mobile.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
@@ -30,6 +31,7 @@ router.get('/my-queue/:appointmentId', authenticateToken, getMyConsultation);
 router.post('/my-queue/:appointmentId/start', authenticateToken, requireClinicalActor, startMyConsultation);
 router.post('/my-queue/:appointmentId/finish', authenticateToken, requireClinicalActor, finishMyConsultation);
 router.put('/my-queue/:appointmentId/assessment', authenticateToken, requireClinicalActor, saveMyAssessment);
+router.post('/my-queue/:appointmentId/send-notes', authenticateToken, requireClinicalActor, sendMyNotes);
 
 router.post('/', authenticateToken, requireClinicalActor, createOpdAssessment);
 router.get('/:id', getOpdAssessmentById);

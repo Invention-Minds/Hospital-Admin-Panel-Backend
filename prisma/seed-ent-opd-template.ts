@@ -1,13 +1,24 @@
 /**
  * Seed the ENT department's OPD assessment template (department-level,
- * doctorId: null — shared by every ENT doctor), matching the department's
- * handwritten paper format: EAR (table of findings x R/L), NOSE, THROAT, NECK.
+ * doctorId: null — shared by every ENT doctor).
+ *
+ * Layout (per ENT doctor's request): the standard OPD sections, with the
+ * department's handwritten paper format (EAR table of findings x R/L, NOSE,
+ * THROAT, NECK) placed under EXAMINATION:
+ *   HISTORY → EXAMINATION (Ear / Nose / Throat / Neck) → DIAGNOSIS →
+ *   INVESTIGATION → TREATMENT PLAN
+ *
+ * A selected template REPLACES the fixed History/Examination/... boxes on the
+ * OPD assessment, so those sections must be fields here too.
  *
  * Run with:
  *   npx ts-node prisma/seed-ent-opd-template.ts
  *
- * Idempotent — skips if an active 'opd-handwritten' department-level template
- * already exists for this department.
+ * Idempotent — if an active 'opd-handwritten' department-level template
+ * already exists for this department, its fields are replaced with the layout
+ * below; otherwise a new one is created. Past assessments are unaffected (each
+ * stores its own schema snapshot in templatedValues._schema). Original ENT
+ * field keys are kept unchanged so earlier values still line up.
  *
  * NOTE: DEPARTMENT below must match the exact department name string used in
  * this hospital's Department table (case-sensitive — templates are looked up
@@ -23,41 +34,69 @@ const NOTE_TYPE = 'opd-handwritten';
 
 const FIELDS = [
   {
-    key: 'earFindings',
-    label: 'EAR — Findings',
-    type: 'table',
-    group: 'EAR',
+    key: 'history',
+    label: 'History',
+    type: 'textarea',
+    group: 'HISTORY',
     order: 1,
+  },
+  {
+    key: 'earFindings',
+    label: 'Ear',
+    type: 'table',
+    group: 'EXAMINATION',
+    order: 2,
     rows: ['External Auditory Canal (EAC)', 'Tympanic Membrane (TM)', 'Post Aural Area'],
     columns: ['R', 'L'],
   },
   {
     key: 'paranasalSinusTenderness',
-    label: 'Paranasal Sinus Tenderness (PNS)',
+    label: 'Nose – Paranasal Sinus Tenderness (PNS)',
     type: 'text',
-    group: 'NOSE',
-    order: 2,
-  },
-  {
-    key: 'oralCavity',
-    label: 'Oral Cavity',
-    type: 'text',
-    group: 'THROAT',
+    group: 'EXAMINATION',
     order: 3,
   },
   {
-    key: 'oropharynx',
-    label: 'Oropharynx',
+    key: 'oralCavity',
+    label: 'Throat – Oral Cavity',
     type: 'text',
-    group: 'THROAT',
+    group: 'EXAMINATION',
     order: 4,
+  },
+  {
+    key: 'oropharynx',
+    label: 'Throat – Oropharynx',
+    type: 'text',
+    group: 'EXAMINATION',
+    order: 5,
   },
   {
     key: 'neckFindings',
     label: 'Neck',
     type: 'textarea',
-    group: 'NECK',
-    order: 5,
+    group: 'EXAMINATION',
+    order: 6,
+  },
+  {
+    key: 'diagnosis',
+    label: 'Diagnosis',
+    type: 'textarea',
+    group: 'DIAGNOSIS',
+    order: 7,
+  },
+  {
+    key: 'investigation',
+    label: 'Investigation',
+    type: 'textarea',
+    group: 'INVESTIGATION',
+    order: 8,
+  },
+  {
+    key: 'treatmentPlan',
+    label: 'Treatment Plan',
+    type: 'textarea',
+    group: 'TREATMENT PLAN',
+    order: 9,
   },
 ];
 
@@ -66,8 +105,13 @@ async function main(): Promise<void> {
     where: { department: DEPARTMENT, noteType: NOTE_TYPE, doctorId: null, isActive: true },
     select: { id: true, name: true },
   });
+
   if (existing) {
-    console.log(`Already present: "${existing.name}" (id=${existing.id}) — nothing to do.`);
+    await prisma.noteTemplate.update({
+      where: { id: existing.id },
+      data: { fields: JSON.stringify(FIELDS), updatedBy: 'seed' },
+    });
+    console.log(`Updated "${existing.name}" (id=${existing.id}) → ${FIELDS.length} fields.`);
     return;
   }
 
@@ -83,7 +127,7 @@ async function main(): Promise<void> {
       createdBy: 'seed',
     },
   });
-  console.log(`Created "${created.name}" (id=${created.id}) for department="${DEPARTMENT}".`);
+  console.log(`Created "${created.name}" (id=${created.id}) for department="${DEPARTMENT}" → ${FIELDS.length} fields.`);
 }
 
 main()

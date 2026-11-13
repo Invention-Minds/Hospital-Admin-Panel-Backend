@@ -5,6 +5,8 @@ import { getClinicalActor } from '../../middleware/audit-guard';
 import { auditLog } from '../../service/app-audit';
 import { notifyConsultationStarted } from '../appointments/appointment.controller';
 import { clearPriorityFor, getPriorityFor } from '../priority/priority.controller';
+import { snapshotTemplateFields } from '../note-template/note-template.controller';
+import { pushOpdNotesReady } from '../../service/record-push.service';
 
 // Doctor mobile app — the logged-in doctor's OPD day. Separate from the web
 // endpoints (which stay unchanged): the queue is scoped server-side to the
@@ -142,8 +144,9 @@ export const getMyOpdQueue = async (req: Request, res: Response): Promise<void> 
     const startOfToday = moment.tz(today, TZ).toDate();
 
     const [notes, results, allergies] = await Promise.all([
-      ids.length
-        ? prisma.oPDAssessment.findMany({ where: { appointmentId: { in: ids } }, select: { id: true, appointmentId: true }, orderBy: { id: 'desc' } })
+      // The doctor's OPD note for today's visit (DoctorNote: one per PRN per date).
+      prns.length
+        ? prisma.doctorNote.findMany({ where: { prn: { in: prns.map(Number) }, date: today }, select: { id: true, prn: true }, orderBy: { id: 'desc' } })
         : [],
       prns.length
         ? prisma.investigationResult.findMany({
@@ -154,8 +157,8 @@ export const getMyOpdQueue = async (req: Request, res: Response): Promise<void> 
       prns.length ? prisma.allergy.findMany({ where: { prn: { in: prns } }, select: { prn: true, genericName: true } }) : [],
     ]);
 
-    const noteByAppt = new Map<number, number>();
-    for (const n of notes) if (n.appointmentId != null && !noteByAppt.has(n.appointmentId)) noteByAppt.set(n.appointmentId, n.id);
+    const noteByPrn = new Map<number, number>();
+    for (const n of notes) if (!noteByPrn.has(n.prn)) noteByPrn.set(n.prn, n.id);
 
     const data = appts
       .map((a) => {
@@ -175,7 +178,7 @@ export const getMyOpdQueue = async (req: Request, res: Response): Promise<void> 
           startedAt: a.checkedOutTime,
           finishedAt: a.endConsultationTime,
           priority: pr && pr.priority !== 'normal' ? { level: pr.priority, reason: pr.reason ?? null } : null,
-          assessmentId: noteByAppt.get(a.id) ?? null,
+          assessmentId: a.prnNumber != null ? noteByPrn.get(a.prnNumber) ?? null : null,
           resultsToday: res.length,
           criticalToday: res.some((r) => r.criticalFlag),
           allergies: prn ? allergies.filter((x) => x.prn === prn).map((x) => x.genericName) : [],
@@ -273,20 +276,50 @@ export const finishMyConsultation = async (req: Request, res: Response): Promise
   }
 };
 
-/** GET /api/opd/my-queue/:appointmentId — patient header, vitals, allergies, saved note, last prescription. */
+/** The doctor's OPD note for a visit = the web's DoctorNote (one per PRN per visit date). */
+const NOTE_FIELDS = ['chiefComplaints', 'diagnosis', 'generalExamination', 'clinicalNotes', 'advice', 'cvs', 'rs', 'cns', 'pa'] as const;
+type NoteField = (typeof NOTE_FIELDS)[number];
+
+type DoctorNoteRow = {
+  id: number;
+  noteTemplateId: string | null;
+  templatedValues: string | null;
+  updatedAt: Date;
+} & Partial<Record<NoteField, string | null>>;
+
+function shapeNote(n: DoctorNoteRow) {
+  let template: { schema: unknown[]; values: Record<string, unknown> } | null = null;
+  if (n.noteTemplateId && n.templatedValues) {
+    try {
+      const t = JSON.parse(n.templatedValues) as { _schema?: unknown[]; _values?: Record<string, unknown> };
+      template = { schema: Array.isArray(t._schema) ? t._schema : [], values: t._values ?? {} };
+    } catch {
+      template = { schema: [], values: {} };
+    }
+  }
+  return {
+    id: n.id,
+    fields: Object.fromEntries(NOTE_FIELDS.map((k) => [k, n[k] ?? ''])) as Record<NoteField, string>,
+    noteTemplateId: n.noteTemplateId,
+    template,
+    updatedAt: n.updatedAt,
+  };
+}
+
+async function findVisitNote(prn: number, date: string) {
+  return prisma.doctorNote.findFirst({ where: { prn, date }, orderBy: { id: 'desc' } });
+}
+
+/** GET /api/opd/my-queue/:appointmentId — patient header, vitals, allergies, OPD note, last prescription. */
 export const getMyConsultation = async (req: Request, res: Response): Promise<void> => {
   try {
     const own = await loadOwnAppointment(req, res);
     if (!own) return;
-    const { appt } = own;
+    const { appt, doctor } = own;
     const prn = appt.prnNumber != null ? String(appt.prnNumber) : null;
 
     const [note, allergies, lastRx] = await Promise.all([
-      prisma.oPDAssessment.findFirst({
-        where: { appointmentId: appt.id },
-        orderBy: { id: 'desc' },
-        select: { id: true, history: true, examination: true, investigation: true, treatmentPlan: true, updatedAt: true, noteTemplateId: true },
-      }),
+      appt.prnNumber != null ? findVisitNote(appt.prnNumber, appt.date) : null,
       prn ? prisma.allergy.findMany({ where: { prn }, select: { id: true, genericName: true } }) : [],
       prn
         ? prisma.prescription.findFirst({
@@ -312,19 +345,11 @@ export const getMyConsultation = async (req: Request, res: Response): Promise<vo
         time: appt.time,
         date: appt.date,
         state: visitState(appt),
+        // Templates are looked up by the doctor's department (as on the web), else the visit's.
+        department: doctor?.departmentName ?? appt.department,
         vitals: vitalsOf(appt),
         allergies,
-        note: note
-          ? {
-              id: note.id,
-              history: note.history ?? '',
-              examination: note.examination ?? '',
-              investigation: note.investigation ?? '',
-              ...splitPlan(note.treatmentPlan),
-              templated: !!note.noteTemplateId,
-              updatedAt: note.updatedAt,
-            }
-          : null,
+        note: note ? shapeNote(note) : null,
         lastPrescription: lastRx,
       },
     });
@@ -334,7 +359,12 @@ export const getMyConsultation = async (req: Request, res: Response): Promise<vo
   }
 };
 
-/** PUT /api/opd/my-queue/:appointmentId/assessment — create or update the OPD note for this visit. */
+/**
+ * PUT /api/opd/my-queue/:appointmentId/assessment — save the doctor's OPD note.
+ * Body: { fields: {chiefComplaints, diagnosis, ...} } for the standard note, or
+ * { noteTemplateId, templatedValueMap } for a template (frozen at save time, like the web).
+ * Saving never messages the patient — POST /send-notes does that.
+ */
 export const saveMyAssessment = async (req: Request, res: Response): Promise<void> => {
   try {
     const actorId = getClinicalActor(req, res);
@@ -342,90 +372,72 @@ export const saveMyAssessment = async (req: Request, res: Response): Promise<voi
     const own = await loadOwnAppointment(req, res);
     if (!own) return;
     const { appt, doctor } = own;
-
-    const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-    const b = req.body ?? {};
-    const sections = {
-      history: str(b.history),
-      examination: str(b.examination),
-      investigation: str(b.investigation),
-    };
-    const diagnosis = str(b.diagnosis);
-    const plan = str(b.treatmentPlan);
-
-    const existing = await prisma.oPDAssessment.findFirst({
-      where: { appointmentId: appt.id },
-      orderBy: { id: 'desc' },
-      select: { id: true, treatmentPlan: true, noteTemplateId: true },
-    });
-    if (existing?.noteTemplateId) {
-      res.status(409).json({ error: 'This visit was written with a note template on the web panel. Edit it there.' });
+    if (appt.prnNumber == null) {
+      res.status(400).json({ error: 'This visit has no PRN, so a note cannot be saved. Ask reception to link the patient.' });
       return;
     }
 
-    // Only overwrite the plan when either half was sent; keep the other half as stored.
-    let treatmentPlan: string | null | undefined;
-    if (diagnosis !== undefined || plan !== undefined) {
-      const prev = splitPlan(existing?.treatmentPlan);
-      treatmentPlan = joinPlan(diagnosis ?? prev.diagnosis, plan ?? prev.treatmentPlan);
+    const b = (req.body ?? {}) as { fields?: Record<string, unknown>; noteTemplateId?: unknown; templatedValueMap?: unknown };
+    const fields: Partial<Record<NoteField, string>> = {};
+    for (const k of NOTE_FIELDS) if (typeof b.fields?.[k] === 'string') fields[k] = b.fields[k] as string;
+
+    let templatePart: { noteTemplateId: string | null; templatedValues: string | null } = { noteTemplateId: null, templatedValues: null };
+    if (typeof b.noteTemplateId === 'string' && b.noteTemplateId && b.templatedValueMap && typeof b.templatedValueMap === 'object') {
+      const schema = await snapshotTemplateFields(b.noteTemplateId);
+      if (!schema) {
+        res.status(400).json({ error: 'That note template no longer exists.' });
+        return;
+      }
+      templatePart = { noteTemplateId: b.noteTemplateId, templatedValues: JSON.stringify({ _schema: schema, _values: b.templatedValueMap }) };
     }
 
-    const content = {
-      ...sections,
-      ...(treatmentPlan !== undefined ? { treatmentPlan } : {}),
-    };
-
-    const v = vitalsOf(appt);
+    const by = req.user?.username ?? null;
+    const existing = await findVisitNote(appt.prnNumber, appt.date);
     const saved = existing
-      ? await prisma.oPDAssessment.update({ where: { id: existing.id }, data: content })
-      : await prisma.oPDAssessment.create({
-          data: {
-            ...content,
-            appointmentId: appt.id,
-            doctorId: appt.doctorId,
-            name: appt.patientName,
-            age: appt.age ?? '',
-            gender: appt.gender,
-            uhId: appt.prnNumber != null ? String(appt.prnNumber) : null,
-            date: appt.date,
-            assessmentTime: moment().tz(TZ).format('HH:mm'),
-            consultant: doctor?.name ?? appt.doctorName,
-            doctorName: doctor?.name ?? appt.doctorName,
-            kmcNo: doctor?.kmcNumber ?? null,
-            department: appt.department,
-            bp: v.bp,
-            pulse: v.pulse,
-            hr: v.pulse,
-            rr: v.rr,
-            temp: v.temp,
-            spo2: v.spo2,
-            height: v.height,
-            weight: v.weight,
-            createdBy: actorId,
-          },
+      ? await prisma.doctorNote.update({
+          where: { id: existing.id },
+          data: { ...fields, ...templatePart, doctorId: existing.doctorId ?? doctor?.id ?? appt.doctorId, updatedBy: by },
+        })
+      : await prisma.doctorNote.create({
+          data: { prn: appt.prnNumber, date: appt.date, ...fields, ...templatePart, doctorId: doctor?.id ?? appt.doctorId, createdBy: by, updatedBy: by },
         });
 
     await auditLog(req, {
-      module: 'opd-assessment',
+      module: 'doctor-notes',
       action: existing ? 'UPDATE' : 'CREATE',
-      entityType: 'OPDAssessment',
+      entityType: 'DoctorNote',
       entityId: saved.id,
-      payload: { appointmentId: appt.id, via: 'mobile' },
+      payload: { appointmentId: appt.id, templated: !!templatePart.noteTemplateId, via: 'mobile' },
     });
-
-    res.status(200).json({
-      data: {
-        id: saved.id,
-        history: saved.history ?? '',
-        examination: saved.examination ?? '',
-        investigation: saved.investigation ?? '',
-        ...splitPlan(saved.treatmentPlan),
-        templated: false,
-        updatedAt: saved.updatedAt,
-      },
-    });
+    res.status(200).json({ data: shapeNote(saved) });
   } catch (error) {
     console.error('[opd:my-queue:assessment] failed:', error);
-    res.status(500).json({ error: 'Failed to save the consultation note' });
+    res.status(500).json({ error: 'Failed to save the OPD note' });
+  }
+};
+
+/**
+ * POST /api/opd/my-queue/:appointmentId/send-notes — send the OPD notes to the
+ * patient on WhatsApp: the same "OPD notes ready" message + PDF link the web
+ * sends when a doctor saves a note. Only when the doctor taps send.
+ */
+export const sendMyNotes = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+    const own = await loadOwnAppointment(req, res);
+    if (!own) return;
+    const { appt } = own;
+    const note = appt.prnNumber != null ? await findVisitNote(appt.prnNumber, appt.date) : null;
+    if (!note) {
+      res.status(409).json({ error: 'Save the OPD note before sending it.' });
+      return;
+    }
+    await pushOpdNotesReady(note.id); // never throws; failures are logged by the push service
+    await auditLog(req, { module: 'doctor-notes', action: 'SEND', entityType: 'DoctorNote', entityId: note.id, payload: { appointmentId: appt.id, via: 'mobile' } });
+    res.status(200).json({ data: { noteId: note.id, sentAt: new Date() } });
+  } catch (error) {
+    console.error('[opd:my-queue:send-notes] failed:', error);
+    res.status(500).json({ error: 'Failed to send the OPD notes' });
   }
 };
