@@ -24,6 +24,12 @@ export interface StockProbeResult {
 
 const LOW_STOCK_THRESHOLD = 5;
 
+// HMIS isn't synced yet, so the stock check is off unless explicitly enabled.
+// While off there is no HMIS call and no warning, so prescriptions are never
+// blocked on stock. Set HMIS_STOCK_CHECK_ENABLED=true once the HMIS
+// /pharmacy/stock endpoint is live.
+const STOCK_CHECK_ENABLED = process.env.HMIS_STOCK_CHECK_ENABLED === 'true';
+
 /** Probe HMIS for current stock of a generic. Never throws — every error
  * path returns `ok: false` so the controller can record the failed probe
  * and continue saving the prescription. */
@@ -34,6 +40,9 @@ export async function probeStock(opts: {
 }): Promise<StockProbeResult> {
   const fetchedAt = new Date().toISOString();
   const generic = opts.generic.trim();
+  if (!STOCK_CHECK_ENABLED) {
+    return { ok: false, source: 'fallback', generic, fetchedAt };
+  }
   if (!generic) {
     return { ok: false, source: 'fallback', generic, fetchedAt, warning: 'No generic name supplied to probe' };
   }
