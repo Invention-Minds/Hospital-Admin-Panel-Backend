@@ -26,3 +26,21 @@ describe('rangeFlag', () => {
     expect(rangeFlag(null, '4-11')).toBeNull();
   });
 });
+
+import { encounterOf } from '../doctor-reports-mobile.controller';
+
+describe('encounterOf (OPD vs IPD)', () => {
+  const spans = [
+    { prn: '100', from: new Date('2026-11-01T10:00:00Z'), to: new Date('2026-11-05T12:00:00Z') },
+    { prn: '200', from: new Date('2026-11-10T08:00:00Z'), to: null },
+  ];
+  it('is IPD when ordered during an admission', () => {
+    expect(encounterOf(spans, '100', new Date('2026-11-03T09:00:00Z'))).toBe('IPD');
+    expect(encounterOf(spans, '200', new Date('2026-11-12T09:00:00Z'))).toBe('IPD');
+  });
+  it('is OPD before admission, after discharge, or for another patient', () => {
+    expect(encounterOf(spans, '100', new Date('2026-10-30T09:00:00Z'))).toBe('OPD');
+    expect(encounterOf(spans, '100', new Date('2026-11-06T09:00:00Z'))).toBe('OPD');
+    expect(encounterOf(spans, '300', new Date('2026-11-03T09:00:00Z'))).toBe('OPD');
+  });
+});

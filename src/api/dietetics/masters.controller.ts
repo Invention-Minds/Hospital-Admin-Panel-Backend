@@ -235,15 +235,17 @@ export const listMeals = async (req: Request, res: Response): Promise<void> => {
       include: {
         compatibleDiets: { select: { dietMasterId: true } },
         allergens: { select: { allergenId: true } },
+        dishes: { select: { dishId: true }, orderBy: { sortOrder: 'asc' } },
       },
       orderBy: [{ name: 'asc' }],
     });
     // Flatten the joins into the id arrays the client edits and posts back
-    // via upsertMeal (compatibleDietIds / allergenIds).
-    const shaped = rows.map(({ compatibleDiets, allergens, ...meal }) => ({
+    // via upsertMeal (compatibleDietIds / allergenIds) and setMealDishes (dishIds).
+    const shaped = rows.map(({ compatibleDiets, allergens, dishes, ...meal }) => ({
       ...meal,
       compatibleDietIds: compatibleDiets.map((c) => c.dietMasterId),
       allergenIds: allergens.map((a) => a.allergenId),
+      dishIds: dishes.map((d) => d.dishId),
     }));
     res.status(200).json(shaped);
   } catch (error) {
@@ -506,6 +508,8 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   // admissions / diet changes instead ("19:00" → "07:00", wraps midnight).
   nightFrom: '19:00',
   nightUntil: '07:00',
+  // Kitchen cooks the per-dish count plus this margin (new admissions, late changes).
+  prepBufferPct: 5,
 };
 
 export async function readSettings(): Promise<Record<string, unknown>> {

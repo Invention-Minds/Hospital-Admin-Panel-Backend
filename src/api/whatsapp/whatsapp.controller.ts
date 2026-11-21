@@ -13,7 +13,7 @@ import https from 'https';
 import { parse, isAfter, isBefore, subHours, setMinutes, setSeconds } from 'date-fns';
 import * as dotenv from 'dotenv';
 import * as cron from 'node-cron';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import moment from 'moment-timezone';
 import { start } from 'repl';
 import { Console } from 'console';
@@ -28,7 +28,6 @@ import {
 
 // import { utcToZonedTime, format } from 'date-fns-tz';
 dotenv.config();
-const prisma = new PrismaClient();
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });

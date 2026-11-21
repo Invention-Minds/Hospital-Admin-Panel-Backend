@@ -7,6 +7,8 @@ jest.mock('../../../service/prisma-client', () => ({
     whatsappQueryMessage: { findMany: jest.fn() },
     whatsappQuery: { findMany: jest.fn() },
     ipdDischarge: { findMany: jest.fn() },
+    dietaryAlert: { findMany: jest.fn() },
+    user: { findMany: jest.fn() },
   },
 }));
 jest.mock('../../../service/mobile-push', () => ({
@@ -18,7 +20,7 @@ jest.mock('../../quality/quality-mobile.controller', () => ({ qualityCapabilitie
 
 import prisma from '../../../service/prisma-client';
 import { pushOnce, PUSH_COPY } from '../../../service/mobile-push';
-import { dispatchCriticalResults, dispatchDischargeDrafts, dispatchPatientQueries } from '../mobile-push.cron';
+import { dispatchCriticalResults, dispatchDietAdmissions, dispatchDischargeDrafts, dispatchPatientQueries } from '../mobile-push.cron';
 
 const db = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 const push = pushOnce as jest.Mock;
@@ -63,5 +65,16 @@ describe('dispatchDischargeDrafts', () => {
     db.doctor.findMany.mockResolvedValue([{ id: 3, userId: 33 }]);
     await dispatchDischargeDrafts(since);
     expect(push.mock.calls[0][0]).toMatchObject({ userId: 33, kind: 'discharge_ready', path: '/rounds/a1/discharge' });
+  });
+});
+
+describe('dispatchDietAdmissions', () => {
+  it('alerts every dietitian about an unacknowledged new admission', async () => {
+    db.dietaryAlert.findMany.mockResolvedValue([{ id: 'al1', admissionId: 'a9' }]);
+    db.user.findMany.mockResolvedValue([{ id: 70 }, { id: 71 }]);
+    await dispatchDietAdmissions(since);
+    expect(db.user.findMany.mock.calls[0][0].where).toEqual({ subAdminType: { in: ['Dietician', 'Diet'] } });
+    expect(push.mock.calls.map((c) => c[0].userId)).toEqual([70, 71]);
+    expect(push.mock.calls[0][0]).toMatchObject({ kind: 'diet_admission', entityId: 'al1', path: '/diet/a9' });
   });
 });

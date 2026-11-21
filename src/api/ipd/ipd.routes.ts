@@ -82,6 +82,8 @@ import {
   listDiagnosisCodes, addDiagnosisCode, updateDiagnosisCode, removeDiagnosisCode,
 } from './diagnosis-code.controller';
 import { authenticateToken } from '../../middleware/middleware';
+import { requireDoctor } from '../../middleware/require-doctor';
+import { getMyClearances } from './discharge-clearance-mobile.controller';
 import { requireClinicalActor } from '../../middleware/audit-guard';
 import { requireDownloadGrant } from '../../middleware/require-download-grant';
 
@@ -101,10 +103,10 @@ router.post('/admission', authenticateToken, requireClinicalActor, createIpdAdmi
 // logged-in nurse. The frontend attaches the Bearer token to every request.
 router.get('/admissions', authenticateToken, getIpdAdmissions);
 // Doctor mobile app — the logged-in doctor's admitted patients + discharge state.
-router.get('/my-patients', authenticateToken, getMyPatients);
-router.get('/my-patients/:admissionId/round', authenticateToken, getRoundDetail);
-router.post('/my-patients/:admissionId/seen', authenticateToken, requireClinicalActor, markSeenOnRound);
-router.post('/my-patients/:admissionId/progress-note', authenticateToken, requireClinicalActor, addRoundProgressNote);
+router.get('/my-patients', authenticateToken, requireDoctor, getMyPatients);
+router.get('/my-patients/:admissionId/round', authenticateToken, requireDoctor, getRoundDetail);
+router.post('/my-patients/:admissionId/seen', authenticateToken, requireDoctor, requireClinicalActor, markSeenOnRound);
+router.post('/my-patients/:admissionId/progress-note', authenticateToken, requireDoctor, requireClinicalActor, addRoundProgressNote);
 router.get('/admission/:id', getIpdAdmission);
 router.put('/admission/:id', authenticateToken, requireClinicalActor, updateIpdAdmission);
 
@@ -176,6 +178,8 @@ router.post('/admission/:admissionId/discharge/attender-ack', authenticateToken,
 // ─── Phase D — Discharge cross-admission queues (no :admissionId param) ──
 // Each department coordinator polls their own pending queue.
 router.get('/discharge-queue/:dept', authenticateToken, departmentQueue);
+// App: the caller's own department clearances (nurse → Nursing, dietitian/canteen → Diet).
+router.get('/my-clearances', authenticateToken, getMyClearances);
 // Medical transcriptionist's pending queue (cases where the doctor has flipped
 // "ready for discharge" and the summary isn't signed yet).
 router.get('/mt-queue', authenticateToken, mtQueue);

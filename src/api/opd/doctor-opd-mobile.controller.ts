@@ -6,7 +6,10 @@ import { auditLog } from '../../service/app-audit';
 import { notifyConsultationStarted } from '../appointments/appointment.controller';
 import { clearPriorityFor, getPriorityFor } from '../priority/priority.controller';
 import { snapshotTemplateFields } from '../note-template/note-template.controller';
-import { pushOpdNotesReady } from '../../service/record-push.service';
+import { buildRecordFile } from '../../service/record-builder.service';
+import { uploadMediaToGoBuzz, sendDocumentTemplate, formatGoBuzzPhone } from '../../service/gobuzz-document';
+import { generatePrescriptionId } from '../prescription/prescription.controller';
+import { syncPrescriptionToHmis } from '../prescription/prescription-sync';
 
 // Doctor mobile app — the logged-in doctor's OPD day. Separate from the web
 // endpoints (which stay unchanged): the queue is scoped server-side to the
@@ -53,13 +56,14 @@ async function currentDoctor(req: Request) {
   return userId
     ? prisma.doctor.findFirst({
         where: { userId },
-        select: { id: true, name: true, kmcNumber: true, departmentName: true, slotDuration: true },
+        select: { id: true, name: true, kmcNumber: true, departmentName: true, departmentId: true, slotDuration: true },
       })
     : null;
 }
 
 const APPOINTMENT_SELECT = {
   id: true,
+  phoneNumber: true,
   doctorId: true,
   doctorName: true,
   department: true,
@@ -195,7 +199,7 @@ export const getMyOpdQueue = async (req: Request, res: Response): Promise<void> 
     res.status(200).json({
       data,
       date: today,
-      doctor: doctor ? { id: doctor.id, name: doctor.name, kmcNumber: doctor.kmcNumber, department: doctor.departmentName } : null,
+      doctor: doctor ? { id: doctor.id, name: doctor.name, kmcNumber: doctor.kmcNumber, department: doctor.departmentName, departmentId: doctor.departmentId } : null,
     });
   } catch (error) {
     console.error('[opd:my-queue] failed:', error);
@@ -347,6 +351,8 @@ export const getMyConsultation = async (req: Request, res: Response): Promise<vo
         state: visitState(appt),
         // Templates are looked up by the doctor's department (as on the web), else the visit's.
         department: doctor?.departmentName ?? appt.department,
+        // For a counselling estimate (the estimate goes to this number on WhatsApp).
+        phone: appt.phoneNumber,
         vitals: vitalsOf(appt),
         allergies,
         note: note ? shapeNote(note) : null,
@@ -416,10 +422,72 @@ export const saveMyAssessment = async (req: Request, res: Response): Promise<voi
   }
 };
 
+/** Same AppAuditLog key the web's "Send visit summary" writes, so web and app share the send history. */
+const VISIT_SUMMARY_SEND_AUDIT = { module: 'opd-visit-summary', action: 'WHATSAPP_SENT', entityType: 'Appointment' } as const;
+
+class SendError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
 /**
- * POST /api/opd/my-queue/:appointmentId/send-notes — send the OPD notes to the
- * patient on WhatsApp: the same "OPD notes ready" message + PDF link the web
- * sends when a doctor saves a note. Only when the doctor taps send.
+ * Send a PDF to the visit's patient on WhatsApp the way the web's working
+ * "Send visit summary" does: an approved document template with the PDF
+ * attached, body params [patient name, doctor name]. Recipient = the registered
+ * patient number (else the booking number), never a number from the client.
+ * Throws SendError with a doctor-readable reason; nothing fails silently.
+ */
+async function sendVisitPdf(opts: {
+  appt: { prnNumber: number | null; patientName: string; phoneNumber: string | null };
+  doctorName: string;
+  filePath: string;
+  displayName: string;
+  templateName: string;
+  templateLang: string;
+}): Promise<{ sentTo: string; messageId: string }> {
+  const nonBlank = (v: string | null | undefined) => (v && v.trim() ? v.trim() : undefined);
+  const pd =
+    opts.appt.prnNumber != null
+      ? await prisma.patientDetails.findUnique({ where: { prn: opts.appt.prnNumber }, select: { name: true, mobileNo: true } })
+      : null;
+  const phone = nonBlank(pd?.mobileNo) ?? nonBlank(opts.appt.phoneNumber);
+  if (!phone) throw new SendError(400, 'No phone number on record for this patient.');
+  const patientName = nonBlank(pd?.name) ?? nonBlank(opts.appt.patientName) ?? 'Patient';
+  const bodyParamNames = (process.env.GOBUZZ_OPD_SUMMARY_PARAM_NAMES || '').split(',').map((n) => n.trim()).filter(Boolean);
+  try {
+    const mediaId = await uploadMediaToGoBuzz(opts.filePath);
+    const response = await sendDocumentTemplate({
+      to: formatGoBuzzPhone(phone),
+      templateName: opts.templateName,
+      templateLang: opts.templateLang,
+      mediaId,
+      filename: opts.displayName,
+      bodyParams: [patientName, opts.doctorName],
+      ...(bodyParamNames.length ? { bodyParamNames } : {}),
+    });
+    const messageId = response.data?.messages?.[0]?.id;
+    if (!messageId) {
+      console.error('[opd:mobile-send] unexpected GoBuzz response:', response.data);
+      throw new SendError(502, 'WhatsApp did not accept the message. Try again.');
+    }
+    return { sentTo: `******${phone.replace(/\D/g, '').slice(-4)}`, messageId };
+  } catch (e) {
+    if (e instanceof SendError) throw e;
+    const gobuzz = (e as { response?: { data?: any } })?.response?.data;
+    const reason = gobuzz
+      ? gobuzz?.error?.error_data?.details || gobuzz?.error?.message || gobuzz?.message || JSON.stringify(gobuzz)
+      : (e as Error).message;
+    console.error('[opd:mobile-send] GoBuzz rejection:', gobuzz ? JSON.stringify(gobuzz) : e);
+    throw new SendError(502, `WhatsApp send rejected: ${String(reason).slice(0, 200)}`);
+  }
+}
+
+/**
+ * POST /api/opd/my-queue/:appointmentId/send-notes — WhatsApp the consultation
+ * summary PDF (notes, vitals, tests, medicines) to the patient, only when the
+ * doctor taps send. Uses the web's approved visit-summary templates
+ * (GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME; ..._UPDATE_... for a resend).
  */
 export const sendMyNotes = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -427,17 +495,162 @@ export const sendMyNotes = async (req: Request, res: Response): Promise<void> =>
     if (actorId === null) return;
     const own = await loadOwnAppointment(req, res);
     if (!own) return;
-    const { appt } = own;
+    const { appt, doctor } = own;
     const note = appt.prnNumber != null ? await findVisitNote(appt.prnNumber, appt.date) : null;
-    if (!note) {
+    if (!note || appt.prnNumber == null) {
       res.status(409).json({ error: 'Save the OPD note before sending it.' });
       return;
     }
-    await pushOpdNotesReady(note.id); // never throws; failures are logged by the push service
-    await auditLog(req, { module: 'doctor-notes', action: 'SEND', entityType: 'DoctorNote', entityId: note.id, payload: { appointmentId: appt.id, via: 'mobile' } });
-    res.status(200).json({ data: { noteId: note.id, sentAt: new Date() } });
+    const previous = await prisma.appAuditLog.count({ where: { ...VISIT_SUMMARY_SEND_AUDIT, entityId: String(appt.id) } });
+    const first = process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME;
+    const templateName = previous > 0 ? process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_NAME || first : first;
+    if (!templateName) {
+      res.status(503).json({ error: 'The visit-summary WhatsApp template is not set up on the server (GOBUZZ_OPD_SUMMARY_TEMPLATE_NAME).' });
+      return;
+    }
+    const templateLang =
+      previous > 0
+        ? process.env.GOBUZZ_OPD_SUMMARY_UPDATE_TEMPLATE_LANG || process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en'
+        : process.env.GOBUZZ_OPD_SUMMARY_TEMPLATE_LANG || 'en';
+    const built = await buildRecordFile('REC_OPD', String(note.id), appt.prnNumber, appt.patientName);
+    if (!built) {
+      res.status(500).json({ error: 'Could not build the consultation summary PDF.' });
+      return;
+    }
+    const sent = await sendVisitPdf({
+      appt,
+      doctorName: doctor?.name ?? appt.doctorName ?? 'your doctor',
+      filePath: built.filePath,
+      displayName: `VisitSummary_${appt.date}.pdf`,
+      templateName,
+      templateLang,
+    });
+    await auditLog(req, {
+      ...VISIT_SUMMARY_SEND_AUDIT,
+      entityId: appt.id,
+      payload: { prn: appt.prnNumber, date: appt.date, template: previous > 0 ? 'updated' : 'initial', templateName, sentTo: sent.sentTo, messageId: sent.messageId, noteId: note.id, via: 'mobile' },
+    });
+    res.status(200).json({ data: { noteId: note.id, sentTo: sent.sentTo, sentAt: new Date() } });
   } catch (error) {
+    if (error instanceof SendError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
     console.error('[opd:my-queue:send-notes] failed:', error);
-    res.status(500).json({ error: 'Failed to send the OPD notes' });
+    res.status(500).json({ error: 'Failed to send the consultation summary' });
+  }
+};
+
+/**
+ * GET /api/opd/my-estimates?prn= — the counselling estimates this doctor has
+ * raised (optionally for one patient), newest first, with the admission a
+ * confirmed estimate was referred to. Read-only; raising and referring use the
+ * existing /api/estimation endpoints. Users without a Doctor row must pass a PRN.
+ */
+export const getMyEstimates = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const doctor = await currentDoctor(req);
+    const prnRaw = String(req.query.prn ?? '').trim();
+    const prn = /^\d+$/.test(prnRaw) ? Number(prnRaw) : null;
+    if (!doctor && prn === null) {
+      res.status(403).json({ error: 'Only doctors have estimates' });
+      return;
+    }
+    const rows = await prisma.estimationDetails.findMany({
+      where: {
+        NOT: { estimationId: 'emergency' },
+        ...(doctor ? { consultantId: doctor.id } : {}),
+        ...(prn !== null ? { patientUHID: prn } : {}),
+      },
+      orderBy: { id: 'desc' },
+      take: prn !== null ? 30 : 100,
+      select: {
+        id: true, estimationId: true, patientName: true, patientUHID: true, estimationName: true,
+        estimationType: true, statusOfEstimation: true, estimationStatus: true, estimationPreferredDate: true,
+        estimatedDate: true, estimationCreatedTime: true, totalEstimationAmount: true, surgeryTime: true,
+        totalDaysStay: true, icuStay: true, remarks: true, rejectReason: true, feedback: true,
+      },
+    });
+    const admissions = rows.length
+      ? await prisma.ipdAdmission.findMany({
+          where: { referralEstimationId: { in: rows.map((r) => r.estimationId) }, status: { not: 'cancelled' } },
+          orderBy: { createdAt: 'desc' },
+          select: { referralEstimationId: true, admissionNo: true, status: true },
+        })
+      : [];
+    const admissionOf = new Map<string, { admissionNo: string | null; status: string }>();
+    for (const a of admissions) {
+      if (a.referralEstimationId && !admissionOf.has(a.referralEstimationId)) admissionOf.set(a.referralEstimationId, { admissionNo: a.admissionNo, status: a.status });
+    }
+    res.status(200).json({
+      data: rows.map((r) => ({
+        ...r,
+        status: r.statusOfEstimation ?? 'pending',
+        admission: admissionOf.get(r.estimationId) ?? null,
+      })),
+    });
+  } catch (error) {
+    console.error('[opd:my-estimates] failed:', error);
+    res.status(500).json({ error: 'Failed to load estimates' });
+  }
+};
+
+type RxTabletIn = { genericName?: string; brandName?: string; frequency?: string; duration?: string; instructions?: string; quantity?: number };
+
+/**
+ * POST /api/opd/my-queue/:appointmentId/prescription — sign (save) the visit's
+ * prescription WITHOUT messaging the patient. Same record, id format, audit and
+ * HMIS sync as the web's POST /api/prescription, minus its automatic WhatsApp:
+ * on the app the doctor decides when to send (see send-prescription).
+ */
+export const signMyPrescription = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const actorId = getClinicalActor(req, res);
+    if (actorId === null) return;
+    const own = await loadOwnAppointment(req, res);
+    if (!own) return;
+    const { appt, doctor } = own;
+    if (appt.prnNumber == null) {
+      res.status(400).json({ error: 'This visit has no PRN, so a prescription cannot be saved.' });
+      return;
+    }
+    const tablets = (Array.isArray(req.body?.tablets) ? req.body.tablets : []) as RxTabletIn[];
+    const clean = tablets
+      .map((t) => ({
+        genericName: String(t.genericName ?? '').trim(),
+        brandName: String(t.brandName ?? '').trim(),
+        frequency: String(t.frequency ?? '').trim(),
+        duration: String(t.duration ?? '').trim(),
+        instructions: String(t.instructions ?? '').trim(),
+        quantity: Math.max(0, Math.round(Number(t.quantity) || 0)),
+      }))
+      .filter((t) => t.brandName || t.genericName);
+    if (!clean.length || clean.some((t) => !t.frequency || !t.duration)) {
+      res.status(400).json({ error: 'Every medicine needs a dose and a duration.' });
+      return;
+    }
+    const prescriptionId = await generatePrescriptionId();
+    const rx = await prisma.prescription.create({
+      data: {
+        prescriptionId,
+        prescribedBy: doctor?.name ?? req.user?.username ?? 'Doctor',
+        prn: String(appt.prnNumber),
+        patientName: appt.patientName,
+        prescribedDate: appt.date,
+        prescribedById: String(actorId),
+        prescribedByKMC: doctor?.kmcNumber ?? null,
+        tablets: { create: clean.map((t) => ({ ...t, genericName: t.genericName || t.brandName, brandName: t.brandName || t.genericName })) },
+      },
+      include: { tablets: true },
+    });
+    await auditLog(req, {
+      module: 'prescription', action: 'CREATE', entityType: 'Prescription', entityId: rx.id,
+      payload: { prescriptionId, prn: rx.prn, tabletCount: clean.length, appointmentId: appt.id, via: 'mobile', sent: false },
+    });
+    res.status(201).json({ data: { prescriptionId, id: rx.id } });
+    syncPrescriptionToHmis(rx).catch((err) => console.error('HMIS prescription sync failed:', err));
+  } catch (error) {
+    console.error('[opd:my-queue:prescription] failed:', error);
+    res.status(500).json({ error: 'Failed to save the prescription' });
   }
 };

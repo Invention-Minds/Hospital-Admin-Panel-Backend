@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import prisma from '../../service/prisma-client';
 import {
   OPEN_MIN,
   CLOSE_MIN,
@@ -8,7 +8,6 @@ import {
   computeFreeWindows,
 } from "./therapy-scheduling.util";
 
-const prisma = new PrismaClient();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { getRecipientPhones } from '../../service/notification-recipients';
 import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 import fs from "fs";
@@ -53,7 +54,6 @@ async function createWithNextEstimationId<T>(create: (estimationId: string) => P
     }
 }
 
-const prisma = new PrismaClient();
 const repository = new ServiceRepository();
 
 // Free-text estimation search spans all history, so the result set is capped to
@@ -234,7 +234,9 @@ export const createEstimationDetails = async (req: Request, res: Response) => {
                     };
                     try { await sendGoBuzzMessage(payload); } catch (e) { console.error("[GoBuzz immediate] failed", e); }
                 }
-                return;
+                // Fall through: an immediate estimation still gets the staff
+                // notification and — crucially — the 201 response (it used to
+                // `return` here and leave the request hanging).
             } catch (error) {
                 console.error("❌ WhatsApp API Error:", error);
                 throw error;

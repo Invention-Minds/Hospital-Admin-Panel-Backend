@@ -1,6 +1,6 @@
-import { PrismaClient, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import bcrypt from 'bcrypt';
-const prisma = new PrismaClient();
 
 class AppointmentRepository {
   async findUserByUsername(username: string) {

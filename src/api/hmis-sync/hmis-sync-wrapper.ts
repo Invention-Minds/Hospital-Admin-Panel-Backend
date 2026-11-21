@@ -114,9 +114,34 @@ const normalizeError = (err: unknown): HmisSyncError => {
   return { message: String(err) };
 };
 
+// HMIS isn't connected yet, so outbound sync is off unless explicitly enabled.
+// While off, no HMIS call is made (no retries, no waiting on a save) and one
+// 'skipped' audit row records what would have been sent. Callers get
+// success:false, the same as a failed sync, so nothing is marked as synced.
+// Set HMIS_SYNC_ENABLED=true (with HMIS_BASE_URL) once HMIS is live.
+const HMIS_SYNC_ENABLED = process.env.HMIS_SYNC_ENABLED === 'true';
+
 export const syncWithHmis = async <TResult = unknown>(
   input: HmisSyncInput<TResult>
 ): Promise<HmisSyncOutcome<TResult>> => {
+  if (!HMIS_SYNC_ENABLED) {
+    const log: HmisAuditLog | null = await createHmisAuditLog({
+      direction: input.direction,
+      module: input.module,
+      action: input.action,
+      payload: safeStringify(input.payload),
+      response: safeStringify({ entityType: input.entityType, skipped: 'HMIS_SYNC_ENABLED is not true' }),
+      status: 'skipped',
+      retryCount: 0,
+    });
+    return {
+      success: false,
+      auditLogId: log?.id,
+      attempts: 0,
+      error: { message: 'HMIS sync disabled', code: 'HMIS_SYNC_DISABLED' },
+    };
+  }
+
   const policy: HmisRetryPolicy = {
     ...DEFAULT_HMIS_RETRY_POLICY,
     ...(input.retry ?? {}),

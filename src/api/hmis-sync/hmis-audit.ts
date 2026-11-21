@@ -1,7 +1,9 @@
 import type { HmisAuditLog } from '@prisma/client';
 import prisma from '../../service/prisma-client';
 
-export type HmisAuditStatus = 'success' | 'failed' | 'pending';
+// 'skipped' = HMIS sync is switched off (HMIS_SYNC_ENABLED); no call was made.
+// The retry queue and dead-letter mover only pick up 'pending' / 'failed'.
+export type HmisAuditStatus = 'success' | 'failed' | 'pending' | 'skipped';
 
 export interface HmisAuditLogInput {
   direction: 'push' | 'pull';

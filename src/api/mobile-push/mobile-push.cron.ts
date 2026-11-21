@@ -88,13 +88,34 @@ export async function dispatchDischargeDrafts(since: Date): Promise<number> {
   return sent;
 }
 
+/** Dietitians (subAdminType 'Dietician' / 'Diet') — same set the dietetics guards accept. */
+const DIETITIAN_TITLES = ['Dietician', 'Diet'];
+
+/** A new admission raised a diet alert and nobody has acknowledged it → every dietitian with the app. */
+export async function dispatchDietAdmissions(since: Date): Promise<number> {
+  const alerts = await prisma.dietaryAlert.findMany({
+    where: { type: 'ADMISSION', acknowledgedAt: null, createdAt: { gte: since } },
+    select: { id: true, admissionId: true },
+    take: 100,
+  });
+  if (!alerts.length) return 0;
+  const dietitians = await prisma.user.findMany({ where: { subAdminType: { in: DIETITIAN_TITLES } }, select: { id: true } });
+  let sent = 0;
+  for (const a of alerts) {
+    for (const u of dietitians) {
+      if (await pushOnce({ userId: u.id, kind: 'diet_admission', entityId: a.id, path: a.admissionId ? `/diet/${a.admissionId}` : '/diet' })) sent++;
+    }
+  }
+  return sent;
+}
+
 /** 08:00 — everyone with Quality access and the app installed gets the digest nudge. */
 export async function dispatchQualityDigest(today: string): Promise<number> {
   const devices = await prisma.mobilePushDevice.findMany({ where: { disabledAt: null }, select: { userId: true }, distinct: ['userId'] });
   let sent = 0;
   for (const { userId } of devices) {
     const caps = await qualityCapabilitiesFor(userId);
-    if (caps?.canSeeQuality && (await pushOnce({ userId, kind: 'quality_digest', entityId: today, path: '/quality' }))) sent++;
+    if (caps?.canSeeQuality && (await pushOnce({ userId, kind: 'quality_digest', entityId: today, path: '/today' }))) sent++;
   }
   return sent;
 }
@@ -112,8 +133,8 @@ export const registerMobilePushCron = (): void => {
     running = true;
     try {
       const since = new Date(Date.now() - LOOKBACK_MS);
-      const [c, q, d] = await Promise.all([dispatchCriticalResults(since), dispatchPatientQueries(since), dispatchDischargeDrafts(since)]);
-      if (c + q + d) console.log(`[mobile-push] sent critical ${c} · query ${q} · discharge ${d}`);
+      const [c, q, d, n] = await Promise.all([dispatchCriticalResults(since), dispatchPatientQueries(since), dispatchDischargeDrafts(since), dispatchDietAdmissions(since)]);
+      if (c + q + d + n) console.log(`[mobile-push] sent critical ${c} · query ${q} · discharge ${d} · diet ${n}`);
     } catch (err) {
       console.error('[mobile-push] dispatch failed:', err);
     } finally {

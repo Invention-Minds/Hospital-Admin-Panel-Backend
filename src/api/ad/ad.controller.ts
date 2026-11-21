@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+import prisma from '../../service/prisma-client';
 import { Request, Response } from 'express';
 import formidable from "formidable";
 const fs = require("fs");
@@ -18,7 +18,6 @@ import { saveFileToStorage } from '../../service/local-file-store';
 // };
 // ---------------------------------------------------------------------------
 
-const prisma = new PrismaClient();
 
 export const getLatestAds = async (req: Request, res: Response) => {
     try {

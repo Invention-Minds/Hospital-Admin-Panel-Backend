@@ -19,6 +19,9 @@ const prismaMock = {
   ipdAdmission: { findFirst: jest.fn(), create: jest.fn() },
   ipdBed: { update: jest.fn() },
   doctor: { findUnique: jest.fn(), findMany: jest.fn() },
+  // A conversion without a patient PRN registers the patient first
+  // (generatePRN + patientDetails.create), now through the same shared client.
+  patientDetails: { findFirst: jest.fn(), create: jest.fn() },
 };
 
 jest.mock('../../../service/prisma-client', () => ({

@@ -3,7 +3,7 @@ import multer from 'multer';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
 import { requireFeedbackViewer } from '../_shared/quality-roles';
-import { getAssignees, getIncidentTimeline, getQualityOverview, raiseFeedbackAsComplaint, uploadAuditPhoto, getUnitQrCodes } from './quality-mobile.controller';
+import { getAssignees, getIncidentTimeline, getMyTasks, getQualityOverview, raiseFeedbackAsComplaint, uploadAuditPhoto, uploadIncidentPhoto, getUnitQrCodes } from './quality-mobile.controller';
 
 // Photos stay in memory only long enough to push to GCS (same as incident evidence).
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -13,11 +13,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 const router = Router();
 
 router.get('/overview', authenticateToken, getQualityOverview);
+// Quality work assigned to the caller (any staff member).
+router.get('/my-tasks', authenticateToken, getMyTasks);
 router.get('/incidents/:id/timeline', authenticateToken, getIncidentTimeline);
 router.get('/assignees', authenticateToken, getAssignees);
 router.get('/units/qr', authenticateToken, getUnitQrCodes);
 router.post('/feedback/:surveyId/raise', authenticateToken, requireClinicalActor, requireFeedbackViewer, raiseFeedbackAsComplaint);
 
 router.post('/audit-runs/:id/photo', authenticateToken, requireClinicalActor, upload.single('file'), uploadAuditPhoto);
+router.post('/incidents/:id/photo', authenticateToken, requireClinicalActor, upload.single('file'), uploadIncidentPhoto);
 
 export default router;

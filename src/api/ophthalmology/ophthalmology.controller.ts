@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 
-const prisma = new PrismaClient();
 
 // ─── Optometrist work-up ↔ doctor verification ───────────────────────
 //

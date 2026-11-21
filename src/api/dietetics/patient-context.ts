@@ -100,7 +100,7 @@ export async function loadPatientContext(filter: {
   const prnInts = Array.from(new Set(
     admissions.map((a) => Number.parseInt(a.prn ?? '', 10)).filter((n) => !Number.isNaN(n)),
   ));
-  const [patients, assessments] = await Promise.all([
+  const [patients, assessments, censusDx] = await Promise.all([
     prnInts.length
       ? prisma.patientDetails.findMany({
           where: { prn: { in: prnInts } },
@@ -112,12 +112,22 @@ export async function loadPatientContext(filter: {
       select: {
         admissionId: true, vitalsWeight: true, vitalsHeight: true, dietType: true,
         allergyFood: true, allergyOthers: true, isPregnant: true, pregnancyWeeks: true,
-        nutrition: true, chiefComplaints: true,
+        nutrition: true, chiefComplaints: true, provisionalDiagnosis: true,
       },
+    }),
+    // Diagnosis the ward wrote on the diet census — last resort when the
+    // admission and the doctor's assessment have none.
+    prisma.dietCensusLine.findMany({
+      where: { admissionId: { in: admissions.map((a) => a.id) }, diagnosis: { not: null } },
+      select: { admissionId: true, diagnosis: true },
+      orderBy: { census: { createdAt: 'desc' } },
     }),
   ]);
   const patientMap = new Map(patients.map((p) => [String(p.prn), p]));
   const iaMap = new Map(assessments.map((a) => [a.admissionId, a]));
+  const censusDxMap = new Map<string, string>();
+  for (const c of censusDx) if (c.diagnosis?.trim() && !censusDxMap.has(c.admissionId)) censusDxMap.set(c.admissionId, c.diagnosis.trim());
+  const firstText = (...xs: Array<string | null | undefined>): string => xs.find((x) => x && x.trim())?.trim() ?? '';
 
   return admissions.map((a) => {
     const p = patientMap.get(a.prn);
@@ -135,7 +145,8 @@ export async function loadPatientContext(filter: {
       bedNumber: a.bed?.bedNumber ?? null,
       department: a.department,
       consultant: a.admittingDoctor,
-      diagnosis: a.diagnosis,
+      // Admission diagnosis → doctor's initial assessment → ward's census entry.
+      diagnosis: firstText(a.diagnosis, ia?.provisionalDiagnosis, censusDxMap.get(a.id)),
       ia: ia
         ? {
             weightKg: toNum(ia.vitalsWeight),

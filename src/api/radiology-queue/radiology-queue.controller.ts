@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { getRecipientPhones } from '../../service/notification-recipients';
 import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
-const prisma = new PrismaClient();
 import axios from "axios";
 
 function getCurrentHourSlot() {

@@ -3,7 +3,11 @@ import { Router } from 'express';
 import { createDoctor, getDoctors, getDoctorById, updateDoctor, updateDoctorUserId, deleteDoctor, getDoctorAvailability, getBookedSlots, addBookedSlot, addUnavailableDates, getUnavailableDates, getAvailableDoctors, getAvailableDoctorsCount, getUnavailableSlots, markDatesAsAvailable,addUnavailableSlots, cancelBookedSlot, getUnavailableSlotsByDate, updateBookedSlot , getFutureBookedSlots, addExtraSlot, getExtraSlots, getFutureBookedSlotsBoth, getDoctorDetails, getDoctorDetailsPaged, getDoctorByUserId, updateRoomNo, addUnavailableDatesBulk, getBulkFutureBookedSlots, getAllDoctorWithDepartment, getFourDoctors, getDoctorsWithDeActive, getAllDeActiveDoctors, uploadDoctorSignature, deactivateDoctor, activateDoctor} from './doctor.controller';
 import {authenticateToken} from './../../middleware/middleware'
 import { get } from 'http';
+import { getDoctorChangeLog } from './doctor-change-log';
 const router = Router();
+
+// Doctor Updates page — who changed which doctor, and when. Must stay above '/:id'.
+router.get('/change-log', authenticateToken, getDoctorChangeLog);
 
 
 

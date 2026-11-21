@@ -10,6 +10,7 @@ import {
   abandonDischargeChain,
 } from '../../service/discharge-clearance';
 import { runDischargeDraft } from '../discharge-ai/discharge-ai.controller';
+import { canClearDepartment, clearableDepartments } from '../../service/discharge-clearance-roles';
 import { stopDietOnNursingClearance } from '../dietetics/diet-lifecycle';
 
 // Phase D — Discharge clearance HTTP layer.
@@ -66,7 +67,9 @@ export const listClearances = async (req: Request, res: Response): Promise<void>
       where: { admissionId },
       orderBy: { department: 'asc' },
     });
-    res.status(200).json({ data: { gate, rows } });
+    // Departments the caller may clear / reject (same rule the actions enforce).
+    const canAct = await clearableDepartments(req.user?.id, DISCHARGE_DEPARTMENTS);
+    res.status(200).json({ data: { gate, rows, canAct } });
   } catch (error) {
     console.error('[discharge-clearance] list failed:', error);
     res.status(500).json({ error: 'Failed to load clearances' });
@@ -85,6 +88,10 @@ export const clearDepartment = async (req: Request, res: Response): Promise<void
     const dept = req.params.dept?.toUpperCase();
     if (!dept || !isDept(dept)) {
       res.status(400).json({ error: `dept must be one of: ${DISCHARGE_DEPARTMENTS.join(', ')}` });
+      return;
+    }
+    if (!(await canClearDepartment(req.user?.id, dept))) {
+      res.status(403).json({ error: `Only ${dept.toLowerCase().replace('_', '/')} staff or a discharge coordinator can clear this` });
       return;
     }
     const body = req.body as ClearBody;
@@ -146,6 +153,10 @@ export const rejectDepartment = async (req: Request, res: Response): Promise<voi
     const dept = req.params.dept?.toUpperCase();
     if (!dept || !isDept(dept)) {
       res.status(400).json({ error: `dept must be one of: ${DISCHARGE_DEPARTMENTS.join(', ')}` });
+      return;
+    }
+    if (!(await canClearDepartment(req.user?.id, dept))) {
+      res.status(403).json({ error: `Only ${dept.toLowerCase().replace('_', '/')} staff or a discharge coordinator can mark this as not cleared` });
       return;
     }
     const body = req.body as RejectBody;

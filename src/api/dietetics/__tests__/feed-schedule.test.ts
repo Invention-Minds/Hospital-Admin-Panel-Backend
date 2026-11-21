@@ -1,7 +1,28 @@
 jest.mock('../../../service/prisma-client', () => ({ __esModule: true, default: {} }));
 jest.mock('../masters.controller', () => ({ readSettings: jest.fn() }));
 
-import { feedMinutes, parseFeedText, effectiveFeedOrder } from '../meal-order.cron';
+import { feedMinutes, parseFeedText, effectiveFeedOrder, isAutoSkip, noMenuReason, MENU_GAP_PREFIX } from '../meal-order.cron';
+
+describe('menu gaps and automatic skips', () => {
+  it('says which diet, day and meal has no dish', () => {
+    const r = noMenuReason('GEN', 6, 'Evening snack');
+    expect(r.startsWith(MENU_GAP_PREFIX)).toBe(true);
+    expect(r).toContain('GEN · Saturday Evening snack');
+    expect(r).toContain('Setup → Weekly menu');
+  });
+  it.each([
+    [noMenuReason('SOFT', 1, 'Lunch'), true],
+    ['Slot not on the current diet menu', true],
+    ['Not required (diet sheet: NO)', true],
+    ['NPO till further orders', true],
+    ['NPO until 06:00 21/11/2026', true],
+    ['Patient away (test / OT)', false],
+    ['NPO (nursing census)', false],
+    [null, false],
+  ])('"%s" → system skip %s', (reason, auto) => {
+    expect(isAutoSkip(reason)).toBe(auto);
+  });
+});
 
 describe('parseFeedText — what the ward writes on the census', () => {
   it.each([

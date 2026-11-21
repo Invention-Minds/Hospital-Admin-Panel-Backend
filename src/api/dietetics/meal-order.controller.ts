@@ -102,6 +102,7 @@ export const getKitchenList = async (req: Request, res: Response): Promise<void>
         dietPlan: { include: { diet: true, texture: true } },
         delivery: true,
         intake: true,
+        items: { orderBy: { sortOrder: 'asc' }, include: { dish: { select: { id: true, name: true, portion: true } } } },
       },
       orderBy: [{ mealTimeSlot: { sequence: 'asc' } }, { wardId: 'asc' }],
     });
@@ -864,7 +865,10 @@ export const getLabels = async (req: Request, res: Response): Promise<void> => {
           status: { not: 'SKIPPED' },
           ...(wardId && { wardId }),
         },
-        include: { meal: true, dietPlan: { include: { diet: true, texture: true } } },
+        include: {
+          meal: true, dietPlan: { include: { diet: true, texture: true } },
+          items: { orderBy: { sortOrder: 'asc' }, include: { dish: { select: { name: true } } } },
+        },
       }),
       prisma.extraFoodOrder.findMany({
         where: { mealTimeSlotId, requestedFor: { gte: dayStart, lte: dayEnd }, status: { not: 'CANCELLED' } },
@@ -891,7 +895,15 @@ export const getLabels = async (req: Request, res: Response): Promise<void> => {
           prn: p?.prn ?? null,
           admissionNo: p?.admissionNo ?? null,
           dietCode: plan.texture ? `${plan.diet.code}-${plan.texture.code}` : plan.diet.code,
-          item: [o.meal?.name, o.kitchenNotes].filter(Boolean).join(' · ') || null,
+          // With a dish list the label shows what is actually on the plate
+          // ("Chapati*" = swapped in, dishes the patient said no to are left out).
+          item: [
+            o.items.length
+              ? o.items.filter((i) => !i.omitted).map((i) => `${i.dish.name}${i.dishId !== i.defaultDishId ? '*' : ''}`).join(', ')
+              : o.meal?.name,
+            o.kitchenNotes,
+          ].filter(Boolean).join(' · ') || null,
+          noDishes: o.items.filter((i) => i.omitted).length,
           avoid: [plan.foodAvoid, allergens.length ? `Allergy: ${allergens.join(', ')}` : null].filter(Boolean).join(' · ') || null,
           disposable: plan.disposablePlate,
           fluidRestrictionMl: plan.fluidRestrictionMl,
@@ -915,6 +927,7 @@ export const getLabels = async (req: Request, res: Response): Promise<void> => {
           disposable: false,
           fluidRestrictionMl: null,
           flags: [] as string[],
+          noDishes: 0,
           qr: `XF:${e.id}`,
         };
       }),

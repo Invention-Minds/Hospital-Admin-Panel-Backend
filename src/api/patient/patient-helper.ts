@@ -1,8 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from '../../service/prisma-client';
 import { pushPatient } from "../hmis-sync/hmis-client";
 import { syncWithHmis } from "../hmis-sync/hmis-sync-wrapper";
 
-const prisma = new PrismaClient();
 
 /**
  * Generate unique PRN (Patient Registration Number)

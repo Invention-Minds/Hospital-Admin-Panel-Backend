@@ -368,7 +368,8 @@ export const getQueue = async (_req: Request, res: Response): Promise<void> => {
       const c = ctxById.get(a.id);
       return {
         id: a.id, admissionNo: a.admissionNo, prn: a.prn, admissionDate: a.admissionDate,
-        department: a.department, diagnosis: a.diagnosis, admittingDoctor: a.admittingDoctor,
+        // Falls back to the doctor's initial assessment / ward census when the admission has none.
+        department: a.department, diagnosis: c?.diagnosis || a.diagnosis, admittingDoctor: a.admittingDoctor,
         wardName: a.ward?.wardName ?? null, bedNumber: a.bed?.bedNumber ?? null,
         patientName: c?.patientName ?? null, age: c?.age ?? null, sex: c?.sex ?? null,
       };

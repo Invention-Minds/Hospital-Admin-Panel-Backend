@@ -1,7 +1,6 @@
 import AppointmentRepository from './appointment.repository';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { scheduleAppointmentCompletionJob } from './appointment.scheduler';
-const prisma = new PrismaClient();
 export default class AppointmentResolver {
   private repository: AppointmentRepository;
 

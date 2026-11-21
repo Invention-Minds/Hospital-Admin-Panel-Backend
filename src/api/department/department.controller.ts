@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import DepartmentResolver from './department.resolver';
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import prisma from '../../service/prisma-client';
 
 
 const departmentResolver = new DepartmentResolver();

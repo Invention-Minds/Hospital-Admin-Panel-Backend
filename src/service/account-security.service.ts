@@ -150,13 +150,17 @@ export async function verifyMfaCode(user: User, code: unknown): Promise<void> {
 
 const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 
+/** What an emailed one-time code is for (UserEmailOtp.purpose). */
+export type OtpPurpose = 'download' | 'verify_email' | 'reset_password';
+
 const PURPOSE_LABEL: Record<string, string> = {
   download: 'downloading a file',
   verify_email: 'verifying your email address',
+  reset_password: 'resetting your password',
 };
 
 /** Generates, stores and emails an OTP. Throws SecurityError on throttle / send failure. */
-export async function sendEmailOtp(userId: number, purpose: 'download' | 'verify_email', email: string): Promise<{ expiresAt: Date }> {
+export async function sendEmailOtp(userId: number, purpose: OtpPurpose, email: string): Promise<{ expiresAt: Date }> {
   const since = new Date(Date.now() - EMAIL_OTP_WINDOW_MS);
   const recent = await prisma.userEmailOtp.count({ where: { userId, purpose, createdAt: { gte: since } } });
   if (recent >= EMAIL_OTP_MAX_PER_WINDOW) {
@@ -173,7 +177,7 @@ export async function sendEmailOtp(userId: number, purpose: 'download' | 'verify
 }
 
 /** Verifies and consumes the latest OTP for a purpose. Returns the email it was sent to. */
-export async function verifyEmailOtp(userId: number, purpose: 'download' | 'verify_email', otp: unknown): Promise<string> {
+export async function verifyEmailOtp(userId: number, purpose: OtpPurpose, otp: unknown): Promise<string> {
   const code = String(otp ?? '').trim();
   if (!/^\d{6}$/.test(code)) throw new SecurityError(400, 'Please enter the 6-digit OTP.');
 

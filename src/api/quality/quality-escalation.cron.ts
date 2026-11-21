@@ -123,6 +123,74 @@ export async function runQualityEscalationSweep(
   return report;
 }
 
+/**
+ * Manual escalation (a person tapped Escalate): fire the NEXT level of the
+ * complaint matrix now instead of waiting for its timer, with the person's
+ * reason in the alert and on the timeline. If the matrix is already at its top
+ * level, the Quality Managers are alerted (level unchanged). Never throws —
+ * the status change has already been saved; a failed alert is logged.
+ */
+export async function escalateComplaintNow(
+  complaintId: string,
+  opts: { reason: string; byName: string | null; now?: Date },
+): Promise<{ level: number; recipients: number } | null> {
+  const now = opts.now ?? new Date();
+  try {
+    const c = await prisma.complaint.findUnique({
+      where: { id: complaintId },
+      select: { id: true, code: true, severity: true, unitId: true, escalationLevel: true, escalationStartAt: true },
+    });
+    if (!c) return null;
+    const matrix = await loadEscalationMatrix();
+    const levels = matrix.complaint[c.severity]?.levels ?? [];
+    const next = levels.find((l) => l.level === c.escalationLevel + 1);
+    const level = next ? next.level : c.escalationLevel;
+    const targets = next ? next.targets : 'quality_manager';
+    if (next) {
+      await prisma.complaint.update({
+        where: { id: c.id },
+        data: { escalationLevel: next.level, lastEscalatedAt: now, ...(c.escalationStartAt ? {} : { escalationStartAt: now }) },
+      });
+    }
+    let recipients = await resolveTargetUserIds(targets, c.unitId);
+    // Someone must hear about a manual escalation: no one holds this level's
+    // role (e.g. no Medical Superintendent login yet) → the Quality Managers.
+    if (recipients.length === 0) recipients = await resolveTargetUserIds('quality_manager', c.unitId);
+    const unit = c.unitId ? (await prisma.hospitalUnit.findUnique({ where: { id: c.unitId }, select: { name: true } }))?.name ?? null : null;
+    const by = opts.byName ?? 'A staff member';
+    if (recipients.length > 0) {
+      await prisma.notification.createMany({
+        data: recipients.map((userId) => ({
+          type: 'complaint_escalated',
+          title: `Escalated L${level} · ${c.code}`,
+          message: `[${c.severity.toUpperCase()}] ${by} escalated this complaint: "${opts.reason}"${unit ? ` · Unit: ${unit}` : ''} — please act.`,
+          status: 'unread',
+          isCritical: true,
+          entityId: 0,
+          entityType: `Complaint:${c.id}`,
+          userId,
+        })),
+      });
+    }
+    const label = `Escalated by ${by}: ${opts.reason}`;
+    await auditLogSystem({
+      module: 'complaint', action: 'ESCALATE', entityType: 'Complaint', entityId: c.id, source: 'manual-escalation',
+      payload: { level, label, targets, recipients: recipients.length, unitId: c.unitId, manual: true, reason: opts.reason, by, matrixExhausted: !next },
+    });
+    return { level, recipients: recipients.length };
+  } catch (err) {
+    console.warn(`[quality-escalation:manual:${complaintId}] failed:`, (err as Error).message);
+    return null;
+  }
+}
+
+/** A manual escalation needs a reason a reader can act on. Returns an error message or null. */
+export function escalationReasonError(reason: unknown): string | null {
+  if (typeof reason !== 'string' || reason.trim().length < 5) return 'Give a reason for escalating (at least 5 characters).';
+  if (reason.length > 500) return 'Keep the escalation reason under 500 characters.';
+  return null;
+}
+
 export const registerQualityEscalationCron = (): void => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const cron = require('node-cron');

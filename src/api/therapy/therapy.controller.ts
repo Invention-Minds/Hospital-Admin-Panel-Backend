@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import prisma from '../../service/prisma-client';
 import { addMinutes, parse, format } from "date-fns";
 import { loadTherapyTv, loadTherapyTvForTherapist } from "../appointments/appointment.controller";
 import { sendWhatsAppTemplate, buildPlaceholders, TEMPLATE } from "../whatsapp/whatsapp.controller";
@@ -13,7 +13,6 @@ import {
 } from "./therapy-scheduling.util";
 import { rollForwardAfterCheckIn, hasPlannedDayClash } from "./therapy-course.service";
 
-const prisma = new PrismaClient();
 
 
 /**

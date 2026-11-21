@@ -1,10 +1,9 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 import { snapshotTemplateFields } from '../note-template/note-template.controller';
 import { pushOpdNotesReady } from '../../service/record-push.service';
 
-const prisma = new PrismaClient();
 
 /**
  * Build the templated-values JSON snapshot from `noteTemplateId` +

@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import prisma from '../../service/prisma-client';
+import { syncTrayDishes } from './tray-dishes';
 
 /**
  * Dietetics — MealOrder generator (nightly at 22:00 for "tomorrow", and on
@@ -56,6 +57,34 @@ export function atClock(day: Date, hhmm: string): Date | null {
 const fmtTime = (d: Date): string =>
   `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${d.toLocaleDateString('en-IN')}`;
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Why a patient got no tray because the weekly menu has an empty cell. Starts
+ * with MENU_GAP_PREFIX so screens can pick these out and point to Setup.
+ */
+export const MENU_GAP_PREFIX = 'No dish in the weekly menu';
+export function noMenuReason(dietCode: string, dayOfWeek: number, slotName: string): string {
+  return `${MENU_GAP_PREFIX} for ${dietCode} · ${DAY_NAMES[dayOfWeek] ?? ''} ${slotName} — add it in Setup → Weekly menu, or write an instruction on the diet sheet`;
+}
+
+/**
+ * Skips the generator made on its own (not a person's "not served"), which it
+ * may undo when the cause goes away. Hold reasons are free text, so trays
+ * skipped for a hold are not revived here.
+ */
+export function isAutoSkip(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return reason.startsWith(MENU_GAP_PREFIX)
+    || reason === 'Slot not on the current diet menu' // wording before 2026-11-21
+    || reason === 'Not required (diet sheet: NO)'
+    || reason === 'Feed — no instruction for this slot'
+    || reason === 'Diet is home / mother food — no tray'
+    || reason === 'Diet plan ended'
+    || reason.startsWith('NPO until ')
+    || reason === 'NPO till further orders';
+}
+
 /** Kitchen note for a sheet cell: free-text instruction + supplement / dose. */
 export function composeKitchenNote(cell: {
   instruction: string | null;
@@ -107,7 +136,7 @@ export async function generateOrdersForDate(
       npoFrom: true, npoUntil: true, endDate: true,
       feedVolumeMl: true, feedIntervalHours: true, feedStartTime: true, feedWindowFrom: true, feedWindowUntil: true,
       feedNotes: true,
-      diet: { select: { kind: true } },
+      diet: { select: { kind: true, code: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -121,7 +150,7 @@ export async function generateOrdersForDate(
     where: { scheduledFor: { gte: day, lte: dayEnd }, ...admissionFilter },
     select: {
       id: true, admissionId: true, mealTimeSlotId: true,
-      dietPlanId: true, mealMasterId: true, status: true,
+      dietPlanId: true, mealMasterId: true, status: true, skipReason: true,
       kitchenNotes: true, wardId: true, bedId: true, choiceTakenAt: true,
     },
   });
@@ -199,11 +228,26 @@ export async function generateOrdersForDate(
       else if (hold) noTrayReason = `${hold.reason}${hold.untilAt ? ` (until ${fmtTime(hold.untilAt)})` : ''}`;
       else if (cell?.skip) noTrayReason = 'Not required (diet sheet: NO)';
       else if (kind === 'FEED' && !note) noTrayReason = 'Feed — no instruction for this slot';
-      else if (kind !== 'FEED' && !menu && !note) noTrayReason = 'Slot not on the current diet menu';
+      else if (kind !== 'FEED' && !menu && !note) noTrayReason = noMenuReason(plan.diet.code, dayOfWeek, slot.name);
 
       const existing = existingByKey.get(key);
       if (existing) {
         handled.add(key);
+        // A tray the system skipped (empty menu cell, sheet NO, NPO…) comes
+        // back once the reason is gone — e.g. the menu was filled in later.
+        // Trays staff marked "not served" stay as they are.
+        if (existing.status === 'SKIPPED' && !noTrayReason && isAutoSkip(existing.skipReason)) {
+          await prisma.mealOrder.update({
+            where: { id: existing.id },
+            data: {
+              status: 'ORDERED', skipReason: null,
+              dietPlanId: plan.id, mealMasterId: menu?.mealMasterId ?? null, kitchenNotes: note,
+              wardId: adm.wardId, bedId: adm.bedId,
+            },
+          });
+          result.reassigned++;
+          continue;
+        }
         if (existing.status !== 'ORDERED') continue; // tray already moving
         if (noTrayReason) {
           await skip(existing.id, noTrayReason);
@@ -265,8 +309,18 @@ export async function generateOrdersForDate(
     let reason: string;
     if (!admMap.has(o.admissionId)) reason = 'Patient no longer admitted';
     else if (!plan || (plan.endDate && plan.endDate < day)) reason = 'Diet plan ended';
-    else reason = 'Slot not on the current diet menu';
+    else {
+      const slot = slots.find((s) => s.id === o.mealTimeSlotId);
+      reason = noMenuReason(plan.diet.code, dayOfWeek, slot?.name ?? 'this meal');
+    }
     await skip(o.id, reason);
+  }
+
+  // Each tray still ORDERED gets its meal's dish list (swaps are kept).
+  try {
+    await syncTrayDishes({ from: day, to: dayEnd, admissionId: opts.admissionId });
+  } catch (err) {
+    console.error('[meal-order-cron] tray dish sync failed:', err);
   }
 
   const feeds = await generateFeedDoses(day, notBefore, planByAdmission, admMap, holdsByAdmission, opts.admissionId);

@@ -360,6 +360,117 @@ export const raiseFeedbackAsComplaint = async (req: Request, res: Response): Pro
 const AUDIT_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp']);
 
 /**
+ * The photo's real type, from its first bytes. Phones don't always label the
+ * upload (SDK 58 sends files as `application/octet-stream`), so the label is
+ * only trusted when it is already an image type we accept.
+ */
+export function photoType(file: { mimetype: string; buffer: Buffer }): string | null {
+  if (AUDIT_PHOTO_TYPES.has(file.mimetype)) return file.mimetype;
+  const b = file.buffer;
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  if (b.length >= 12 && b.toString('latin1', 4, 8) === 'ftyp' && /^(heic|heix|hevc|heim|heis|mif1|msf1)$/.test(b.toString('latin1', 8, 12))) return 'image/heic';
+  return null;
+}
+
+const extOf = (type: string) => (type === 'image/png' ? 'png' : type === 'image/webp' ? 'webp' : type.startsWith('image/hei') ? 'heic' : 'jpg');
+
+async function putPhoto(objectName: string, type: string, buffer: Buffer): Promise<string> {
+  const blob = bucket.file(objectName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = blob.createWriteStream({ resumable: false, contentType: type });
+    stream.on('error', reject);
+    stream.on('finish', () => resolve());
+    stream.end(buffer);
+  });
+  return `https://storage.googleapis.com/${bucket.name}/${objectName}`;
+}
+
+const REPORTER_PHOTO_WINDOW_MS = 30 * 60 * 1000;
+type EvidenceLink = { label: string; url: string; uploadedBy?: string | null; uploadedAt?: string };
+
+/**
+ * POST /api/quality/mobile/incidents/:id/photo (multipart `file`) — a photo on
+ * an incident from the app. Same people as the web's evidence upload (reporter,
+ * assignee, unit HOD, incident managers), plus — for 30 minutes after it was
+ * reported — whoever reported it from the app, including anonymous reports,
+ * which store no reporter (the incident id only ever reaches its reporter's
+ * phone). Appended to Incident.evidenceLinks exactly like the web.
+ */
+export const uploadIncidentPhoto = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = typeof req.user?.id === 'number' ? req.user.id : undefined;
+    const id = String(req.params.id ?? '');
+    const inc = await prisma.incident.findUnique({
+      where: { id },
+      select: { id: true, code: true, status: true, reportedById: true, assignedToId: true, unitId: true, reportedAt: true, anonymous: true },
+    });
+    if (!inc) {
+      res.status(404).json({ error: 'Incident not found' });
+      return;
+    }
+    if (inc.status === 'closed' || inc.status === 'cancelled') {
+      res.status(409).json({ error: `This incident is ${inc.status}. Reopen it before adding photos.` });
+      return;
+    }
+    const justReported = Date.now() - inc.reportedAt.getTime() < REPORTER_PHOTO_WINDOW_MS && (inc.anonymous || inc.reportedById === userId);
+    const allowed =
+      justReported ||
+      (userId != null && (inc.reportedById === userId || inc.assignedToId === userId)) ||
+      (await isIncidentManager(userId)) ||
+      (userId != null && inc.unitId != null && (await unitIdsHeadedBy(userId)).includes(inc.unitId));
+    if (!allowed) {
+      res.status(403).json({ error: 'Only the reporter, the assignee, the unit HOD or an incident manager can add photos.' });
+      return;
+    }
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file?.buffer?.length) {
+      res.status(400).json({ error: 'No photo uploaded' });
+      return;
+    }
+    const type = photoType(file);
+    if (!type) {
+      res.status(400).json({ error: 'Upload a photo (JPEG, PNG, HEIC or WebP)' });
+      return;
+    }
+    const url = await putPhoto(`incidents/${new Date().toISOString().slice(0, 10)}/${inc.code}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extOf(type)}`, type, file.buffer);
+    const link: EvidenceLink = {
+      label: String(req.body?.label ?? '').trim() || 'Photo',
+      url,
+      uploadedBy: inc.anonymous && justReported ? null : req.user?.username ?? null,
+      uploadedAt: new Date().toISOString(),
+    };
+    // Append without losing a concurrent upload: write only if the list is unchanged, retry otherwise.
+    let saved = false;
+    for (let attempt = 0; attempt < 4 && !saved; attempt++) {
+      const cur = await prisma.incident.findUnique({ where: { id }, select: { evidenceLinks: true } });
+      let list: EvidenceLink[] = [];
+      try {
+        const v = cur?.evidenceLinks ? JSON.parse(cur.evidenceLinks) : [];
+        list = Array.isArray(v) ? v : [];
+      } catch {
+        list = [];
+      }
+      const { count } = await prisma.incident.updateMany({
+        where: { id, evidenceLinks: cur?.evidenceLinks ?? null },
+        data: { evidenceLinks: JSON.stringify([...list, link]) },
+      });
+      saved = count === 1;
+    }
+    if (!saved) {
+      res.status(409).json({ error: 'Someone else was adding a file at the same moment. Try again.' });
+      return;
+    }
+    await auditLog(req, { module: 'incident', action: 'EVIDENCE_UPLOAD', entityType: 'Incident', entityId: id, payload: { code: inc.code, label: link.label, url, via: 'mobile' } });
+    res.status(201).json({ data: link });
+  } catch (error) {
+    console.error('[quality:mobile:incident-photo] failed:', error);
+    res.status(500).json({ error: 'Failed to upload the photo' });
+  }
+};
+
+/**
  * POST /api/quality/mobile/audit-runs/:id/photo (multipart `file`) — a photo for
  * a "No" answer. AuditRunResponse has no attachment column, so the app puts the
  * returned link into the observation remark. Same who-may-conduct rule as
@@ -385,20 +496,12 @@ export const uploadAuditPhoto = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ error: 'No photo uploaded' });
       return;
     }
-    if (!AUDIT_PHOTO_TYPES.has(file.mimetype)) {
+    const type = photoType(file);
+    if (!type) {
       res.status(400).json({ error: 'Upload a photo (JPEG, PNG, HEIC or WebP)' });
       return;
     }
-    const ext = file.mimetype === 'image/png' ? 'png' : file.mimetype === 'image/webp' ? 'webp' : file.mimetype.startsWith('image/hei') ? 'heic' : 'jpg';
-    const objectName = `audits/${new Date().toISOString().slice(0, 10)}/${run.code}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
-    const blob = bucket.file(objectName);
-    await new Promise<void>((resolve, reject) => {
-      const stream = blob.createWriteStream({ resumable: false, contentType: file.mimetype });
-      stream.on('error', reject);
-      stream.on('finish', () => resolve());
-      stream.end(file.buffer);
-    });
-    const url = `https://storage.googleapis.com/${bucket.name}/${objectName}`;
+    const url = await putPhoto(`audits/${new Date().toISOString().slice(0, 10)}/${run.code}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extOf(type)}`, type, file.buffer);
     await auditLog(req, { module: 'quality-audit', action: 'PHOTO', entityType: 'AuditRun', entityId: run.id, payload: { code: run.code, url, via: 'mobile' } });
     res.status(201).json({ data: { url } });
   } catch (error) {
@@ -441,5 +544,65 @@ export const getUnitQrCodes = async (req: Request, res: Response): Promise<void>
   } catch (error) {
     console.error('[quality:mobile:unit-qr] failed:', error);
     res.status(500).json({ error: 'Failed to make the QR codes' });
+  }
+};
+
+/**
+ * GET /api/quality/mobile/my-tasks — quality work handed to the caller,
+ * whoever they are (a ward nurse, a technician…), not only quality users:
+ *   • complaints assigned to me (still open)
+ *   • incidents assigned to me, or where I am "also involved" (still open)
+ *   • CAPA actions and audit follow-up actions I own (still open)
+ * Every item opens a screen the server already lets them read and act on.
+ */
+export const getMyTasks = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = typeof req.user?.id === 'number' ? req.user.id : undefined;
+    if (!userId) { res.status(401).json({ error: 'Sign in again' }); return; }
+    const [complaints, assigned, involved, capa, audit] = await Promise.all([
+      prisma.complaint.findMany({
+        where: { assignedToId: userId, status: { in: OPEN_COMPLAINT } },
+        select: { id: true, code: true, patientName: true, description: true, status: true, severity: true, slaDueAt: true },
+        orderBy: { slaDueAt: 'asc' },
+        take: 50,
+      }),
+      prisma.incident.findMany({
+        where: { assignedToId: userId, status: { in: OPEN_INCIDENT } },
+        select: { id: true, code: true, title: true, status: true, severity: true, severityFinal: true, reportedAt: true },
+        orderBy: { reportedAt: 'desc' },
+        take: 50,
+      }),
+      prisma.incidentParticipant.findMany({
+        where: { userId, incident: { status: { in: OPEN_INCIDENT }, NOT: { assignedToId: userId } } },
+        select: { incident: { select: { id: true, code: true, title: true, status: true, severity: true, severityFinal: true, reportedAt: true } } },
+        take: 50,
+      }),
+      prisma.incidentCapaAction.findMany({
+        where: { ownerId: userId, status: 'open', incident: { status: { notIn: ['closed', 'cancelled'] } } },
+        select: { id: true, kind: true, description: true, dueDate: true, incident: { select: { id: true, code: true, title: true } } },
+        orderBy: { dueDate: 'asc' },
+        take: 50,
+      }),
+      prisma.auditFindingAction.findMany({
+        where: { ownerId: userId, status: 'open' },
+        select: { id: true, description: true, dueDate: true, run: { select: { id: true, code: true, checklist: { select: { name: true } } } } },
+        orderBy: { dueDate: 'asc' },
+        take: 50,
+      }),
+    ]);
+    const incidentRow = (i: { id: string; code: string; title: string; status: string; severity: string; severityFinal: string | null; reportedAt: Date }, role: 'assigned' | 'involved') => ({
+      id: i.id, code: i.code, title: i.title, status: i.status, severity: i.severityFinal ?? i.severity, reportedAt: i.reportedAt, role,
+    });
+    res.status(200).json({
+      data: {
+        complaints,
+        incidents: [...assigned.map((i) => incidentRow(i, 'assigned')), ...involved.map((p) => incidentRow(p.incident, 'involved'))],
+        capaActions: capa.map((a) => ({ id: a.id, kind: a.kind, description: a.description, dueDate: a.dueDate, incidentId: a.incident.id, incidentCode: a.incident.code, incidentTitle: a.incident.title })),
+        auditActions: audit.map((a) => ({ id: a.id, description: a.description, dueDate: a.dueDate, runId: a.run.id, runCode: a.run.code, checklist: a.run.checklist.name })),
+      },
+    });
+  } catch (error) {
+    console.error('[quality-mobile] my-tasks failed:', error);
+    res.status(500).json({ error: 'Failed to load your tasks' });
   }
 };

@@ -11,7 +11,7 @@ import prisma from './prisma-client';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const BATCH = 100; // Expo accepts up to 100 messages per request
 
-export type PushKind = 'critical_result' | 'patient_query' | 'discharge_ready' | 'quality_digest';
+export type PushKind = 'critical_result' | 'patient_query' | 'discharge_ready' | 'quality_digest' | 'diet_admission';
 
 /** The approved wording — generic on purpose. */
 export const PUSH_COPY: Record<PushKind, { title: string; body: string }> = {
@@ -19,6 +19,7 @@ export const PUSH_COPY: Record<PushKind, { title: string; body: string }> = {
   patient_query: { title: 'Patient query', body: 'A patient has asked about their report.' },
   discharge_ready: { title: 'Discharge summary ready', body: 'A drafted discharge summary is waiting for your review.' },
   quality_digest: { title: 'Morning digest', body: 'Your quality summary for today is ready.' },
+  diet_admission: { title: 'New admission', body: 'A newly admitted patient needs a diet plan.' },
 };
 
 export const isPushEnabled = () => process.env.MOBILE_PUSH_ENABLED === 'true';

@@ -1,10 +1,10 @@
 import { UserRole } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import loginRepository from './login.repository';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 
 import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
 
 // Days a mobile refresh token stays valid (covers a multi-day on/off shift
 // pattern). Override with MOBILE_REFRESH_EXPIRES_DAYS in the environment.

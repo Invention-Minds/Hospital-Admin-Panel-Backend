@@ -6,7 +6,7 @@ import prisma from '../../service/prisma-client';
 // list of ids for the current day and pruned every other day on each write —
 // no arrival time, and no history. The consultation analytics need both.
 
-type AttendanceEntry = { doctorId: number; arrivedAt: Date };
+type AttendanceEntry = { doctorId: number; arrivedAt: Date; markedBy: string | null };
 
 // Date key in Asia/Kolkata so it matches updateDoctorAssignments' todayDate.
 export const todayKey = (): string => moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
@@ -35,12 +35,25 @@ export const getArrivals = async (date: string = todayKey()): Promise<Attendance
   try {
     const rows = await prisma.doctorAttendance.findMany({
       where: { date },
-      select: { doctorId: true, arrivedAt: true },
+      select: { doctorId: true, arrivedAt: true, markedBy: true },
     });
     return rows;
   } catch (error) {
     console.error('Error reading doctor attendance:', error);
     return [];
+  }
+};
+
+/** One doctor's arrival row for a day, or null. Defaults to today. */
+export const getArrival = async (doctorId: number, date: string = todayKey()): Promise<AttendanceEntry | null> => {
+  try {
+    return await prisma.doctorAttendance.findUnique({
+      where: { doctorId_date: { doctorId, date } },
+      select: { doctorId: true, arrivedAt: true, markedBy: true },
+    });
+  } catch (error) {
+    console.error('Error reading doctor arrival:', error);
+    return null;
   }
 };
 

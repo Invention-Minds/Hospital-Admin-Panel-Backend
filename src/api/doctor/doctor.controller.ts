@@ -1,12 +1,16 @@
 import { Request, Response } from 'express';
 import DoctorResolver from './doctor.resolver';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import DoctorRepository from './doctor.repository';
 import moment from 'moment-timezone';
 import formidable from "formidable";
 import fs from "fs";
 import path from "path";
 import { saveFileToStorage } from '../../service/local-file-store';
+import {
+  recordDoctorChange, countLiveAppointments, dayRangeLabel, doctorName as lookupDoctorName,
+  istDay, currentTimetable, timetableOf, timetableChange, FieldChange,
+} from './doctor-change-log';
 
 // --- DEPRECATED: external FTP upload (replaced by local-file-store) ---------
 // Files now live on the API server under PDF_STORAGE_DIR, served via /files.
@@ -26,7 +30,6 @@ function sanitizeFileName(name: string): string {
 
 
 const resolver = new DoctorResolver();
-const prisma = new PrismaClient();
 const doctorRepository = new DoctorRepository();
 
 export const createDoctor = async (req: Request, res: Response): Promise<void> => {
@@ -152,6 +155,14 @@ export const createDoctor = async (req: Request, res: Response): Promise<void> =
 
 
     console.log("after added", newDoctor)
+    const timetable = timetableChange(new Map(), timetableOf(Array.isArray(availability) ? availability : []));
+    await recordDoctorChange(req, {
+      action: 'CREATE',
+      doctorId: newDoctor.id,
+      doctorName: newDoctor.name,
+      summary: `Added — ${newDoctor.departmentName}${doctorType ? ` · ${doctorType}` : ''}`,
+      details: { department: newDoctor.departmentName, doctorType: newDoctor.doctorType, timings: timetable?.to ?? null },
+    }, createdBy);
     res.status(201).json(newDoctor);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
@@ -816,6 +827,10 @@ export const updateDoctor = async (req: Request, res: Response) => {
       return;
     }
 
+    // Snapshot before the write, for the change log.
+    const before = await prisma.doctor.findUnique({ where: { id: Number(id) } });
+    const timetableBefore = await currentTimetable(Number(id));
+
     // Update the doctor with the basic fields
     await prisma.doctor.update({
       where: { id: Number(id) },
@@ -895,6 +910,38 @@ export const updateDoctor = async (req: Request, res: Response) => {
       },
     });
 
+    if (before && doctorWithRelations) {
+      const str = (v: unknown) => (v === null || v === undefined || v === '' ? null : String(v));
+      const fields: Array<[string, unknown, unknown]> = [
+        ['Name', before.name, doctorWithRelations.name],
+        ['Department', before.departmentName, doctorWithRelations.departmentName],
+        ['Type', before.doctorType, doctorWithRelations.doctorType],
+        ['Room', before.roomNo, doctorWithRelations.roomNo],
+        ['Phone', before.phone_number, doctorWithRelations.phone_number],
+        ['Email', before.email, doctorWithRelations.email],
+        ['Qualification', before.qualification, doctorWithRelations.qualification],
+        ['Slot duration', before.slotDuration, doctorWithRelations.slotDuration],
+      ];
+      const changes: FieldChange[] = fields
+        .filter(([, a, b]) => str(a) !== str(b))
+        .map(([field, a, b]) => ({ field, from: str(a), to: str(b) }));
+      if (availabilityEntries.length > 0) {
+        const t = timetableChange(timetableBefore, timetableOf(availabilityEntries));
+        if (t) changes.push(t);
+      }
+      if (changes.length > 0) {
+        await recordDoctorChange(req, {
+          action: changes.length === 1 && changes[0].field === 'Room' ? 'ROOM_CHANGE' : 'UPDATE',
+          doctorId: doctorWithRelations.id,
+          doctorName: doctorWithRelations.name,
+          summary: changes.length === 1 && changes[0].field === 'Room'
+            ? `Room changed to ${changes[0].to ?? '—'}`
+            : `Updated: ${changes.map((c) => c.field).join(', ')}`,
+          changes,
+        }, updatedBy);
+      }
+    }
+
     res.status(200).json(doctorWithRelations);
   } catch (error) {
     console.error("Update Error:", error);
@@ -941,6 +988,17 @@ export const addUnavailableSlots = async (req: Request, res: Response) => {
       });
     }
     console.log("unavailableSlotEntries", unavailableSlotEntries)
+    const blockedTimes = times.map(String);
+    await recordDoctorChange(req, {
+      action: 'SLOTS_BLOCKED',
+      doctorId: Number(doctorId),
+      doctorName: await lookupDoctorName(Number(doctorId)),
+      summary: blockedTimes.length
+        ? `${blockedTimes.length} slot${blockedTimes.length === 1 ? '' : 's'} blocked on ${dayRangeLabel(date, date)}`
+        : `Blocked slots cleared on ${dayRangeLabel(date, date)}`,
+      details: { date, times: blockedTimes },
+      affectedBookings: blockedTimes.length ? await countLiveAppointments(Number(doctorId), date, date, blockedTimes) : 0,
+    }, userId);
     res.status(201).json({ message: 'Unavailable slots updated successfully.' });
   } catch (error) {
     console.error('Error adding unavailable slots:', error);
@@ -1038,9 +1096,18 @@ export const deleteDoctor = async (req: Request, res: Response) => {
     //   where: { doctorId },
     // });
 
+    const toDelete = await prisma.doctor.findUnique({ where: { id: doctorId }, select: { name: true, departmentName: true } });
+
     // Step 5: Finally, delete the doctor
     await prisma.doctor.delete({
       where: { id: doctorId },
+    });
+
+    await recordDoctorChange(req, {
+      action: 'DELETE',
+      doctorId,
+      doctorName: toDelete?.name ?? `Doctor #${doctorId}`,
+      summary: `Removed${toDelete?.departmentName ? ` — ${toDelete.departmentName}` : ''}`,
     });
 
     res.json({ message: 'Doctor and related records deleted successfully' });
@@ -1323,6 +1390,17 @@ export const addUnavailableDates = async (req: Request, res: Response): Promise<
       });
     }
 
+    const fromDay = istDay(start);
+    const toDay = istDay(end);
+    await recordDoctorChange(req, {
+      action: 'LEAVE_ADDED',
+      doctorId: Number(doctorId),
+      doctorName: await lookupDoctorName(Number(doctorId)),
+      summary: `Unavailable ${dayRangeLabel(fromDay, toDay)}`,
+      details: { from: fromDay, to: toDay },
+      affectedBookings: await countLiveAppointments(Number(doctorId), fromDay, toDay),
+    }, userId);
+
     res.status(201).json({ message: 'Unavailable dates updated successfully.' });
   } catch (error) {
     console.error('Error adding unavailable dates:', error);
@@ -1360,6 +1438,19 @@ export const addUnavailableDatesBulk = async (req: Request, res: Response): Prom
       if (newEntries.length) {
         await prisma.unavailableDates.createMany({ data: newEntries });
       }
+    }
+
+    const fromDay = istDay(start);
+    const toDay = istDay(end);
+    for (const doctorId of doctorIds) {
+      await recordDoctorChange(req, {
+        action: 'LEAVE_ADDED',
+        doctorId: Number(doctorId),
+        doctorName: await lookupDoctorName(Number(doctorId)),
+        summary: `Unavailable ${dayRangeLabel(fromDay, toDay)}`,
+        details: { from: fromDay, to: toDay, bulk: true },
+        affectedBookings: await countLiveAppointments(Number(doctorId), fromDay, toDay),
+      });
     }
 
     res.status(200).json({ message: 'Unavailable dates updated for selected doctors.' });
@@ -1415,6 +1506,16 @@ export const markDatesAsAvailable = async (req: Request, res: Response): Promise
           lte: new Date(endDate),
         },
       },
+    });
+
+    const fromDay = istDay(new Date(startDate));
+    const toDay = istDay(new Date(endDate));
+    await recordDoctorChange(req, {
+      action: 'LEAVE_REMOVED',
+      doctorId: Number(doctorId),
+      doctorName: await lookupDoctorName(Number(doctorId)),
+      summary: `Available again ${dayRangeLabel(fromDay, toDay)}`,
+      details: { from: fromDay, to: toDay },
     });
 
     res.status(200).json({ message: 'Dates marked as available successfully.' });
@@ -1489,6 +1590,14 @@ export const addExtraSlot = async (req: Request, res: Response): Promise<void> =
         createdBy: userId // User ID of the person creating the extra slot
       }
     });
+    const extraTimes = Array.isArray(time) ? time.map(String) : [String(time)];
+    await recordDoctorChange(req, {
+      action: 'EXTRA_SLOTS',
+      doctorId: Number(doctorId),
+      doctorName: await lookupDoctorName(Number(doctorId)),
+      summary: `${extraTimes.length} extra slot${extraTimes.length === 1 ? '' : 's'} on ${dayRangeLabel(String(date), String(date))}`,
+      details: { date, times: extraTimes },
+    }, userId);
     res.status(200).json({ success: true, result });
   }
   catch (error) {
@@ -1539,12 +1648,23 @@ export const updateRoomNo = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    const roomBefore = await prisma.doctor.findUnique({ where: { id: Number(doctorId) }, select: { roomNo: true } });
     const updatedDoctor = await prisma.doctor.update({
       where: { id: Number(doctorId) },
       data: {
         roomNo: roomNo, // ✅ Corrected from `date` to `data`
       },
     });
+
+    if ((roomBefore?.roomNo ?? '') !== String(roomNo)) {
+      await recordDoctorChange(req, {
+        action: 'ROOM_CHANGE',
+        doctorId: updatedDoctor.id,
+        doctorName: updatedDoctor.name,
+        summary: `Room changed to ${roomNo}`,
+        changes: [{ field: 'Room', from: roomBefore?.roomNo ?? null, to: String(roomNo) }],
+      });
+    }
 
     res.status(200).json({ message: "Room number updated successfully", doctor: updatedDoctor });
   } catch (error) {
@@ -1659,6 +1779,15 @@ export const deactivateDoctor = async (req: Request, res: Response): Promise<voi
       }
       return doctor;
     });
+    // Live bookings from today onwards that the desk now has to move.
+    const today = istDay(new Date());
+    await recordDoctorChange(req, {
+      action: 'DEACTIVATE',
+      doctorId: updated.id,
+      doctorName: updated.name,
+      summary: 'Deactivated — stop booking',
+      affectedBookings: await countLiveAppointments(updated.id, today, '9999-12-31'),
+    });
     res.status(200).json(updated);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
@@ -1684,6 +1813,12 @@ export const activateDoctor = async (req: Request, res: Response): Promise<void>
         });
       }
       return doctor;
+    });
+    await recordDoctorChange(req, {
+      action: 'ACTIVATE',
+      doctorId: updated.id,
+      doctorName: updated.name,
+      summary: 'Reactivated — available for booking',
     });
     res.status(200).json(updated);
   } catch (error) {

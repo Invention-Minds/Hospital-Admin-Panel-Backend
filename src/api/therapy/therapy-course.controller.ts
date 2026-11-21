@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import prisma from '../../service/prisma-client';
 import {
   toMinutes,
   slotEndMin,
@@ -14,7 +14,6 @@ import {
   findCourseClashes,
 } from "./therapy-course.service";
 
-const prisma = new PrismaClient();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;

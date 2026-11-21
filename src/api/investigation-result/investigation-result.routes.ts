@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../../middleware/middleware';
+import { requireDoctor } from '../../middleware/require-doctor';
 import { requireClinicalActor } from '../../middleware/audit-guard';
 import {
   uploadResult,
@@ -41,9 +42,9 @@ router.get('/unack-critical', authenticateToken, unackCritical);
 
 // Doctor mobile app — the logged-in doctor's reports. Before '/:id' so
 // 'my-reports' is not captured as a result id.
-router.get('/my-reports', authenticateToken, getMyReports);
-router.get('/my-reports/order/:orderId', authenticateToken, getMyReportOrder);
-router.post('/my-reports/:id/ack', authenticateToken, requireClinicalActor, ackMyResult);
+router.get('/my-reports', authenticateToken, requireDoctor, getMyReports);
+router.get('/my-reports/order/:orderId', authenticateToken, requireDoctor, getMyReportOrder);
+router.post('/my-reports/:id/ack', authenticateToken, requireDoctor, requireClinicalActor, ackMyResult);
 
 // List
 router.get('/patient/:prn', authenticateToken, listByPrn);

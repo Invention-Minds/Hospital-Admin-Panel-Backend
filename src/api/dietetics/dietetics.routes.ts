@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireClinicalActor } from '../../middleware/audit-guard';
 import { requireRole } from '../../middleware/require-role';
+import { rateLimit } from '../../middleware/rate-limit';
 import { NURSE_SUBTYPES, NURSING_SUPERINTENDENT } from '../_shared/nursing-roles';
 
 import {
@@ -56,7 +57,20 @@ import {
   getTakeOrderList, setTrayChoice, listFeeds, updateFeed,
 } from './dietary-orders.controller';
 
+import { getPublicMenu } from './public-menu.controller';
+import { listDishes, upsertDish, setMealDishes, updateTrayItem, getPrepCount } from './dishes.controller';
+import { getServedReport } from './dietary-reports.controller';
+
 const router = express.Router();
+
+/** Public menu page: plenty for real phones, stops a script hammering it. */
+const publicMenuLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  mode: 'all',
+  keyGenerator: (req) => `diet-public-menu|${req.ip || req.socket?.remoteAddress || 'unknown'}`,
+  message: 'Too many requests. Please try again in a few minutes.',
+});
 
 // ─── Write permissions (checked against the DB, mirrors the sidebar) ──
 // super_admin passes every guard by default. The doctor does NOT prescribe
@@ -202,6 +216,17 @@ router.delete('/menu-options/:id', authenticateToken, setupAdmin, requireClinica
 router.get('/take-order', authenticateToken, getTakeOrderList);
 router.post('/meal-orders/:id/choice', authenticateToken, canteenFloor, requireClinicalActor, setTrayChoice);
 
+// ─── Dishes, meals built from dishes, swaps, kitchen prep count ─────
+router.get('/dishes', authenticateToken, listDishes);
+router.post('/dishes', authenticateToken, setupAdmin, requireClinicalActor, upsertDish);
+router.put('/dishes/:id', authenticateToken, setupAdmin, requireClinicalActor, upsertDish);
+router.put('/meals/:id/dishes', authenticateToken, setupAdmin, requireClinicalActor, setMealDishes);
+router.post('/meal-orders/:id/items/:itemId', authenticateToken, canteenFloor, requireClinicalActor, updateTrayItem);
+router.get('/prep-count', authenticateToken, getPrepCount);
+
+// ─── Reports ────────────────────────────────────────────────────────
+router.get('/reports/served', authenticateToken, getServedReport);
+
 // ─── RT feed doses ──────────────────────────────────────────────────
 router.get('/feeds', authenticateToken, listFeeds);
 router.post('/feeds/:id/:action', authenticateToken, feedFloor, requireClinicalActor, updateFeed);
@@ -216,5 +241,8 @@ router.post('/canteen-channels', authenticateToken, setupAdmin, requireClinicalA
 router.put('/canteen-channels/:id', authenticateToken, setupAdmin, requireClinicalActor, upsertCanteenChannel);
 // TV snapshot endpoint — unauthenticated so a kiosk browser can poll it.
 router.get('/canteen-channels/:channelId/snapshot', getTvSnapshot);
+
+// ─── Public weekly menu (QR poster, no login, no patient data) ──────
+router.get('/public/menu', publicMenuLimiter, getPublicMenu);
 
 export default router;

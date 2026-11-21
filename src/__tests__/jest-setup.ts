@@ -11,3 +11,7 @@
  */
 process.env.DATABASE_URL =
   'mysql://test:test@127.0.0.1:1/NO_REAL_DB_FOR_TESTS';
+
+// HMIS sync is off by default in the app (not connected yet). Tests mock the
+// HMIS client and exercise the real sync path, so switch it on here.
+process.env.HMIS_SYNC_ENABLED = 'true';

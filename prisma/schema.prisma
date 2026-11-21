@@ -4809,6 +4809,7 @@ model DietMaster {
   mealCompat  DietMealCompat[]
   menuRows    MenuPlan[]
   censusLines DietCensusLine[]
+  dishDiets   DishDiet[]
 
   @@index([isActive])
 }
@@ -4830,6 +4831,7 @@ model MealMaster {
   menuRows        MenuPlan[]
   menuOptions     MenuOption[]
   mealOrders      MealOrder[]
+  dishes          MealDish[]
 }
 
 // Meal ↔ Diet many-to-many: which diets a given meal item is suitable for.
@@ -4890,6 +4892,77 @@ model MenuOption {
 
   @@unique([dietMasterId, mealTimeSlotId, dayOfWeek, mealMasterId])
   @@index([dietMasterId, mealTimeSlotId, dayOfWeek])
+}
+
+// Dish — one item on a plate (Rice, Chapati, Dal, Curd…). A MealMaster is
+// built from dishes (MealDish); each tray carries its own dish list
+// (MealOrderItem) so a patient can swap one dish for another in the same
+// swap group ("Staple": rice ↔ chapati) or say no to it. The kitchen cooks
+// to the per-dish count.
+model Dish {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  // Dishes in the same group can replace each other on a tray. null = no swaps.
+  swapGroup    String?
+  // Portion shown to the kitchen and on labels, e.g. "150 g", "2 nos", "1 cup".
+  portion      String?
+  isVeg        Boolean  @default(true)
+  caloriesKcal Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Diets the dish suits. Empty = any diet.
+  diets      DishDiet[]
+  mealLinks  MealDish[]
+  orderItems MealOrderItem[] @relation("MealOrderItemDish")
+
+  @@index([swapGroup])
+}
+
+model DishDiet {
+  id           String     @id @default(uuid())
+  dishId       String
+  dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  dietMasterId String
+  diet         DietMaster @relation(fields: [dietMasterId], references: [id], onDelete: Cascade)
+
+  @@unique([dishId, dietMasterId])
+  @@index([dietMasterId])
+}
+
+// The dishes that make up a meal, in serving order.
+model MealDish {
+  id           String     @id @default(uuid())
+  mealMasterId String
+  meal         MealMaster @relation(fields: [mealMasterId], references: [id], onDelete: Cascade)
+  dishId       String
+  dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  sortOrder    Int        @default(0)
+
+  @@unique([mealMasterId, dishId])
+  @@index([dishId])
+}
+
+// One dish on one tray. defaultDishId = the dish the meal brings;
+// dishId = what is actually served (differs after a swap).
+model MealOrderItem {
+  id            String    @id @default(uuid())
+  mealOrderId   String
+  mealOrder     MealOrder @relation(fields: [mealOrderId], references: [id], onDelete: Cascade)
+  defaultDishId String
+  dishId        String
+  dish          Dish      @relation("MealOrderItemDish", fields: [dishId], references: [id])
+  sortOrder     Int       @default(0)
+  // Patient does not want this dish.
+  omitted       Boolean   @default(false)
+  changedAt     DateTime?
+  changedBy     String?
+  // Changed after the meal's order cut-off — kitchen count may already be fixed.
+  changedLate   Boolean   @default(false)
+
+  @@unique([mealOrderId, defaultDishId])
+  @@index([dishId])
 }
 
 // DietPlan — one row per IPD admission per dietician re-assessment.
@@ -4976,6 +5049,8 @@ model MealOrder {
   mealTimeSlot   MealTimeSlot @relation(fields: [mealTimeSlotId], references: [id])
   mealMasterId   String?
   meal           MealMaster?  @relation(fields: [mealMasterId], references: [id])
+  // The dishes on this tray (from the meal, after any swaps).
+  items          MealOrderItem[]
 
   scheduledFor DateTime
   wardId       String?

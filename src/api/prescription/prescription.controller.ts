@@ -6,7 +6,7 @@ import { checkPaymentGate } from '../../service/payment-gate';
 import { auditLog } from '../../service/app-audit';
 import { pushPrescriptionReady } from '../../service/record-push.service';
 
-const generatePrescriptionId = async (): Promise<string> => {
+export const generatePrescriptionId = async (): Promise<string> => {
   const latest = await prisma.prescription.findFirst({
     orderBy: { id: 'desc' },
     select: { id: true },

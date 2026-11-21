@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from '../../service/prisma-client';
 import {
   sendWhatsAppTemplate,
   buildPlaceholders,
@@ -17,7 +17,6 @@ import {
   BUFFER_MIN,
 } from "./therapy-scheduling.util";
 
-const prisma = new PrismaClient();
 
 export type NotifyKind = "confirm" | "reschedule" | "cancel" | "none";
 

@@ -1,7 +1,7 @@
 import moment from 'moment-timezone';
 import { Prisma } from '@prisma/client';
 import prisma from '../../service/prisma-client';
-import { QI_TZ, monthWindow, AUTO_SOURCE_CODES } from './quality-indicator-auto-source';
+import { QI_TZ, monthWindow } from './quality-indicator-auto-source';
 import { resolveTargetRole } from '../../service/role-alias';
 
 // Monthly QI submission deadline + reminders (eFeedor gap: "October due 8 Nov").
@@ -23,7 +23,6 @@ export const MIN_DUE_DAY = 1;
 export const MAX_DUE_DAY = 28; // every month has a 28th
 const DUE_SOON_DAYS = 3;
 export const BELL_TYPE = 'qi_submission_due';
-const AUTO_CODES = new Set(AUTO_SOURCE_CODES);
 
 export async function getDueDay(): Promise<number> {
   const row = await prisma.qualityConfig.findUnique({ where: { id: 1 }, select: { submissionDueDay: true } });
@@ -50,11 +49,8 @@ export function dueDateFor(period: string, dueDay: number): Date {
 
 export type SubmissionState = 'not_started' | 'open' | 'due_soon' | 'due_today' | 'overdue' | 'complete';
 
-export interface MissingIndicator {
-  qiCode: string; name: string; chapter: string; escalationOwner: string;
-  /** Filled by the 1st-of-month auto-source; missing means its source data / denominator is absent. */
-  autoSourced: boolean;
-}
+/** Every indicator has an auto-source; missing = its source data / denominator was absent, or nobody captured it. */
+export interface MissingIndicator { qiCode: string; name: string; chapter: string; escalationOwner: string }
 
 export interface SubmissionStatus {
   period: string;
@@ -97,7 +93,6 @@ export async function getSubmissionStatus(period: string, now: Date = new Date()
   const have = new Set(records.map((r) => r.indicatorId));
   const missing = indicators.filter((i) => !have.has(i.id)).map((i) => ({
     qiCode: i.qiCode, name: i.name, chapter: i.chapter, escalationOwner: i.escalationOwner,
-    autoSourced: AUTO_CODES.has(i.qiCode),
   }));
 
   const daysLeft = daysUntil(due, now);

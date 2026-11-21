@@ -11,6 +11,7 @@ import departmentRoutes from './api/department/department.routes';
 import surgeonRoutes from './api/surgeon/surgeon.routes';
 import appointmentRoutes from './api/appointments/appointment.routes';
 import loginRoutes from './api/login/login.routes';
+import accountRoutes from './api/account/account.routes';
 import downloadOtpRoutes from './api/download-otp/download-otp.routes';
 import whatsappRoutes from './api/whatsapp/whatsapp.routes';
 import emailRoutes from './api/email/email.routes';
@@ -108,6 +109,8 @@ import { registerComplaintSlaCron } from './api/feedback/complaint-sla.cron';
 import { registerFeedbackExpiryCron } from './api/feedback/feedback-expiry.cron';
 import { registerFeedbackReminderCron } from './api/feedback/feedback-reminder.cron';
 import { registerQualityEscalationCron } from './api/quality/quality-escalation.cron';
+import { registerDirectorySyncCron } from './service/directory-sync.service';
+import { registerDemoResetCron } from './service/demo-reset.service';
 import { registerCapaReminderCron } from './api/incident/incident-capa-reminder.cron';
 import qualityUnitRoutes from './api/quality/quality-units.routes';
 import qualityAuditRoutes from './api/quality/quality-audits.routes';
@@ -199,6 +202,7 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/login', loginRoutes);
+app.use('/api/account', accountRoutes);
 app.use('/api/download-otp', downloadOtpRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/sms', smsRoutes);
@@ -377,6 +381,15 @@ app.listen(PORT, () => {
 
     // Quality escalation matrix — incidents + complaints, per unit HOD (every 10 min)
     registerQualityEscalationCron();
+
+    // Tenant directory — tells the shared directory which phones / employee IDs
+    // belong to this DocMinds server, for the one Play Store app (every 30 min).
+    // Off unless DIRECTORY_URL and DIRECTORY_API_KEY are set.
+    registerDirectorySyncCron();
+
+    // App-store reviewer demo — fresh OPD queue + un-acked demo criticals daily
+    // (00:05 IST). Off unless DEMO_REVIEWER_DOCTOR_ID is set (dev/demo server only).
+    registerDemoResetCron();
 
     // Incident CAPA — overdue actions + due effectiveness checks (daily 09:00 IST)
     registerCapaReminderCron();

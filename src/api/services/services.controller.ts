@@ -15,9 +15,8 @@ import {
 } from '../../service/appointment-event';
 
 const repository = new ServiceRepository();
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
-const prisma = new PrismaClient();
 
 // Create Service
 export const createService = async (req: Request, res: Response) => {

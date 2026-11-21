@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { notifyRemoveChannels } from '../appointments/appointment.controller';
 
-const prisma = new PrismaClient();
 
 // Get all channels
 export const getChannels = async (req: Request, res: Response) => {

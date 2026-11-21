@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { getClinicalActor, stripAuditFields } from '../../middleware/audit-guard';
 
-const prisma = new PrismaClient();
 
 
 // ➡️ Create ER Assessment

@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import prisma from '../../service/prisma-client';
 
 // Bug #12 — Surgeon / Assistant-surgeon master.
 // Mirrors the department module's controller style: thin handlers, Prisma

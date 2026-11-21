@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { runComplaintSlaSweep } from './complaint-sla.cron';
+import { escalateComplaintNow, escalationReasonError } from '../quality/quality-escalation.cron';
 import {
   findPossibleDuplicateComplaints, createWithComplaintCode, deriveComplaintDepartment,
 } from '../../service/incident-complaint-link';
@@ -351,6 +352,8 @@ export const getComplaint = async (req: Request, res: Response): Promise<void> =
 
 interface StatusBody {
   status?: string;
+  /** Required when moving to 'escalated' by hand — goes in the alert and on the timeline. */
+  escalationReason?: string | null;
   assignedTo?: string | null;
   assignedToId?: number | string | null;
   resolutionNotes?: string | null;
@@ -463,6 +466,12 @@ export const updateComplaintStatus = async (req: Request, res: Response): Promis
       if (!assignedTo?.trim()) assignedTo = assignee.fullName || assignee.username;
     }
 
+    const escalationReason = isTransition && to === 'escalated' ? String(body.escalationReason ?? '').trim() : null;
+    if (escalationReason !== null) {
+      const why = escalationReasonError(escalationReason);
+      if (why) { res.status(400).json({ message: why }); return; }
+    }
+
     if (isTransition && to === 'resolved') {
       const notes = resolutionNotes !== undefined ? resolutionNotes : existing.resolutionNotes;
       if (!notes?.trim()) {
@@ -518,9 +527,12 @@ export const updateComplaintStatus = async (req: Request, res: Response): Promis
         ...(categoryChanged && { categoryFrom: existing.category, categoryTo: newCategory }),
         ...((retimedDueAt || freshDueAt) && { slaDueAt: (retimedDueAt ?? freshDueAt)!.toISOString() }),
         ...(notesChanged && { previousResolutionNotes: existing.resolutionNotes }),
+        ...(escalationReason && { escalationReason }),
       },
     });
     if (newUnitId !== undefined && newUnitId !== existing.unitId) void notifyComplaintRaised(row);
+    // Manual escalate: next level of the matrix now, its people alerted with the reason.
+    if (escalationReason) await escalateComplaintNow(id, { reason: escalationReason, byName: req.user?.username ?? null, now });
 
     if (assignedToId && assignedToId !== existing.assignedToId) {
       void notifyComplaint({
@@ -549,6 +561,8 @@ interface BulkStatusBody {
   ids?: unknown;
   status?: string;
   resolutionNotes?: string | null;
+  /** Required for a bulk move to 'escalated'. */
+  escalationReason?: string | null;
 }
 
 export const bulkUpdateStatus = async (req: Request, res: Response): Promise<void> => {
@@ -571,6 +585,11 @@ export const bulkUpdateStatus = async (req: Request, res: Response): Promise<voi
     if (to === 'resolved' && !resolutionNotes) {
       res.status(400).json({ message: 'resolutionNotes are required to resolve complaints' });
       return;
+    }
+    const escalationReason = to === 'escalated' ? String(body.escalationReason ?? '').trim() : null;
+    if (escalationReason !== null) {
+      const why = escalationReasonError(escalationReason);
+      if (why) { res.status(400).json({ message: why }); return; }
     }
     const ids = Array.from(new Set(body.ids.filter((s): s is string => typeof s === 'string' && s.length > 0)));
 
@@ -603,6 +622,7 @@ export const bulkUpdateStatus = async (req: Request, res: Response): Promise<voi
       const result = await prisma.complaint.updateMany({ where: { id, status: from }, data });
       if (result.count !== 1) { skipped.push({ id, code: row.code, reason: 'changed concurrently' }); continue; }
       updated += 1;
+      if (escalationReason) await escalateComplaintNow(id, { reason: escalationReason, byName: req.user?.username ?? null, now });
       if (from === 'resolved' && row.resolutionNotes) {
         await auditLog(req, {
           module: 'complaint', action: 'STATUS_CHANGE', entityType: 'Complaint', entityId: id,
@@ -620,7 +640,7 @@ export const bulkUpdateStatus = async (req: Request, res: Response): Promise<voi
     await auditLog(req, {
       module: 'complaint', action: 'BULK_STATUS', entityType: 'Complaint',
       entityId: 'bulk',
-      payload: { requested: ids.length, updated, skipped: skipped.length, to },
+      payload: { requested: ids.length, updated, skipped: skipped.length, to, ...(escalationReason && { escalationReason }) },
     });
 
     res.status(200).json({ data: { requested: ids.length, updated, skipped: skipped.length, skippedRows: skipped } });

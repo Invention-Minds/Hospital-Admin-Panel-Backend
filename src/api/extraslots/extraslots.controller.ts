@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
+import { recordDoctorChange, doctorName, dayRangeLabel } from '../doctor/doctor-change-log';
 
-const prisma = new PrismaClient();
 
 // Get all extra slots
 export const getExtraSlots = async (req: Request, res: Response) => {
@@ -138,7 +138,17 @@ export const addOrUpdateExtraSlot = async (req: Request, res: Response) => {
           },
         });
       }
-  
+
+      const before = Number(extraHoursBefore) || 0;
+      const after = Number(extraHoursAfter) || 0;
+      await recordDoctorChange(req, {
+        action: 'EXTRA_SLOTS',
+        doctorId: Number(doctorId),
+        doctorName: await doctorName(Number(doctorId)),
+        summary: `Extra hours on ${dayRangeLabel(String(date), String(date))}: ${before} before, ${after} after ${timeRange}`,
+        details: { date, timeRange, extraHoursBefore: before, extraHoursAfter: after },
+      }, createdBy);
+
       res.status(201).json({
         message: 'Extra slot added/updated successfully',
         updatedExtraSlot,
@@ -166,6 +176,14 @@ export const removeExtraSlot = async (req: Request, res: Response) => {
              res.status(404).json({ error: 'Extra slot not found' });
              return
         }
+
+        await recordDoctorChange(req, {
+            action: 'EXTRA_SLOTS',
+            doctorId: Number(doctorId),
+            doctorName: await doctorName(Number(doctorId)),
+            summary: `Extra slots removed on ${dayRangeLabel(String(date), String(date))}`,
+            details: { date, removed: deletedSlot.count },
+        });
 
         res.status(200).json({ message: 'Extra slot removed successfully' });
     } catch (error) {

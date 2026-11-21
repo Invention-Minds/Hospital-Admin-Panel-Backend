@@ -1,12 +1,11 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { PatientRepository } from './patient.repository';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { generatePRN, syncPatientToHmis } from './patient-helper';
 import { stripAuditFields } from '../../middleware/audit-guard';
 import { auditLog } from '../../service/app-audit';
 
-const prisma = new PrismaClient();
 
 // ─── Phase 1 — validation helpers ────────────────────────────────────────
 // Phone, email, blood-group, dob sanity. Each returns null on success or

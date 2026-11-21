@@ -87,6 +87,23 @@ const RESULT_SELECT = {
   order: { select: { id: true, doctorId: true, doctorName: true, date: true } },
 } as const;
 
+type AdmissionSpan = { prn: string; from: Date; to: Date | null };
+
+/** Admission periods for these patients (discharge date from the discharge record; open = still admitted). */
+async function admissionsForPrns(prns: string[]): Promise<AdmissionSpan[]> {
+  if (!prns.length) return [];
+  const rows = await prisma.ipdAdmission.findMany({
+    where: { prn: { in: prns }, status: { notIn: ['PROPOSED', 'cancelled', 'CANCELLED'] } },
+    select: { prn: true, admissionDate: true, discharge: { select: { dischargeDate: true } } },
+  });
+  return rows.map((a) => ({ prn: a.prn, from: a.admissionDate, to: a.discharge?.dischargeDate ?? null }));
+}
+
+/** IPD when the order was placed during an admission of this patient, else OPD. */
+export function encounterOf(spans: AdmissionSpan[], prn: string, at: Date): 'IPD' | 'OPD' {
+  return spans.some((a) => a.prn === prn && a.from <= at && (!a.to || a.to >= at)) ? 'IPD' : 'OPD';
+}
+
 /** GET /api/investigation-results/my-reports?days=7 */
 export const getMyReports = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -117,6 +134,14 @@ export const getMyReports = async (req: Request, res: Response): Promise<void> =
     // One report = one order; its tests are listed together.
     const byOrder = new Map<number, typeof recent>();
     for (const r of recent) byOrder.set(r.orderId, [...(byOrder.get(r.orderId) ?? []), r]);
+    // OPD or IPD: an order placed while the patient was admitted (admission →
+    // discharge, or still in) is IPD; anything else is OPD.
+    const orderIds = [...byOrder.keys()];
+    const orderMeta = orderIds.length
+      ? await prisma.investigationOrder.findMany({ where: { id: { in: orderIds } }, select: { id: true, createdAt: true } })
+      : [];
+    const placedAt = new Map(orderMeta.map((o) => [o.id, o.createdAt]));
+    const admissions = await admissionsForPrns([...new Set(recent.map((r) => r.prn))]);
     const reports = [...byOrder.values()].map((rows) => {
       const latest = rows.reduce((a, b) => ((a.reportedAt ?? a.createdAt) > (b.reportedAt ?? b.createdAt) ? a : b));
       const flags = rows.map(flagOf);
@@ -132,11 +157,13 @@ export const getMyReports = async (req: Request, res: Response): Promise<void> =
         critical: flags.filter((f) => f === 'C').length,
         abnormal: flags.filter((f) => f === 'H' || f === 'L').length,
         unackedCritical: rows.filter((r) => r.criticalFlag && !r.acknowledgedAt).length,
+        source: encounterOf(admissions, rows[0].prn, placedAt.get(rows[0].orderId) ?? latest.createdAt),
       };
     });
 
     res.status(200).json({
       days,
+      counts: { opd: reports.filter((r) => r.source === 'OPD').length, ipd: reports.filter((r) => r.source === 'IPD').length },
       critical: unackedCritical.map((r) => ({
         id: r.id,
         orderId: r.orderId,

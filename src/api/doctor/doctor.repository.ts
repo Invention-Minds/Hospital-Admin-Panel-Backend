@@ -1,9 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import moment from 'moment-timezone';
-const prisma = new PrismaClient();
 
 export default class DoctorRepository {
-  private prisma = new PrismaClient();
+  private prisma = prisma;
 
   // Method to create a new doctor
   public async createDoctor(data: any) {

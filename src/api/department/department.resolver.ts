@@ -1,7 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
 export default class DepartmentResolver {
-  private prisma = new PrismaClient();
+  private prisma = prisma;
 
   async createDepartment(name: string) {
     return await this.prisma.department.create({ data: { name } });

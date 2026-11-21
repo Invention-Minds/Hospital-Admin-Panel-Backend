@@ -1,7 +1,6 @@
 import DoctorRepository from './doctor.repository';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
-const prisma = new PrismaClient();
 export default class DoctorResolver {
   private repository = new DoctorRepository();
 

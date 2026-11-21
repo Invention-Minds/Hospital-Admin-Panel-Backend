@@ -3,6 +3,7 @@ import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { loadPatientContext, loadCurrentPlans } from './patient-context';
 import { effectiveFeedOrder } from './meal-order.cron';
+import { syncTrayDishes, pastCutoff, dishSuitsDiet } from './tray-dishes';
 
 /**
  * Patient choice and RT feeds.
@@ -118,13 +119,37 @@ export const getTakeOrderList = async (req: Request, res: Response): Promise<voi
     const mealTimeSlotId = req.query.mealTimeSlotId as string;
     if (!mealTimeSlotId) { res.status(400).json({ error: 'mealTimeSlotId is required' }); return; }
     const { start, end } = dayBounds(req.query.date as string);
+    // Trays made before their meal had a dish list pick it up now.
+    await syncTrayDishes({ from: start, to: end });
     const orders = await prisma.mealOrder.findMany({
       where: {
         mealTimeSlotId, scheduledFor: { gte: start, lte: end }, status: 'ORDERED',
         ...(req.query.wardId ? { wardId: req.query.wardId as string } : {}),
       },
-      include: { meal: { select: { id: true, name: true } }, dietPlan: { include: { diet: { select: { id: true, code: true, name: true } } } } },
+      include: {
+        meal: { select: { id: true, name: true } },
+        dietPlan: { include: { diet: { select: { id: true, code: true, name: true } } } },
+        mealTimeSlot: { select: { orderCutoff: true } },
+        items: {
+          orderBy: { sortOrder: 'asc' },
+          include: { dish: { select: { id: true, name: true, portion: true, isVeg: true } } },
+        },
+      },
     });
+    // Swap choices: active dishes per swap group, filtered per patient's diet below.
+    const defaultIds = Array.from(new Set(orders.flatMap((o) => o.items.map((i) => i.defaultDishId))));
+    const defaults = defaultIds.length
+      ? await prisma.dish.findMany({ where: { id: { in: defaultIds } }, select: { id: true, name: true, swapGroup: true } })
+      : [];
+    const defaultMap = new Map(defaults.map((d) => [d.id, d]));
+    const groups = Array.from(new Set(defaults.map((d) => d.swapGroup).filter((g): g is string => !!g)));
+    const groupDishes = groups.length
+      ? await prisma.dish.findMany({
+          where: { swapGroup: { in: groups }, isActive: true },
+          include: { diets: { select: { dietMasterId: true } } },
+          orderBy: { name: 'asc' },
+        })
+      : [];
     const patients = await loadPatientContext({ admissionIds: Array.from(new Set(orders.map((o) => o.admissionId))) });
     const pMap = new Map(patients.map((p) => [p.admissionId, p]));
     const plans = await loadCurrentPlans(patients.map((p) => p.admissionId));
@@ -147,6 +172,27 @@ export const getTakeOrderList = async (req: Request, res: Response): Promise<voi
         currentMeal: o.meal,
         choiceTakenAt: o.choiceTakenAt, choiceTakenBy: o.choiceTakenBy,
         choices: cache.get(k) ?? [],
+        cutoffPassed: pastCutoff(o.scheduledFor, o.mealTimeSlot.orderCutoff),
+        items: o.items.map((i) => {
+          const base = defaultMap.get(i.defaultDishId);
+          return {
+            id: i.id,
+            dish: i.dish,
+            defaultDishId: i.defaultDishId,
+            defaultDishName: base?.name ?? null,
+            swapGroup: base?.swapGroup ?? null,
+            swapped: i.dishId !== i.defaultDishId,
+            omitted: i.omitted,
+            changedLate: i.changedLate,
+            // The meal's own dish first, then the others of its group that suit this diet.
+            swapTo: base?.swapGroup
+              ? groupDishes
+                  .filter((d) => d.swapGroup === base.swapGroup && (d.id === i.defaultDishId || dishSuitsDiet(d, o.dietPlan.diet.id)))
+                  .sort((a, b) => (a.id === i.defaultDishId ? -1 : b.id === i.defaultDishId ? 1 : 0))
+                  .map((d) => ({ id: d.id, name: d.name, portion: d.portion, isVeg: d.isVeg }))
+              : [],
+          };
+        }),
       });
     }
     rows.sort((a, b) => (a.bedNumber ?? '').localeCompare(b.bedNumber ?? '', undefined, { numeric: true }));
@@ -175,6 +221,8 @@ export const setTrayChoice = async (req: Request, res: Response): Promise<void> 
       data: { mealMasterId, choiceTakenAt: new Date(), choiceTakenBy: actorOf(req) },
       include: { meal: { select: { id: true, name: true } } },
     });
+    // The tray now carries the chosen meal's dishes.
+    await syncTrayDishes({ orderIds: [order.id] });
     await auditLog(req, {
       module: 'dietetics', action: 'UPDATE', entityType: 'MealOrderChoice', entityId: row.id,
       payload: { from: order.mealMasterId, to: mealMasterId },

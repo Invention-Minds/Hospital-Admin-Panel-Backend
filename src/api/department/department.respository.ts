@@ -1,10 +1,11 @@
 import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
 class DepartmentRepository {
   private prisma: PrismaClient;
 
   constructor() {
-    this.prisma = new PrismaClient();
+    this.prisma = prisma;
   }
 
   // Create a new department

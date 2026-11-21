@@ -2,10 +2,9 @@ import cron from 'node-cron';
 import { ServiceRepository } from './services.repository';
 import { Request, Response } from 'express';
 import axios from 'axios';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import { sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
 
-const prisma = new PrismaClient();
 
 const repository = new ServiceRepository();
 const scheduledTasks = new Map<number, NodeJS.Timeout>();

@@ -1,6 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
-const prisma = new PrismaClient();
 
 export class ServiceRepository {
   // Create Service with Repeated Dates

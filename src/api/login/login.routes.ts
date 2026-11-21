@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment, resetUserMfa, challengeMfa, challengeEmailSend, challengeEmailVerify, challengePassword } from './login.controller';
+import { userLogin, userRegister, userResetPassword, userChangePassword, getUserDetails, deleteUserByUsername, getAllUsers, toggleUserActive, mobileRefresh, setUserDepartment, resetUserMfa, challengeMfa, challengeEmailSend, challengeEmailVerify, challengePassword, mobileChallengeMfa, mobileChallengeEmailVerify, mobileChallengePassword } from './login.controller';
 import { authenticateToken } from '../../middleware/middleware';
 import { requireRole } from '../../middleware/require-role';
 import { rateLimit } from '../../middleware/rate-limit';
@@ -21,6 +21,11 @@ router.post('/challenge/email/send', challengeLimiter, challengeEmailSend);
 router.post('/challenge/email/verify', challengeLimiter, challengeEmailVerify);
 router.post('/challenge/password', challengeLimiter, challengePassword);
 router.post('/mobile/refresh', mobileRefresh);
+// App versions of the security steps: same checks, but the final step issues a mobile session (refresh token).
+router.post('/mobile/challenge/mfa', challengeLimiter, mobileChallengeMfa);
+router.post('/mobile/challenge/email/send', challengeLimiter, challengeEmailSend);
+router.post('/mobile/challenge/email/verify', challengeLimiter, mobileChallengeEmailVerify);
+router.post('/mobile/challenge/password', challengeLimiter, mobileChallengePassword);
 router.post('/register', authenticateToken, adminOnly, userRegister);
 router.post('/reset-password',authenticateToken, userResetPassword);
 router.post('/change-password', authenticateToken,userChangePassword);

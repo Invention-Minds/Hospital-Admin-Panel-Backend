@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { loginUser, createUser, resetPassword, changePassword, loginDoctor, issueMobileRefreshToken, validateMobileRefreshToken } from './login.resolver';
 import { UserRole, User } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import {
@@ -13,7 +14,6 @@ import { PrismaClient } from '@prisma/client';
 import moment from 'moment-timezone';
 import { isOpdStationNurse, isIpdScopedNurse } from '../_shared/nursing-roles';
 import { auditLog, auditLogAs } from '../../service/app-audit';
-const prisma = new PrismaClient();
 
 
 const extractRoleFromUsername = (username: string): UserRole => {
@@ -94,10 +94,8 @@ export const userLogin = async (req: Request, res: Response) => {
       const account = await prisma.user.findUnique({ where: { id: user.id } });
       const step = account ? nextLoginStep(account, false) : null;
       if (account && step) {
-        if (client === 'mobile') {
-          res.status(428).json({ error: 'Please sign in to the DocMinds web panel once to complete your account security setup, then try again.' });
-          return;
-        }
+        // Same challenge for web and app; the app then completes the steps on
+        // its own /login/mobile/challenge/* routes, which issue a mobile session.
         res.status(200).json({ challenge: await buildChallenge(account, false, step) });
         return;
       }
@@ -129,7 +127,7 @@ async function buildChallenge(user: User, mfaPassed: boolean, step: LoginStep) {
 }
 
 /** After a step succeeds: either the next challenge or the full login response. */
-async function advanceChallenge(res: Response, userId: number, mfaPassed: boolean, req: Request) {
+async function advanceChallenge(res: Response, userId: number, mfaPassed: boolean, req: Request, client?: 'mobile') {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     res.status(401).json({ error: 'Invalid login session.' });
@@ -141,7 +139,7 @@ async function advanceChallenge(res: Response, userId: number, mfaPassed: boolea
     return;
   }
   const therapist = await prisma.therapist.findFirst({ where: { userId: user.id }, select: { id: true } });
-  await completeLogin(res, user, undefined, therapist?.id, req, 'security-steps');
+  await completeLogin(res, user, client, therapist?.id, req, 'security-steps');
 }
 
 function sendSecurityError(res: Response, error: unknown, label: string) {
@@ -161,15 +159,17 @@ async function challengeAt(token: unknown, allowed: LoginStep[]) {
   return { user, mfaPassed };
 }
 
-export const challengeMfa = async (req: Request, res: Response) => {
+const mfaStep = (client?: 'mobile') => async (req: Request, res: Response) => {
   try {
     const { user } = await challengeAt(req.body?.challengeToken, ['mfa', 'mfa_setup']);
     await verifyMfaCode(user, req.body?.code);
-    await advanceChallenge(res, user.id, true, req);
+    await advanceChallenge(res, user.id, true, req, client);
   } catch (error) {
     sendSecurityError(res, error, 'challengeMfa');
   }
 };
+export const challengeMfa = mfaStep();
+export const mobileChallengeMfa = mfaStep('mobile');
 
 export const challengeEmailSend = async (req: Request, res: Response) => {
   try {
@@ -185,20 +185,22 @@ export const challengeEmailSend = async (req: Request, res: Response) => {
   }
 };
 
-export const challengeEmailVerify = async (req: Request, res: Response) => {
+const emailVerifyStep = (client?: 'mobile') => async (req: Request, res: Response) => {
   try {
     const { user, mfaPassed } = await challengeAt(req.body?.challengeToken, ['email']);
     const email = await verifyEmailOtp(user.id, 'verify_email', req.body?.otp);
     const taken = await prisma.user.findFirst({ where: { email, NOT: { id: user.id } }, select: { id: true } });
     if (taken) throw new SecurityError(409, 'This email is already linked to another account.');
     await prisma.user.update({ where: { id: user.id }, data: { email, emailVerifiedAt: new Date() } });
-    await advanceChallenge(res, user.id, mfaPassed, req);
+    await advanceChallenge(res, user.id, mfaPassed, req, client);
   } catch (error) {
     sendSecurityError(res, error, 'challengeEmailVerify');
   }
 };
+export const challengeEmailVerify = emailVerifyStep();
+export const mobileChallengeEmailVerify = emailVerifyStep('mobile');
 
-export const challengePassword = async (req: Request, res: Response) => {
+const passwordStep = (client?: 'mobile') => async (req: Request, res: Response) => {
   try {
     const { user, mfaPassed } = await challengeAt(req.body?.challengeToken, ['password']);
     const newPassword = req.body?.newPassword;
@@ -208,11 +210,13 @@ export const challengePassword = async (req: Request, res: Response) => {
       throw new SecurityError(400, 'Your new password must be different from the current one.');
     }
     await loginRepository.updatePasswordByUserId(user.id, bcrypt.hashSync(newPassword, 10), user.username, new Date());
-    await advanceChallenge(res, user.id, mfaPassed, req);
+    await advanceChallenge(res, user.id, mfaPassed, req, client);
   } catch (error) {
     sendSecurityError(res, error, 'challengePassword');
   }
 };
+export const challengePassword = passwordStep();
+export const mobileChallengePassword = passwordStep('mobile');
 
 /**
  * super_admin: clear a user's Google Authenticator (lost phone, app

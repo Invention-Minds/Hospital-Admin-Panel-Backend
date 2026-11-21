@@ -5,7 +5,7 @@ import AppointmentResolver from './appointment.resolver';
 import DoctorRepository from '../doctor/doctor.repository';
 import { withSlotLock } from '../doctor/doctor.controller';
 import AppointmentRepository from './appointment.repository';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 import moment from 'moment-timezone';
 import axios from 'axios';
 import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
@@ -24,7 +24,6 @@ import { auditLog } from '../../service/app-audit';
 import { backfillPatientPhone } from '../patient/patient-helper';
 import { getNurseAllowedDepartments } from '../_shared/nursing-roles';
 
-const prisma = new PrismaClient();
 const templateLang = "en";
 
 /**

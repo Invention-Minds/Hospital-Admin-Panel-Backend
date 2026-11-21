@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import prisma from '../../service/prisma-client';
 
 /**
  * Phase 1 — Patient repository.
@@ -59,7 +60,7 @@ export class PatientRepository {
   private prisma: PrismaClient;
 
   constructor() {
-    this.prisma = new PrismaClient();
+    this.prisma = prisma;
   }
 
   async createPatient(data: CreatePatientInput) {
