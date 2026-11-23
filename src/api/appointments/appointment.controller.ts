@@ -6,6 +6,7 @@ import DoctorRepository from '../doctor/doctor.repository';
 import { withSlotLock } from '../doctor/doctor.controller';
 import AppointmentRepository from './appointment.repository';
 import prisma from '../../service/prisma-client';
+import { SAFE_USER_SELECT } from '../_shared/safe-user-select';
 import moment from 'moment-timezone';
 import axios from 'axios';
 import { sendConfirmedWhatsApp, sendGoBuzzMessage, formatGoBuzzNumber } from '../whatsapp/whatsapp.controller';
@@ -1842,7 +1843,7 @@ export const getAppointmentById = async (req: Request, res: Response): Promise<v
         id: Number(appointmentId), // Match service ID
       },
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:{
           select:{
             name: true, id: true, kmcNumber: true
@@ -2009,7 +2010,7 @@ export const confirmedAppointments = async (req: Request, res: Response):Promise
     const appointments = await prisma.appointment.findMany({
       where,
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:true
       },
       orderBy: { date: 'asc' }
@@ -2040,7 +2041,7 @@ export const cancelledAppointments = async (req: Request, res: Response):Promise
     const appointments = await prisma.appointment.findMany({
       where,
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:true
       },
       orderBy: { date: 'desc' }   // Latest dates first (future > today > recent past)
@@ -2123,7 +2124,7 @@ export const PendingAppointments = async (req: Request, res: Response):Promise<v
     const appointments = await prisma.appointment.findMany({
       where,
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:true
       },
       orderBy: { date: 'asc' }
@@ -2158,7 +2159,7 @@ export const getReferredAppointments = async(req: Request, res: Response):Promis
         isReferred: true
       },
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:true
       },
     });
@@ -2176,7 +2177,7 @@ export const getFollowUpAppointments = async(req: Request, res: Response):Promis
         isfollowup: true
       },
       include:{
-        user: true,
+        user: { select: SAFE_USER_SELECT },
         doctor:true
       },
     });

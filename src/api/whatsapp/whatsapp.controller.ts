@@ -2318,11 +2318,20 @@ const sendAdminAlertMessage = async (adminPhoneNumbers: string[], noOfPatients: 
 async function checkPatientWaitingTime() {
   console.log("⏳ Running Patient Waiting Time Check...");
 
+  // Runs every 2 minutes, so load only what the check reads: narrow columns,
+  // only TODAY's unavailable dates, and today's checked-in appointments for all
+  // doctors in one query (was one query per doctor plus an unused user lookup).
+  const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+  const dayStart = moment.tz(todayDate, "YYYY-MM-DD", "Asia/Kolkata").startOf("day").toDate();
+  const dayEnd = moment.tz(todayDate, "YYYY-MM-DD", "Asia/Kolkata").endOf("day").toDate();
 
-
-  // Get all doctors
   const doctors = await prisma.doctor.findMany({
-    include: {
+    where: { userId: { not: null } },
+    select: {
+      id: true,
+      userId: true,
+      doctorType: true,
+      name: true,
       availability: {
         where: {
           OR: [
@@ -2340,27 +2349,35 @@ async function checkPatientWaitingTime() {
           updatedAt: 'desc', // For today, get the most recent past availability, for future use the latest, otherwise ascending for past dates
           // updatedAt: isToday || isFuture ? 'desc' : 'asc',
         },
-      }, unavailableDates: true
+        select: { updatedAt: true, day: true, availableFrom: true, slotDuration: true },
+      },
+      // Only today's entries matter (same IST-day test as before, done in SQL).
+      unavailableDates: { where: { date: { gte: dayStart, lte: dayEnd } }, select: { id: true } },
     },
   });
 
-  // console.log(doctors)
+  const todaysAppointments = await prisma.appointment.findMany({
+    where: { date: todayDate, status: "confirmed", checkedIn: true, doctorId: { in: doctors.map((d) => d.id) } },
+    select: {
+      id: true, doctorId: true, doctorName: true, patientName: true, time: true,
+      checkedIn: true, checkedOut: true, checkedOutTime: true, endConsultationTime: true, extraWaitingTime: true,
+    },
+  });
+  const appointmentsByDoctor = new Map<number, typeof todaysAppointments>();
+  for (const appt of todaysAppointments) {
+    if (appt.doctorId == null) continue;
+    const list = appointmentsByDoctor.get(appt.doctorId) ?? [];
+    list.push(appt);
+    appointmentsByDoctor.set(appt.doctorId, list);
+  }
 
   for (const doctor of doctors) {
     if (!doctor || !doctor.availability || doctor.userId === null || doctor.doctorType === 'Visiting Consultant') {
       continue; // Skip invalid doctors
     }
-    const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
-    // console.log(todayDate)
-    // console.log('doctor')
-    // ✅ Check if the doctor is unavailable today
-    const isUnavailableToday = doctor.unavailableDates.some((unavailableDate) =>
-      moment(unavailableDate.date).tz("Asia/Kolkata").format("YYYY-MM-DD") === todayDate
-    );
-    console.log(isUnavailableToday)
-    if (isUnavailableToday) {
-      console.log(`🚫 Dr. ${doctor.name} is unavailable today.`);
-      continue; // Skip processing for this doctor
+    // ✅ Skip the doctor if they are unavailable today
+    if (doctor.unavailableDates.length > 0) {
+      continue;
     }
 
 
@@ -2391,41 +2408,11 @@ async function checkPatientWaitingTime() {
     const todayAvailability = latestAvailability.find((avail: any) => avail.day.toLowerCase() === today);
 
     if (!todayAvailability || !todayAvailability.availableFrom) {
-      console.log('skip')
       continue; // Skip if doctor is not available today
     }
-    // ✅ Get first available slot time
-    const firstSlot = todayAvailability?.availableFrom.split(',')[0].trim();
-    const firstAvailableTime = firstSlot?.split("-")[0].trim();
-    console.log(firstAvailableTime, 'first')
-    // const todayDate = moment().tz("Asia/Kolkata").format("YYYY-MM-DD"); // Get today's date
 
-    // Convert 24-hour format (HH:mm) to 12-hour format (hh:mm A)
-    const formattedTime = moment(firstAvailableTime, "HH:mm").format("hh:mm A");
-
-    // Construct availableTime in Asia/Kolkata timezone
-    const availableTime = moment.tz(`${todayDate} ${formattedTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
-
-    // Get current IST time
-    const currentTime = moment().tz("Asia/Kolkata");
-
-    // // Compare only the minute-level precision
-    // if (currentTime.isSame(availableTime, 'minute')) {
-    //   console.log("🔔 Notification Triggered! It's time.");
-    // } else {
-    //   console.log("⏳ Not yet time for notification.");
-    // }
-
-    // const availableTime = moment.tz(`${todayDate} ${firstAvailableTime}`, "YYYY-MM-DD hh:mm A", "Asia/Kolkata");
-    console.log(availableTime, doctor.id)
-
-    // ✅ Fetch doctor's appointments
-    const appointments = await prisma.appointment.findMany({
-      where: { doctorId: doctor.id, date: todayDate, status: "confirmed", checkedIn: true },
-    });
-    console.log(appointments)
-
-    const user = await prisma.user.findUnique({ where: { id: doctor.userId } });
+    // ✅ Doctor's checked-in appointments today (loaded once above for all doctors)
+    const appointments = appointmentsByDoctor.get(doctor.id) ?? [];
 
     // if (user && user.loggedInDate !== todayDate) {
     //   console.log(`✅ Dr. ${doctor.name} is not logged in.`);
@@ -2438,7 +2425,6 @@ async function checkPatientWaitingTime() {
       );
 
       const pendingCount = pendingAppointments.length;
-      console.log(`🚨 Pending Appointments: ${pendingCount}`);
 
       // Step 2: Find the ongoing consultation
       const ongoingAppointment = appointments.find(
@@ -2446,7 +2432,6 @@ async function checkPatientWaitingTime() {
       );
 
       if (!ongoingAppointment) {
-        console.log("✅ No ongoing consultation.");
         continue;
       }
 
@@ -2460,13 +2445,11 @@ async function checkPatientWaitingTime() {
       const checkedOutTimestamp = new Date(checkedOutTime)!.getTime();
       const currentTime = new Date().getTime();
       const elapsedMinutes = Math.floor((currentTime - checkedOutTimestamp) / 60000);
-      console.log(`⏳ Elapsed Time for ${patientName}: ${elapsedMinutes} mins`);
 
       // Step 4: Define alert thresholds
       const firstThreshold = slotDuration + 10; // Alert at slot duration + 10 mins
       const repeatThreshold = 5; // Repeat alerts every 5 mins
       const waitingMultiplier = Math.floor((elapsedMinutes - firstThreshold) / repeatThreshold) + 1;
-      console.log(waitingMultiplier)
 
       const sortedPendingAppointments = pendingAppointments.sort((a, b) => {
         return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
@@ -2476,7 +2459,6 @@ async function checkPatientWaitingTime() {
       const nextAppointment = sortedPendingAppointments.length > 0 ? sortedPendingAppointments[0] : null;
 
       if (!nextAppointment) {
-        console.log("✅ No next appointment found.");
         continue;
       }
 

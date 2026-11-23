@@ -1,4 +1,5 @@
 import prisma from '../../service/prisma-client';
+import { SAFE_USER_SELECT } from '../_shared/safe-user-select';
 
 
 export default class AppointmentRepository {
@@ -7,7 +8,7 @@ export default class AppointmentRepository {
   }
 
   async findMany() {
-    return await prisma.appointment.findMany({ include: { doctor: true, user: true } });
+    return await prisma.appointment.findMany({ include: { doctor: true, user: { select: SAFE_USER_SELECT } } });
   }
 
   async update(id: number, data: any) {
@@ -60,20 +61,20 @@ export default class AppointmentRepository {
 
     return await prisma.appointment.findMany({
       where: whereClause,
-      include: { doctor: true, user: true }
+      include: { doctor: true, user: { select: SAFE_USER_SELECT } }
     });
   }
   async findAppointmentsByUserId(userId: number) {
     return await prisma.appointment.findMany({
       where: { userId },
-      include: { doctor: true, user: true },
+      include: { doctor: true, user: { select: SAFE_USER_SELECT } },
     });
   }
 
   async findAllAdminAppointments() {
     return await prisma.appointment.findMany({
       where: { user: { role: 'admin' } },
-      include: { doctor: true, user: true },
+      include: { doctor: true, user: { select: SAFE_USER_SELECT } },
     });
   }
 
@@ -88,7 +89,7 @@ export default class AppointmentRepository {
     const doctor = await prisma.doctor.findFirst({ where: { id: userId } });
     console.log(doctor);
     if (!doctor) return [];
-    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, checkedIn: true, date: today , status: 'confirmed'}, include: { doctor: true, user: true } });
+    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, checkedIn: true, date: today , status: 'confirmed'}, include: { doctor: true, user: { select: SAFE_USER_SELECT } } });
   }
 
   async findFullAppointmentByDoctorUserId(userId: number) {
@@ -96,7 +97,7 @@ export default class AppointmentRepository {
     const doctor = await prisma.doctor.findFirst({ where: { id: userId } });
     console.log(doctor);
     if (!doctor) return [];
-    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, date: today}, include: { doctor: true, user: true } });
+    return await prisma.appointment.findMany({ where: { doctorId: doctor.id, date: today}, include: { doctor: true, user: { select: SAFE_USER_SELECT } } });
   }
 
 
