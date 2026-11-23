@@ -1,6 +1,34 @@
 jest.mock('../../../service/prisma-client', () => ({ __esModule: true, default: {} }));
 
 import { withBuffer, pastCutoff, dishSuitsDiet } from '../tray-dishes';
+import { splitMealName, dishNameAndPortion } from '../dishes.controller';
+
+describe('dishNameAndPortion — a count in brackets becomes the portion', () => {
+  it.each([
+    ['Chapati (2)', 'Chapati', '2 nos'],
+    ['Idli (3 pcs)', 'Idli', '3 pcs'],
+    ['Boiled egg (1)', 'Boiled egg', '1 nos'],
+    ['Lassi (sweet)', 'Lassi (sweet)', null],
+    ['Biscuits (cream-cracker, 4)', 'Biscuits (cream-cracker, 4)', null],
+    ['Dal', 'Dal', null],
+  ])('"%s"', (part, name, portion) => {
+    expect(dishNameAndPortion(part)).toEqual({ name, portion });
+  });
+});
+
+describe('splitMealName — existing meal names into dishes', () => {
+  it.each([
+    ['Steamed rice + dal + sabzi', ['Steamed rice', 'Dal', 'Sabzi']],
+    ['Masala dosa + chutney', ['Masala dosa', 'Chutney']],
+    ['Plain dosa  +sambar', ['Plain dosa', 'Sambar']],
+    ['Fruit bowl (apple/papaya/banana)', ['Fruit bowl (apple/papaya/banana)']],
+    ['Fruit bowl (apple + papaya) + curd', ['Fruit bowl (apple + papaya)', 'Curd']],
+    ['Weak tea (no sugar)', ['Weak tea (no sugar)']],
+    ['Idli + + chutney', ['Idli', 'Chutney']],
+  ])('"%s"', (name, want) => {
+    expect(splitMealName(name)).toEqual(want);
+  });
+});
 
 describe('withBuffer — kitchen cooks the count plus a margin', () => {
   it.each([

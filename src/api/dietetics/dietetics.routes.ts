@@ -58,7 +58,7 @@ import {
 } from './dietary-orders.controller';
 
 import { getPublicMenu } from './public-menu.controller';
-import { listDishes, upsertDish, setMealDishes, updateTrayItem, getPrepCount } from './dishes.controller';
+import { listDishes, upsertDish, setMealDishes, updateTrayItem, getPrepCount, splitMealsIntoDishes } from './dishes.controller';
 import { getServedReport } from './dietary-reports.controller';
 
 const router = express.Router();
@@ -220,6 +220,7 @@ router.post('/meal-orders/:id/choice', authenticateToken, canteenFloor, requireC
 router.get('/dishes', authenticateToken, listDishes);
 router.post('/dishes', authenticateToken, setupAdmin, requireClinicalActor, upsertDish);
 router.put('/dishes/:id', authenticateToken, setupAdmin, requireClinicalActor, upsertDish);
+router.post('/meals/split-dishes', authenticateToken, setupAdmin, requireClinicalActor, splitMealsIntoDishes);
 router.put('/meals/:id/dishes', authenticateToken, setupAdmin, requireClinicalActor, setMealDishes);
 router.post('/meal-orders/:id/items/:itemId', authenticateToken, canteenFloor, requireClinicalActor, updateTrayItem);
 router.get('/prep-count', authenticateToken, getPrepCount);
