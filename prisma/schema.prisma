@@ -297,6 +297,10 @@ model Appointment {
   @@index([patientId], map: "appointments_patientId_fkey")
   @@index([userId], map: "appointments_userId_fkey")
   @@index([paymentStatus, paidAt])
+  // OPD screens filter by day + status (pending/confirmed lists, check-in counts)
+  // and by doctor + day (doctor queues); without these every lookup scans the table.
+  @@index([date, status])
+  @@index([doctorId, date])
   @@map("appointments")
 }
 
@@ -381,6 +385,8 @@ model BookedSlot {
 
   @@index([doctorId], map: "BookedSlot_doctorId_fkey")
   @@index([appointmentId])
+  // Slot grids read one doctor's bookings for one day.
+  @@index([doctorId, date])
 }
 
 model UnavailableSlot {
