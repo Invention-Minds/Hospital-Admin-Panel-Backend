@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import AppointmentRepository from './appointment.repository';
 import prisma from '../../service/prisma-client';
 import { scheduleAppointmentCompletionJob } from './appointment.scheduler';
@@ -17,6 +18,10 @@ export default class AppointmentResolver {
 
   async getAppointments() {
     return await this.repository.findMany();
+  }
+
+  async getAppointmentsFiltered(where: Prisma.AppointmentWhereInput, lean: boolean) {
+    return await this.repository.findFiltered(where, lean);
   }
 
   async updateAppointment(id: number, data: any) {

@@ -1,5 +1,21 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../../service/prisma-client';
 import { SAFE_USER_SELECT } from '../_shared/safe-user-select';
+
+/** Columns the waiting-time analytics read (charts, "Details", Excel export). */
+const LEAN_APPOINTMENT_SELECT = {
+  id: true,
+  date: true,
+  time: true,
+  doctorId: true,
+  doctorName: true,
+  department: true,
+  waitingTime: true,
+  patientName: true,
+  age: true,
+  checkedInTime: true,
+  checkedOutTime: true,
+} as const;
 
 
 export default class AppointmentRepository {
@@ -9,6 +25,19 @@ export default class AppointmentRepository {
 
   async findMany() {
     return await prisma.appointment.findMany({ include: { doctor: true, user: { select: SAFE_USER_SELECT } } });
+  }
+
+  /**
+   * GET /api/appointments with filters — the screens ask only for what they
+   * show instead of all appointments (the unfiltered call returned ~330 MB).
+   * Full rows include the safe booked-by user but not the doctor record (no
+   * caller reads appointment.doctor); `lean` returns only waiting-time columns.
+   */
+  async findFiltered(where: Prisma.AppointmentWhereInput, lean: boolean) {
+    if (lean) {
+      return await prisma.appointment.findMany({ where, select: LEAN_APPOINTMENT_SELECT });
+    }
+    return await prisma.appointment.findMany({ where, include: { user: { select: SAFE_USER_SELECT } } });
   }
 
   async update(id: number, data: any) {

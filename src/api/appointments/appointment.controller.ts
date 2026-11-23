@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { getRecipientPhones } from '../../service/notification-recipients';
@@ -671,9 +672,70 @@ export const getNotificationsByRole = async (req: Request, res: Response) => {
 };
 
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Optional filters for GET /api/appointments:
+ *   fromDate / toDate  YYYY-MM-DD (IST). Matches appointment `date` in range OR
+ *                      `created_at` within those IST days — the same rule the
+ *                      Admin Report applied in the browser.
+ *   isCloseOPD         'true' | 'false'
+ *   doctorId           number
+ *   fields=lean        waiting-time columns only, no relations
+ * With none of these the endpoint behaves exactly as before (all rows).
+ */
+const buildAppointmentFilter = (q: Record<string, unknown>):
+  { where: Prisma.AppointmentWhereInput; lean: boolean } | { error: string } | null => {
+  const fromDate = typeof q.fromDate === 'string' ? q.fromDate : undefined;
+  const toDate = typeof q.toDate === 'string' ? q.toDate : undefined;
+  const isCloseOPD = typeof q.isCloseOPD === 'string' ? q.isCloseOPD : undefined;
+  const doctorIdRaw = typeof q.doctorId === 'string' ? q.doctorId : undefined;
+  const lean = q.fields === 'lean';
+
+  if (!fromDate && !toDate && isCloseOPD === undefined && doctorIdRaw === undefined && !lean) return null;
+
+  const and: Prisma.AppointmentWhereInput[] = [];
+  if (fromDate || toDate) {
+    const from = fromDate ?? toDate!;
+    const to = toDate ?? fromDate!;
+    if (!YMD.test(from) || !YMD.test(to)) return { error: 'fromDate/toDate must be YYYY-MM-DD' };
+    if (from > to) return { error: 'fromDate must not be after toDate' };
+    const istStart = new Date(`${from}T00:00:00.000+05:30`);
+    const istEnd = new Date(`${to}T23:59:59.999+05:30`);
+    and.push({
+      OR: [
+        { date: { gte: from, lte: to } },
+        // A few older rows store `date` as a full UTC timestamp
+        // ("2026-09-11T18:30:00.000Z" = 12 Sep IST). ISO strings sort like
+        // instants, so compare them against the same IST-day bounds — the
+        // browser did the same via new Date(date).
+        { date: { gte: istStart.toISOString(), lte: istEnd.toISOString() } },
+        { created_at: { gte: istStart, lte: istEnd } },
+      ],
+    });
+  }
+  if (isCloseOPD !== undefined) {
+    if (isCloseOPD !== 'true' && isCloseOPD !== 'false') return { error: 'isCloseOPD must be true or false' };
+    and.push({ isCloseOPD: isCloseOPD === 'true' });
+  }
+  if (doctorIdRaw !== undefined) {
+    const doctorId = Number(doctorIdRaw);
+    if (!Number.isInteger(doctorId)) return { error: 'doctorId must be a number' };
+    and.push({ doctorId });
+  }
+  return { where: and.length ? { AND: and } : {}, lean };
+};
+
 export const getAppointments = async (req: Request, res: Response): Promise<void> => {
   try {
-    const appointments = await resolver.getAppointments();
+    const filter = buildAppointmentFilter(req.query as Record<string, unknown>);
+    if (filter && 'error' in filter) {
+      res.status(400).json({ error: filter.error });
+      return;
+    }
+    const appointments = filter
+      ? await resolver.getAppointmentsFiltered(filter.where, filter.lean)
+      : await resolver.getAppointments();
     res.status(200).json(appointments);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'An error occurred' });
