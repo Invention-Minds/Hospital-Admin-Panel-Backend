@@ -121,7 +121,13 @@ export async function recordDoctorChange(req: Request, input: DoctorChangeInput,
       },
     });
 
-    if (input.alert !== false) await alertDesks(input, by, actor.id);
+    // Desk bell alerts are OFF unless DOCTOR_CHANGE_ALERTS_ENABLED=true: each
+    // change created one notification per desk user and broadcast each one to
+    // every open browser, which then re-downloaded the whole notification list
+    // (22 Nov 2026 slowdown). The audit log above is always written.
+    if (input.alert !== false && process.env.DOCTOR_CHANGE_ALERTS_ENABLED === 'true') {
+      await alertDesks(input, by, actor.id);
+    }
   } catch (err) {
     console.error(`[doctor-change-log] ${input.action} for doctor ${input.doctorId} failed:`, err);
   }

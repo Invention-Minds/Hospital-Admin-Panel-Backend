@@ -80,6 +80,24 @@ describe('recordDoctorChange', () => {
     expect(notifyPendingAppointments).toHaveBeenCalledTimes(2);
   });
 
+  it('still logs the change but sends no desk alerts when DOCTOR_CHANGE_ALERTS_ENABLED is not "true"', async () => {
+    const saved = process.env.DOCTOR_CHANGE_ALERTS_ENABLED;
+    delete process.env.DOCTOR_CHANGE_ALERTS_ENABLED;
+    try {
+      prismaMock.user.findUnique.mockResolvedValue({ username: 'asha_admin', fullName: 'Asha', role: 'admin', subAdminType: null });
+      const req = { user: { id: 5, username: 'asha_admin' }, headers: {} } as unknown as Request;
+      await recordDoctorChange(req, { action: 'EXTRA_SLOTS', doctorId: 3, doctorName: 'Dr Rao', summary: 'Extra slot 4:00 PM' } as any);
+
+      expect(auditLogAs).toHaveBeenCalledWith(req, { id: 5, username: 'asha_admin', role: 'admin' },
+        expect.objectContaining({ module: 'doctor', action: 'EXTRA_SLOTS', entityId: 3 }));
+      expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.notification.create).not.toHaveBeenCalled();
+      expect(notifyPendingAppointments).not.toHaveBeenCalled();
+    } finally {
+      process.env.DOCTOR_CHANGE_ALERTS_ENABLED = saved;
+    }
+  });
+
   it('logs arrivals without alerting the desk', async () => {
     prismaMock.user.findUnique.mockResolvedValue({ username: 'fd1', fullName: 'Meena', role: 'sub_admin', subAdminType: 'Front Desk' });
     const req = { user: { id: 212, username: 'fd1' }, headers: {} } as unknown as Request;
