@@ -623,9 +623,29 @@ export const createNewAppointment = async (req: Request, res: Response): Promise
   }
 };
 
+/**
+ * Routine reception notifications pile up (tens of thousands since 2024) and
+ * every open browser re-downloads this list on each live notification. Keep
+ * only the last ROUTINE_NOTIFICATION_DAYS (default 7) of these types; every
+ * other type (incidents, complaints, quality, diet, referrals, codes,
+ * estimations…) keeps its full history so nothing actionable disappears.
+ */
+const ROUTINE_NOTIFICATION_TYPES = ['service_request', 'appointment_remainder', 'appointment_request', 'service_reminder'];
+
 export const getAllNotifications = async (req: Request, res: Response): Promise<void> => {
   try {
-    const notifications = await prisma.notification.findMany();
+    const days = Number(process.env.ROUTINE_NOTIFICATION_DAYS) > 0 ? Number(process.env.ROUTINE_NOTIFICATION_DAYS) : 7;
+    const now = new Date();
+    const routineSince = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const notifications = await prisma.notification.findMany({
+      where: {
+        AND: [
+          // Expired notifications are no longer valid by design.
+          { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+          { OR: [{ type: { notIn: ROUTINE_NOTIFICATION_TYPES } }, { createdAt: { gte: routineSince } }] },
+        ],
+      },
+    });
     res.status(200).json(notifications);
   } catch (error) {
     res.status(500).json({ error: 'An error occurred while fetching notifications' });

@@ -2,6 +2,14 @@ jest.mock('../../../service/prisma-client', () => ({ __esModule: true, default: 
 
 import { withBuffer, pastCutoff, dishSuitsDiet } from '../tray-dishes';
 import { splitMealName, dishNameAndPortion } from '../dishes.controller';
+import { realNote } from '../meal-order.controller';
+
+describe('realNote — "NIL" is not a food warning', () => {
+  it.each([['NIL', null], ['nill', null], ['nil', null], ['None', null], ['NA', null], ['-', null], ['', null],
+    ['No milk', 'No milk'], ['Peanuts', 'Peanuts']])('"%s" → %s', (s, want) => {
+    expect(realNote(s)).toBe(want);
+  });
+});
 
 describe('dishNameAndPortion — a count in brackets becomes the portion', () => {
   it.each([

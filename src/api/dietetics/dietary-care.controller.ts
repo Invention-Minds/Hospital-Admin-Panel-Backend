@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
-import { syncOrdersQuietly } from './meal-order.cron';
+import { syncOrdersQuietly, MENU_GAP_PREFIX } from './meal-order.cron';
 import { loadPatientContext, loadCurrentPlans } from './patient-context';
 import { isDietNight } from './diet-notify';
 import { readSettings } from './masters.controller';
@@ -167,7 +167,23 @@ export const acknowledgeNight = async (req: Request, res: Response): Promise<voi
       notes: 'Night diet acknowledgement by doctor',
     });
     await syncOrdersQuietly(admissionId);
-    res.status(200).json({ ok: true, planId });
+
+    // Tell the doctor what the kitchen will actually get (today + tomorrow),
+    // so an empty weekly menu or an RT-feed / no-tray diet is seen right away.
+    const from = new Date();
+    const to = new Date(); to.setDate(to.getDate() + 1); to.setHours(23, 59, 59, 999);
+    const [orders, planDiet] = await Promise.all([
+      prisma.mealOrder.findMany({
+        where: { admissionId, dietPlanId: planId, scheduledFor: { gte: from, lte: to } },
+        select: { status: true, skipReason: true },
+      }),
+      prisma.dietPlan.findUnique({ where: { id: planId }, select: { diet: { select: { code: true, kind: true } } } }),
+    ]);
+    const trays = orders.filter((o) => o.status !== 'SKIPPED').length;
+    const menuGaps = Array.from(new Set(orders
+      .filter((o) => o.status === 'SKIPPED' && (o.skipReason ?? '').startsWith(MENU_GAP_PREFIX))
+      .map((o) => (o.skipReason ?? '').split(' — ')[0].replace(`${MENU_GAP_PREFIX} for `, ''))));
+    res.status(200).json({ ok: true, planId, trays, menuGaps, dietKind: planDiet?.diet.kind ?? null, dietCode: planDiet?.diet.code ?? null });
   } catch (error) {
     console.error('[dietetics] acknowledgeNight failed:', error);
     res.status(500).json({ error: 'Failed to acknowledge' });

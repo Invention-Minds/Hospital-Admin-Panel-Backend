@@ -75,6 +75,17 @@ interface SkipBody {
 // ─── Reads ──────────────────────────────────────────────────────────
 
 /**
+ * A "foods to avoid" note with real content. Wards often type NIL / nil /
+ * None / NA / "-" — printing "⚠ NIL" wastes a line on every tray sticker
+ * and makes the warning mean nothing.
+ */
+export function realNote(s: string | null | undefined): string | null {
+  const t = (s ?? '').trim();
+  if (!t) return null;
+  return /^(nil+|none|no|na|n\/a|nothing|not applicable|nkda|nka|-+|\.)$/i.test(t) ? null : t;
+}
+
+/**
  * GET /api/dietetics/meal-orders/kitchen?date=YYYY-MM-DD&mealTimeSlotId=...
  *
  * Canteen workspace view — all MealOrders for a given calendar day, optionally
@@ -136,7 +147,7 @@ export const getKitchenList = async (req: Request, res: Response): Promise<void>
         department: p?.department ?? null,
         displayCode: plan ? (plan.texture ? `${plan.diet.code}-${plan.texture.code}` : plan.diet.code) : null,
         interim: plan?.status === 'INTERIM',
-        avoid: [plan?.foodAvoid, ...(plan?.allergensSnapshot ? [`Allergy: ${decodeDietList(plan.allergensSnapshot).join(', ')}`] : [])]
+        avoid: [realNote(plan?.foodAvoid), ...(plan?.allergensSnapshot ? [`Allergy: ${decodeDietList(plan.allergensSnapshot).join(', ')}`] : [])]
           .filter((s) => s && s !== 'Allergy: ').join(' · ') || null,
         disposablePlate: !!plan?.disposablePlate,
         fluidRestrictionMl: plan?.fluidRestrictionMl ?? null,
@@ -904,7 +915,7 @@ export const getLabels = async (req: Request, res: Response): Promise<void> => {
             o.kitchenNotes,
           ].filter(Boolean).join(' · ') || null,
           noDishes: o.items.filter((i) => i.omitted).length,
-          avoid: [plan.foodAvoid, allergens.length ? `Allergy: ${allergens.join(', ')}` : null].filter(Boolean).join(' · ') || null,
+          avoid: [realNote(plan.foodAvoid), allergens.length ? `Allergy: ${allergens.join(', ')}` : null].filter(Boolean).join(' · ') || null,
           disposable: plan.disposablePlate,
           fluidRestrictionMl: plan.fluidRestrictionMl,
           flags: dietFlags(plan.diet),

@@ -180,7 +180,9 @@ export const upsertDiet = async (req: Request, res: Response): Promise<void> => 
     }
     const data = {
       name: body.name.trim(),
-      code: body.code.trim().toLowerCase(),
+      // Diet codes are printed in capitals on the diet sheet, trays and labels
+      // ("DM-1500", "RTF", "NPO"), so store them that way.
+      code: body.code.trim().toUpperCase(),
       description: body.description ?? null,
       caloriesKcal: body.caloriesKcal ?? null,
       proteinG: body.proteinG ?? null,
@@ -414,8 +416,8 @@ export const upsertTexture = async (req: Request, res: Response): Promise<void> 
     }
     const data = {
       name: name.trim(),
-      // Codes are shown as typed on the sheet / labels ("SRDD-SD"), so keep case.
-      code: code.trim(),
+      // Joined to the diet code on the sheet / labels ("SRDD-SD"): capitals too.
+      code: code.trim().toUpperCase(),
       description: description?.trim() || null,
       sequence: sequence ?? 0,
       isActive: isActive ?? true,

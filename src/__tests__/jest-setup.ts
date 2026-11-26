@@ -15,3 +15,5 @@ process.env.DATABASE_URL =
 // HMIS sync is off by default in the app (not connected yet). Tests mock the
 // HMIS client and exercise the real sync path, so switch it on here.
 process.env.HMIS_SYNC_ENABLED = 'true';
+// Suites test the alert behaviour itself; production leaves it off by default.
+process.env.DOCTOR_CHANGE_ALERTS_ENABLED = 'true';

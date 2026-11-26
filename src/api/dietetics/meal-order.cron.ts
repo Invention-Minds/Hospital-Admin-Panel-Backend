@@ -273,7 +273,29 @@ export async function generateOrdersForDate(
         continue;
       }
 
-      if (noTrayReason) continue;
+      if (noTrayReason) {
+        // An empty weekly-menu cell is a setup gap, not a clinical decision:
+        // record it as a skipped tray so Canteen lists the patient under
+        // "empty weekly-menu cells" instead of the patient silently getting
+        // nothing. It comes back as a real tray once the menu is filled.
+        if (noTrayReason.startsWith(MENU_GAP_PREFIX)) {
+          try {
+            await prisma.mealOrder.create({
+              data: {
+                admissionId: plan.admissionId, dietPlanId: plan.id, mealTimeSlotId: slot.id,
+                mealMasterId: null, kitchenNotes: null, scheduledFor,
+                wardId: adm.wardId, bedId: adm.bedId,
+                status: 'SKIPPED', skipReason: noTrayReason,
+              },
+            });
+          } catch (err: unknown) {
+            if ((err as { code?: string }).code !== 'P2002') {
+              console.error(`[meal-order-cron] menu-gap row failed for plan ${plan.id} slot ${slot.id}:`, err);
+            }
+          }
+        }
+        continue;
+      }
       try {
         await prisma.mealOrder.create({
           data: {
