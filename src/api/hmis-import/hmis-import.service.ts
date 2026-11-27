@@ -42,7 +42,7 @@ export interface ImportItem {
 export interface ImportResult {
   applied: boolean;
   files: Array<{ name: string; kind: string; rows: number }>;
-  summary: Record<ImportAction, number> & { newWards: number; newBeds: number; newPatients: number; failed: number };
+  summary: Record<ImportAction, number> & { newWards: number; newBeds: number; newPatients: number; failed: number; diagnosisFilled?: number };
   wards: Array<{ hmisName: string; matchedTo: string | null; how: string }>;
   items: ImportItem[];
 }
@@ -165,7 +165,7 @@ export async function runHmisImport(
     nos.length
       ? prisma.ipdAdmission.findMany({
           where: { OR: [{ admissionNo: { in: nos } }, { hmisAdmissionId: { in: nos } }] },
-          select: { id: true, admissionNo: true, hmisAdmissionId: true, prn: true, status: true, bedId: true, wardId: true, sourceModule: true },
+          select: { id: true, admissionNo: true, hmisAdmissionId: true, prn: true, status: true, bedId: true, wardId: true, sourceModule: true, diagnosis: true },
         })
       : Promise.resolve([]),
     prisma.ipdAdmission.findMany({
@@ -367,6 +367,20 @@ export async function runHmisImport(
         ]);
         await onAdmissionTransferred(p.adm!.id, p.adm!.bedId);
       } catch (e) { fail(p, e); }
+    }
+
+    // 3b. Diagnosis catch-up. Only the Bed Occupancy export carries
+    // "Provisional Diagnosis", and it used to be read only when a patient was
+    // first admitted — so a patient first brought in from the Admissions export
+    // kept an empty diagnosis forever. Fill it on any later import, never
+    // overwriting one a doctor already has.
+    for (const p of plan) {
+      const dx = p.row?.diagnosis?.trim();
+      if (!p.adm || !dx || p.item.action === 'DISCHARGE' || p.adm.diagnosis?.trim()) continue;
+      try {
+        await prisma.ipdAdmission.update({ where: { id: p.adm.id }, data: { diagnosis: dx, updatedBy: actor } });
+        result.summary.diagnosisFilled = (result.summary.diagnosisFilled ?? 0) + 1;
+      } catch (e) { console.error('[hmis-import] diagnosis fill failed:', e); }
     }
 
     // 4. New admissions (and their patients).

@@ -100,7 +100,10 @@ export async function loadPatientContext(filter: {
   const prnInts = Array.from(new Set(
     admissions.map((a) => Number.parseInt(a.prn ?? '', 10)).filter((n) => !Number.isNaN(n)),
   ));
-  const [patients, assessments, censusDx] = await Promise.all([
+  const admissionIds = admissions.map((a) => a.id);
+  // Doctor's OPD notes from 30 days before the earliest admission on.
+  const notesSince = new Date(Math.min(...admissions.map((a) => new Date(a.admissionDate).getTime())) - 30 * 86400000);
+  const [patients, assessments, censusDx, icdCodes, doctorNotes] = await Promise.all([
     prnInts.length
       ? prisma.patientDetails.findMany({
           where: { prn: { in: prnInts } },
@@ -108,7 +111,7 @@ export async function loadPatientContext(filter: {
         })
       : [],
     prisma.ipdInitialAssessment.findMany({
-      where: { admissionId: { in: admissions.map((a) => a.id) } },
+      where: { admissionId: { in: admissionIds } },
       select: {
         admissionId: true, vitalsWeight: true, vitalsHeight: true, dietType: true,
         allergyFood: true, allergyOthers: true, isPregnant: true, pregnancyWeeks: true,
@@ -118,11 +121,43 @@ export async function loadPatientContext(filter: {
     // Diagnosis the ward wrote on the diet census — last resort when the
     // admission and the doctor's assessment have none.
     prisma.dietCensusLine.findMany({
-      where: { admissionId: { in: admissions.map((a) => a.id) }, diagnosis: { not: null } },
+      where: { admissionId: { in: admissionIds }, diagnosis: { not: null } },
       select: { admissionId: true, diagnosis: true },
       orderBy: { census: { createdAt: 'desc' } },
     }),
+    // ICD codes picked on the admission (provisional / final).
+    prisma.admissionDiagnosisCode.findMany({
+      where: { admissionId: { in: admissionIds }, category: { in: ['icd-provisional', 'icd-final'] } },
+      select: { admissionId: true, category: true, code: true, description: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+    // Doctor's OPD consultation note — often the only diagnosis written for
+    // a patient admitted from OPD or brought in by the HMIS import.
+    prnInts.length
+      ? prisma.doctorNote.findMany({
+          where: { prn: { in: prnInts }, diagnosis: { not: null }, createdAt: { gte: notesSince } },
+          select: { prn: true, diagnosis: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [],
   ]);
+  // ICD: final diagnosis wins over provisional; several codes are joined.
+  const icdMap = new Map<string, string>();
+  for (const cat of ['icd-provisional', 'icd-final']) {
+    const byAdm = new Map<string, string[]>();
+    for (const c of icdCodes) if (c.category === cat) byAdm.set(c.admissionId, [...(byAdm.get(c.admissionId) ?? []), c.description?.trim() || c.code]);
+    for (const [id, list] of byAdm) icdMap.set(id, list.join('; '));
+  }
+  const noteDxMap = new Map<string, Array<{ at: Date; dx: string }>>();
+  for (const n of doctorNotes) {
+    const dx = n.diagnosis?.trim();
+    if (dx) noteDxMap.set(String(n.prn), [...(noteDxMap.get(String(n.prn)) ?? []), { at: n.createdAt, dx }]);
+  }
+  /** Latest OPD note diagnosis from 30 days before this admission on. */
+  const noteDx = (prn: string, admittedAt: Date): string | null => {
+    const from = new Date(admittedAt).getTime() - 30 * 86400000;
+    return noteDxMap.get(prn)?.find((n) => n.at.getTime() >= from)?.dx ?? null;
+  };
   const patientMap = new Map(patients.map((p) => [String(p.prn), p]));
   const iaMap = new Map(assessments.map((a) => [a.admissionId, a]));
   const censusDxMap = new Map<string, string>();
@@ -145,8 +180,12 @@ export async function loadPatientContext(filter: {
       bedNumber: a.bed?.bedNumber ?? null,
       department: a.department,
       consultant: a.admittingDoctor,
-      // Admission diagnosis → doctor's initial assessment → ward's census entry.
-      diagnosis: firstText(a.diagnosis, ia?.provisionalDiagnosis, censusDxMap.get(a.id)),
+      // Admission (incl. HMIS) → doctor's initial assessment → ICD codes on the
+      // admission → ward's census entry → doctor's recent OPD note.
+      diagnosis: firstText(
+        a.diagnosis, ia?.provisionalDiagnosis, icdMap.get(a.id), censusDxMap.get(a.id),
+        noteDx(String(a.prn), a.admissionDate),
+      ),
       ia: ia
         ? {
             weightKg: toNum(ia.vitalsWeight),
