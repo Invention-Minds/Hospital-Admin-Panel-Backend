@@ -1,7 +1,30 @@
 jest.mock('../../../service/prisma-client', () => ({ __esModule: true, default: {} }));
 jest.mock('../masters.controller', () => ({ readSettings: jest.fn() }));
 
-import { feedMinutes, parseFeedText, effectiveFeedOrder, isAutoSkip, noMenuReason, MENU_GAP_PREFIX } from '../meal-order.cron';
+import {
+  feedMinutes, parseFeedText, effectiveFeedOrder, isAutoSkip, noMenuReason, MENU_GAP_PREFIX,
+  censusNpoReason, censusNpoFeed, holdStopsFeeds,
+} from '../meal-order.cron';
+
+describe('census NPO with RT feed', () => {
+  it('keeps the nurse\'s feed choice in the hold reason', () => {
+    expect(censusNpoReason(null)).toBe('NPO (nursing census)');
+    expect(censusNpoFeed(censusNpoReason('continue'))).toBe('continue');
+    expect(censusNpoFeed(censusNpoReason('stop'))).toBe('stop');
+    expect(censusNpoFeed(censusNpoReason(null))).toBeNull();
+    expect(censusNpoFeed('NPO for OT')).toBeNull();
+  });
+  it('stops RT feeds unless the feed continues', () => {
+    expect(holdStopsFeeds(censusNpoReason('continue'))).toBe(false);
+    expect(holdStopsFeeds(censusNpoReason('stop'))).toBe(true);
+    expect(holdStopsFeeds(censusNpoReason(null))).toBe(true);
+    expect(holdStopsFeeds('NPO for OT')).toBe(true);
+  });
+  it('lets trays skipped for a census NPO come back once it is lifted', () => {
+    expect(isAutoSkip(censusNpoReason('continue'))).toBe(true);
+    expect(isAutoSkip(`${censusNpoReason(null)} (until 06:00 28/11/2026)`)).toBe(true);
+  });
+});
 
 describe('menu gaps and automatic skips', () => {
   it('says which diet, day and meal has no dish', () => {
@@ -17,7 +40,7 @@ describe('menu gaps and automatic skips', () => {
     ['NPO till further orders', true],
     ['NPO until 06:00 21/11/2026', true],
     ['Patient away (test / OT)', false],
-    ['NPO (nursing census)', false],
+    ['NPO (nursing census)', true],
     [null, false],
   ])('"%s" → system skip %s', (reason, auto) => {
     expect(isAutoSkip(reason)).toBe(auto);

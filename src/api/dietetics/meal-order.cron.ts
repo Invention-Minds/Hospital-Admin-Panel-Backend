@@ -69,13 +69,41 @@ export function noMenuReason(dietCode: string, dayOfWeek: number, slotName: stri
 }
 
 /**
+ * NPO relayed in the nursing census becomes a MealHold with this reason. When
+ * the patient is also on an RT feed the nurse says whether the feed goes on
+ * ("nil by mouth, feed continues") or stops too (fasting for a procedure);
+ * that choice rides in the reason text.
+ */
+export const CENSUS_NPO_REASON = 'NPO (nursing census)';
+const FEED_CONTINUES = 'RT feed continues';
+const FEED_STOPPED = 'RT feed stopped';
+export function censusNpoReason(feed: 'continue' | 'stop' | null): string {
+  if (feed === 'continue') return `${CENSUS_NPO_REASON} · ${FEED_CONTINUES}`;
+  if (feed === 'stop') return `${CENSUS_NPO_REASON} · ${FEED_STOPPED}`;
+  return CENSUS_NPO_REASON;
+}
+/** Does this hold stop RT feed doses as well as trays? Only "feed continues" spares them. */
+export function holdStopsFeeds(reason: string | null | undefined): boolean {
+  return !(reason ?? '').includes(FEED_CONTINUES);
+}
+/** The nurse's feed choice recorded on a census NPO hold (null = not a census hold / not said). */
+export function censusNpoFeed(reason: string | null | undefined): 'continue' | 'stop' | null {
+  if (!reason?.startsWith(CENSUS_NPO_REASON)) return null;
+  if (reason.includes(FEED_CONTINUES)) return 'continue';
+  if (reason.includes(FEED_STOPPED)) return 'stop';
+  return null;
+}
+
+/**
  * Skips the generator made on its own (not a person's "not served"), which it
  * may undo when the cause goes away. Hold reasons are free text, so trays
- * skipped for a hold are not revived here.
+ * skipped for a hold are not revived here — except the census NPO hold, whose
+ * reason is fixed, so lifting it brings the day's remaining trays back.
  */
 export function isAutoSkip(reason: string | null | undefined): boolean {
   if (!reason) return false;
   return reason.startsWith(MENU_GAP_PREFIX)
+    || reason.startsWith(CENSUS_NPO_REASON)
     || reason === 'Slot not on the current diet menu' // wording before 2026-11-21
     || reason === 'Not required (diet sheet: NO)'
     || reason === 'Feed — no instruction for this slot'
@@ -467,7 +495,9 @@ async function generateFeedDoses(
       if (at < notBefore) continue;
       const npo = (plan.npoFrom || plan.npoUntil)
         && (!plan.npoFrom || plan.npoFrom <= at) && (!plan.npoUntil || plan.npoUntil > at);
-      const hold = (holdsByAdmission.get(plan.admissionId) ?? []).some((h) => h.fromAt <= at && (!h.untilAt || h.untilAt > at));
+      // "NPO, RT feed continues" stops trays only — the tube feed goes on.
+      const hold = (holdsByAdmission.get(plan.admissionId) ?? [])
+        .some((h) => holdStopsFeeds(h.reason) && h.fromAt <= at && (!h.untilAt || h.untilAt > at));
       if (npo || hold) continue;
       const k = key(plan.admissionId, at);
       wanted.add(k);

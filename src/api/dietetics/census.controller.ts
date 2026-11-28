@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
 import { resolveWardScope } from '../_shared/nursing-roles';
-import { syncOrdersQuietly, parseFeedText } from './meal-order.cron';
+import { syncOrdersQuietly, parseFeedText, CENSUS_NPO_REASON, censusNpoReason, censusNpoFeed } from './meal-order.cron';
 import { loadPatientContext, loadCurrentPlans, remarkText } from './patient-context';
 import { notifyDiet } from './diet-notify';
 
@@ -12,7 +12,10 @@ import { notifyDiet } from './diet-notify';
  * Closed loop:  nurse SUBMITS (signed)  →  Dietary RECEIVES  →  Dietary ACKNOWLEDGES
  *
  * On acknowledge, what the nurse relayed takes effect in the kitchen:
- *   • NPO lines   → MealHold (source CENSUS) from the nurse's NPO time
+ *   • NPO lines   → MealHold (source CENSUS) from the nurse's NPO time. With
+ *     an RT feed the nurse says whether the feed continues or stops too.
+ *   • NPO no longer ticked → the census NPO hold is lifted (an NPO the
+ *     dietitian set is only flagged, never lifted from here)
  *   • New patients with a diet picked from the master and no diet yet
  *     → INTERIM plan (source CENSUS) so they are never left without a tray —
  *       or served the previous patient's diet — until the dietitian assesses.
@@ -26,10 +29,24 @@ interface CensusLineBody {
   npo?: boolean;
   npoFrom?: string | null;
   feedText?: string | null;
+  /** NPO + RT feed: does the feed continue (nil by mouth only) or stop too (fasting)? */
+  npoFeed?: 'continue' | 'stop' | null;
   disposablePlate?: boolean;
   foodAllergy?: string | null;
   foodPreference?: string | null;
   remarks?: string | null;
+}
+
+/**
+ * The census line has no column for the nurse's NPO feed choice, so it is kept
+ * as the first part of the line's remarks — readable for Dietary in the inbox
+ * and read back on acknowledge.
+ */
+const NPO_FEED_TAG = { continue: 'NPO: RT feed continues', stop: 'NPO: fasting, RT feed stopped' } as const;
+function npoFeedFromRemarks(remarks: string | null | undefined): 'continue' | 'stop' | null {
+  if (remarks?.startsWith(NPO_FEED_TAG.continue)) return 'continue';
+  if (remarks?.startsWith(NPO_FEED_TAG.stop)) return 'stop';
+  return null;
 }
 
 /** Allergy text the nurse starts from: the plan's avoid list, else the doctor's initial assessment. */
@@ -125,6 +142,7 @@ export const getCensusPrefill = async (req: Request, res: Response): Promise<voi
           npo: planNpo || !!hold,
           npoFrom: (hold?.fromAt ?? plan?.npoFrom ?? null)?.toISOString() ?? null,
           feedText: plan?.feed ?? '',
+          npoFeed: censusNpoFeed(hold?.reason),
           disposablePlate: plan?.disposablePlate ?? false,
           foodAllergy: knownAllergy(p, plan?.foodAvoid),
           foodPreference: p.ia?.dietPattern ?? '',
@@ -174,6 +192,13 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
       res.status(400).json({ error: `${unknown.length} line(s) are not admitted in this ward — refresh the census` });
       return;
     }
+    // NPO + RT feed means two different things — the nurse must say which.
+    const unclear = lines.filter((l) => l.npo && l.feedText?.trim() && l.npoFeed !== 'continue' && l.npoFeed !== 'stop');
+    if (unclear.length) {
+      const beds = unclear.map((l) => byId.get(l.admissionId)?.bedNumber || 'a patient').join(', ');
+      res.status(400).json({ error: `NPO with RT feed (${beds}): choose whether the RT feed continues or stops` });
+      return;
+    }
     const ids = patients.map((p) => p.admissionId);
     const [plans, holds, lastCensus] = await Promise.all([
       loadCurrentPlans(ids),
@@ -212,11 +237,16 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
             // NPO already in force (dietitian NPO or a live hold) is not a change.
             const npoNow = (!!plan && (!!plan.npoFrom || !!plan.npoUntil)) || holdIds.has(l.admissionId);
             const feed = l.feedText?.trim() || '';
+            const npoFeed = l.npo && feed && (l.npoFeed === 'continue' || l.npoFeed === 'stop') ? l.npoFeed : null;
+            const remarks = [npoFeed ? NPO_FEED_TAG[npoFeed] : null, l.remarks?.trim() || null].filter(Boolean).join(' · ') || null;
             const allergy = l.foodAllergy?.trim() || '';
             // A new / different allergy is always a change Dietary must see.
             const allergyChanged = !!allergy && !sameText(allergy, plan?.foodAvoid ?? knownAllergy(p, null));
             // Did the nurse report anything different from what Dietary already has?
-            const changed = allergyChanged || (plan
+            // A different feed choice on an NPO already in force is a change too.
+            const feedChoiceChanged = !!npoFeed
+              && npoFeed !== censusNpoFeed(holds.find((h) => h.admissionId === l.admissionId)?.reason);
+            const changed = allergyChanged || feedChoiceChanged || (plan
               ? (!!dietText && dietText !== plan.displayCode)
                 || !!l.npo !== npoNow
                 || !!l.disposablePlate !== plan.disposablePlate
@@ -240,7 +270,7 @@ export const submitCensus = async (req: Request, res: Response): Promise<void> =
               disposablePlate: !!l.disposablePlate,
               foodAllergy: allergy || null,
               foodPreference: l.foodPreference?.trim() || null,
-              remarks: l.remarks?.trim() || null,
+              remarks,
               // NEW = newly admitted since the last census; CHANGED = nurse reported a difference.
               changeFlag: isNew ? 'NEW' : changed ? 'CHANGED' : 'UNCHANGED',
             };
@@ -336,8 +366,17 @@ export const getCensus = async (req: Request, res: Response): Promise<void> => {
           } else if (l.dietText && l.dietText !== plan.displayCode) {
             actions.push(`Nurse reports "${l.dietText}" · current diet ${plan.displayCode}`);
           }
-          if (l.npo && !planNpo && !holdIds.has(l.admissionId)) actions.push('NPO reported — hold will be applied on acknowledge');
-          if (!l.npo && (planNpo || holdIds.has(l.admissionId))) actions.push('Census shows no NPO but an NPO is active');
+          const lineHolds = holds.filter((h) => h.admissionId === l.admissionId);
+          const censusHold = lineHolds.find((h) => h.source === 'CENSUS');
+          const otherHold = lineHolds.some((h) => h.source !== 'CENSUS');
+          const feedChoice = npoFeedFromRemarks(l.remarks);
+          const feedNote = feedChoice === 'continue' ? ' (RT feed continues)' : feedChoice === 'stop' ? ' (RT feed stops too)' : '';
+          if (l.npo && !planNpo && !holdIds.has(l.admissionId)) actions.push(`NPO reported${feedNote} — hold will be applied on acknowledge`);
+          else if (l.npo && censusHold && feedChoice && feedChoice !== censusNpoFeed(censusHold.reason)) {
+            actions.push(`NPO feed choice changed${feedNote} — updated on acknowledge`);
+          }
+          if (!l.npo && censusHold) actions.push('NPO no longer ticked — the ward\'s NPO will be lifted on acknowledge');
+          if (!l.npo && (planNpo || otherHold)) actions.push('Census shows no NPO but an NPO set by Dietary is active — check with the ward');
           if (plan && l.disposablePlate !== plan.disposablePlate) actions.push(`Plate: census says ${l.disposablePlate ? 'disposable' : 'regular'}`);
           if (l.foodAllergy && !sameText(l.foodAllergy, plan?.foodAvoid)) actions.push(`Food allergy: ${l.foodAllergy}`);
           if (l.foodPreference) info.push(`Preference: ${l.foodPreference}`);
@@ -398,7 +437,9 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
     const admittedIds = new Set(admitted.map((a) => a.id));
     const actor = req.user?.username ?? null;
     let holdsCreated = 0;
+    let holdsLifted = 0;
     let interimCreated = 0;
+    const now = new Date();
     // Ward reported an RT feed but picked no diet code → interim on the RT-feed diet.
     const feedDiet = census.lines.some((l) => !l.dietMasterId && l.feedText?.trim())
       ? await prisma.dietMaster.findFirst({ where: { kind: 'FEED', isActive: true }, orderBy: { name: 'asc' }, select: { id: true } })
@@ -409,17 +450,35 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
       const plan = plans.get(l.admissionId);
       const planNpo = !!plan && (!!plan.npoFrom || !!plan.npoUntil);
 
+      const feedChoice = npoFeedFromRemarks(l.remarks);
+      const censusHolds = holds.filter((h) => h.admissionId === l.admissionId && h.source === 'CENSUS');
       if (applyNpo && l.npo && !planNpo && !holdIds.has(l.admissionId)) {
         await prisma.mealHold.create({
           data: {
             admissionId: l.admissionId,
             fromAt: l.npoFrom ?? new Date(),
-            reason: 'NPO (nursing census)',
+            reason: censusNpoReason(feedChoice),
             source: 'CENSUS',
             createdBy: actor,
           },
         });
         holdsCreated++;
+      } else if (applyNpo && l.npo && feedChoice) {
+        // Still NPO, but the ward changed whether the RT feed continues.
+        const reason = censusNpoReason(feedChoice);
+        for (const h of censusHolds) {
+          if (h.reason !== reason && h.reason.startsWith(CENSUS_NPO_REASON)) {
+            await prisma.mealHold.update({ where: { id: h.id }, data: { reason } });
+          }
+        }
+      } else if (applyNpo && !l.npo && censusHolds.length) {
+        // The ward took the patient off NPO — lift the NPO the census put on.
+        // (An NPO set by the dietitian / Dietary stays; the inbox flags it.)
+        await prisma.mealHold.updateMany({
+          where: { id: { in: censusHolds.map((h) => h.id) }, liftedAt: null },
+          data: { liftedAt: now, liftedBy: actor ? `${actor} (census)` : 'census' },
+        });
+        holdsLifted += censusHolds.length;
       }
       const interimDietId = l.dietMasterId ?? (l.feedText?.trim() ? feedDiet?.id ?? null : null);
       if (createInterim && !plan && interimDietId) {
@@ -447,7 +506,7 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
         module: 'dietetics', action: 'UPDATE', entityType: 'DietCensus', entityId: l.admissionId,
         payload: {
           censusId: census.id,
-          summary: `Census acknowledged (${census.wardName ?? 'ward'})${l.npo ? ' · NPO reported' : ''}${!plan && interimDietId ? ' · interim diet' : ''}`,
+          summary: `Census acknowledged (${census.wardName ?? 'ward'})${l.npo ? ` · NPO reported${feedChoice === 'continue' ? ', RT feed continues' : feedChoice === 'stop' ? ', RT feed stopped' : ''}` : ''}${applyNpo && !l.npo && censusHolds.length ? ' · census NPO lifted' : ''}${!plan && interimDietId ? ' · interim diet' : ''}`,
         },
       });
     }
@@ -465,7 +524,7 @@ export const acknowledgeCensus = async (req: Request, res: Response): Promise<vo
     });
     for (const id of ids) if (admittedIds.has(id)) await syncOrdersQuietly(id);
 
-    res.status(200).json({ ...row, holdsCreated, interimCreated });
+    res.status(200).json({ ...row, holdsCreated, holdsLifted, interimCreated });
   } catch (error) {
     console.error('[dietetics] acknowledgeCensus failed:', error);
     res.status(500).json({
