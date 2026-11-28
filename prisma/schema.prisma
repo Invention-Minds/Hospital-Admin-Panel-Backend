@@ -4748,6 +4748,10 @@ model MealTimeSlot {
   // HH:mm — last time a diet change can still reach the kitchen for this meal.
   // Shown on the sheet / kitchen list; changes after it are flagged as late.
   orderCutoff String?
+  // JSON array of admission department names ("OBG", …). Null / empty =
+  // the meal is for every patient; otherwise only patients admitted under
+  // one of these departments get a tray (e.g. the 18:30 OBG snack).
+  departments String?  @db.Text
   sequence    Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())

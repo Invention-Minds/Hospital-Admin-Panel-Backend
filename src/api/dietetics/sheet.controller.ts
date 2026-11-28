@@ -1,7 +1,10 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
-import { atClock, composeKitchenNote, generateOrdersForDate, syncOrdersQuietly } from './meal-order.cron';
+import {
+  atClock, composeKitchenNote, generateOrdersForDate, syncOrdersQuietly,
+  parseSlotDepartments, slotServesDepartment,
+} from './meal-order.cron';
 import { readSettings } from './masters.controller';
 import {
   loadPatientContext, loadCurrentPlans, avoidText, remarkText,
@@ -32,6 +35,8 @@ export interface WindowSlot {
   startTime: string;
   endTime: string;
   orderCutoff: string | null;
+  /** Departments this meal is limited to; empty = every patient. */
+  departments: string[];
 }
 
 export interface SheetRow {
@@ -65,6 +70,8 @@ export interface SheetRow {
     supplementId: string | null;
     supplementDose: string | null;
     defaultMeal: string | null;
+    /** The meal is limited to other departments — not for this patient. */
+    notForPatient?: boolean;
   }>;
   isNew: boolean;
   changes: string[];
@@ -94,6 +101,7 @@ export async function buildWindow(serviceDate: Date): Promise<WindowSlot[]> {
   const mk = (s: (typeof slots)[number], d: Date): WindowSlot => ({
     slotId: s.id, name: s.name, code: s.code, date: ymd(d),
     startTime: s.startTime, endTime: s.endTime, orderCutoff: s.orderCutoff,
+    departments: parseSlotDepartments(s.departments),
   });
   return [
     ...slots.slice(startIdx).map((s) => mk(s, serviceDate)),
@@ -175,6 +183,13 @@ export async function buildSheet(serviceDate: Date): Promise<{
     for (const w of window) {
       const c = cellMap.get(`${p.admissionId}|${w.slotId}`);
       const weekday = new Date(`${w.date}T00:00:00`).getDay();
+      if (!slotServesDepartment(w.departments, p.department)) {
+        rowCells[w.slotId] = {
+          text: null, skip: false, instruction: null, supplementId: null, supplementDose: null,
+          defaultMeal: null, notForPatient: true,
+        };
+        continue;
+      }
       rowCells[w.slotId] = {
         text: c?.skip ? 'NO' : composeKitchenNote(c),
         skip: !!c?.skip,

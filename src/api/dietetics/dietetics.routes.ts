@@ -6,7 +6,7 @@ import { rateLimit } from '../../middleware/rate-limit';
 import { NURSE_SUBTYPES, NURSING_SUPERINTENDENT } from '../_shared/nursing-roles';
 
 import {
-  listMealTimeSlots, upsertMealTimeSlot,
+  listMealTimeSlots, upsertMealTimeSlot, listAdmissionDepartments,
   listAllergens, upsertAllergen,
   listDiets, upsertDiet,
   listMeals, upsertMeal,
@@ -108,6 +108,7 @@ const feedFloor = requireRole({ subAdminTypes: [...CANTEEN, ...NURSES] });
 // ─── Masters — diets, meals, allergens, slots, menus, textures, supplements ─
 // Reads: any authenticated user. Writes: super_admin only.
 router.get('/meal-time-slots', authenticateToken, listMealTimeSlots);
+router.get('/admission-departments', authenticateToken, setupAdmin, listAdmissionDepartments);
 router.post('/meal-time-slots', authenticateToken, setupAdmin, requireClinicalActor, upsertMealTimeSlot);
 router.put('/meal-time-slots/:id', authenticateToken, setupAdmin, requireClinicalActor, upsertMealTimeSlot);
 

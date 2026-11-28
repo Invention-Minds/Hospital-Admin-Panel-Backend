@@ -8,6 +8,7 @@ import { syncTrayDishes } from './tray-dishes';
  *
  * What a patient gets for a slot, in order of precedence:
  *   1. Not admitted / no current plan          → nothing
+ *   1b. Meal time limited to other departments → nothing (e.g. OBG-only snack)
  *   2. Diet kind NO_TRAY (home / mother food)  → nothing
  *   3. NPO — dietitian's window (npoFrom … npoUntil) or an active MealHold
  *      (e.g. "NPO from 6 AM" relayed in the nursing census) → nothing
@@ -95,6 +96,29 @@ export function censusNpoFeed(reason: string | null | undefined): 'continue' | '
 }
 
 /**
+ * A meal time may be limited to some admission departments (e.g. the 18:30
+ * OBG snack). Stored as a JSON array on MealTimeSlot.departments; empty = all.
+ */
+export const SLOT_DEPT_PREFIX = 'Meal only for';
+export function parseSlotDepartments(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.map((d) => String(d).trim()).filter(Boolean) : [];
+  } catch { return []; }
+}
+const normDept = (d: string | null | undefined): string => (d ?? '').trim().toLowerCase();
+/** Does this meal time serve a patient admitted under `department`? */
+export function slotServesDepartment(departments: string[], department: string | null | undefined): boolean {
+  if (!departments.length) return true;
+  const d = normDept(department);
+  return departments.some((x) => normDept(x) === d);
+}
+export function slotDeptReason(departments: string[]): string {
+  return `${SLOT_DEPT_PREFIX} ${departments.join(', ')}`;
+}
+
+/**
  * Skips the generator made on its own (not a person's "not served"), which it
  * may undo when the cause goes away. Hold reasons are free text, so trays
  * skipped for a hold are not revived here — except the census NPO hold, whose
@@ -104,6 +128,7 @@ export function isAutoSkip(reason: string | null | undefined): boolean {
   if (!reason) return false;
   return reason.startsWith(MENU_GAP_PREFIX)
     || reason.startsWith(CENSUS_NPO_REASON)
+    || reason.startsWith(SLOT_DEPT_PREFIX)
     || reason === 'Slot not on the current diet menu' // wording before 2026-11-21
     || reason === 'Not required (diet sheet: NO)'
     || reason === 'Feed — no instruction for this slot'
@@ -153,6 +178,7 @@ export async function generateOrdersForDate(
   });
   // No meal left today still runs: RT feed doses keep going after the last meal.
   const openSlotIds = new Set(openSlots.map((s) => s.id));
+  const slotDepts = new Map(slots.map((s) => [s.id, parseSlotDepartments(s.departments)]));
 
   const admissionFilter = opts.admissionId ? { admissionId: opts.admissionId } : {};
 
@@ -197,7 +223,7 @@ export async function generateOrdersForDate(
             id: { in: admissionIds }, status: 'admitted',
             dischargeClearances: { none: { department: 'NURSING', status: 'cleared' } },
           },
-          select: { id: true, wardId: true, bedId: true },
+          select: { id: true, wardId: true, bedId: true, department: true },
         }),
         prisma.mealHold.findMany({
           where: { admissionId: { in: admissionIds }, liftedAt: null, fromAt: { lte: dayEnd } },
@@ -251,7 +277,9 @@ export async function generateOrdersForDate(
         : false;
       const hold = (holdsByAdmission.get(plan.admissionId) ?? [])
         .find((h) => h.fromAt <= scheduledFor && (!h.untilAt || h.untilAt > scheduledFor));
-      if (kind === 'NO_TRAY') noTrayReason = 'Diet is home / mother food — no tray';
+      const depts = slotDepts.get(slot.id) ?? [];
+      if (!slotServesDepartment(depts, adm.department)) noTrayReason = slotDeptReason(depts);
+      else if (kind === 'NO_TRAY') noTrayReason = 'Diet is home / mother food — no tray';
       else if (npoPlan) noTrayReason = plan.npoUntil ? `NPO until ${fmtTime(plan.npoUntil)}` : 'NPO till further orders';
       else if (hold) noTrayReason = `${hold.reason}${hold.untilAt ? ` (until ${fmtTime(hold.untilAt)})` : ''}`;
       else if (cell?.skip) noTrayReason = 'Not required (diet sheet: NO)';

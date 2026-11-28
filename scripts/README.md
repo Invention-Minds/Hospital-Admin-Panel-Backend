@@ -75,3 +75,55 @@ The script prints exact URLs at the end. Typical next steps:
 - `/ipd` — see the seeded IPD admission in the list.
 - `/ipd/admission/<seeded-admission-id>/progress-note` — Sprint 3a-2 screen.
 - `/ipd/admission/<seeded-admission-id>/discharge` — Sprint 3b screen (once built).
+
+## `backfill-patient-phones.ts`
+
+Fills `PatientDetails.mobileNo` for patients with **no** phone number
+(`mobileNo` and `contactNo` both empty) from their most recent
+**staff-handled** appointment with the same PRN (checked in, or booked by a
+logged-in user). WhatsApp-bot and AI-receptionist bookings are never used —
+the patient number receives the record-access OTP — and `Online` (website)
+bookings count only if the patient was checked in. A number shared by more
+than `--max-shared` different patients (default 10) is skipped as a likely
+desk/agent number. Only valid Indian mobiles (10 digits, starting 6–9) are
+written, and an existing number is never overwritten. Same rules as the automatic check-in backfill
+(`backfillPatientPhone` in `src/api/patient/patient-helper.ts`).
+
+### Run
+
+```bash
+cd Hospital-Admin-Panel-Backend
+npx ts-node scripts/backfill-patient-phones.ts           # dry run: counts + masked examples, writes nothing
+npx ts-node scripts/backfill-patient-phones.ts --apply   # writes
+# optional: --max-shared=N to change the shared-number limit (default 10)
+```
+
+`--apply` saves a change log (`patientId,prn,mobileNoSet`) as
+`~/phone-backfill-<db>-<timestamp>.csv` (mode 600). It contains phone
+numbers — keep it private and out of the repo; it is the record for undoing.
+Re-running is safe: patients already filled are no longer candidates.
+
+## `server/docminds-db-backup.sh`
+
+Hourly MySQL backup for the production server, kept on the server only
+(`~/db-backups`). Keeps every backup from today, 3 per past day (09:00,
+15:00, 23:00) for 30 days, and deletes older ones. A failed dump never
+deletes previous backups.
+
+Credentials are read from `~/.docminds-backup.cnf` (chmod 600) — **never
+commit that file or put a password in the script.**
+
+### Install (on the server)
+
+```bash
+git pull
+mkdir -p ~/bin
+cp scripts/server/docminds-db-backup.sh ~/bin/
+chmod 700 ~/bin/docminds-db-backup.sh
+time nice -n 19 ionice -c3 ~/bin/docminds-db-backup.sh   # first run by hand
+crontab -e   # add:  5 * * * * nice -n 19 ionice -c3 /home/doc-minds/bin/docminds-db-backup.sh
+```
+
+Cron runs the copy in `~/bin`, so a `git pull` does not change the live job
+until you copy it again. Check: `cat ~/db-backups/backup.log`,
+`grep FAILED ~/db-backups/backup.log`.

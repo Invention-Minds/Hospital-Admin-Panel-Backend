@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import prisma from '../../service/prisma-client';
 import { auditLog } from '../../service/app-audit';
+import { generateOrdersForDate, parseSlotDepartments } from './meal-order.cron';
 
 /**
  * Dietetics masters — admin-only CRUD for the catalogues:
@@ -11,12 +12,16 @@ import { auditLog } from '../../service/app-audit';
 
 // ─── MealTimeSlot ────────────────────────────────────────────────────
 
+/** Slot as the screens see it: departments as a list instead of JSON text. */
+const slotOut = <T extends { departments: string | null }>(s: T): Omit<T, 'departments'> & { departments: string[] } =>
+  ({ ...s, departments: parseSlotDepartments(s.departments) });
+
 export const listMealTimeSlots = async (_req: Request, res: Response): Promise<void> => {
   try {
     const rows = await prisma.mealTimeSlot.findMany({
       orderBy: [{ sequence: 'asc' }, { startTime: 'asc' }],
     });
-    res.status(200).json(rows);
+    res.status(200).json(rows.map(slotOut));
   } catch (error) {
     console.error('[dietetics] listMealTimeSlots failed:', error);
     res.status(500).json({ error: 'Failed to list meal-time slots' });
@@ -26,15 +31,19 @@ export const listMealTimeSlots = async (_req: Request, res: Response): Promise<v
 export const upsertMealTimeSlot = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
-    const { name, code, startTime, endTime, orderCutoff, sequence, isActive } = req.body as {
+    const { name, code, startTime, endTime, orderCutoff, departments, sequence, isActive } = req.body as {
       name: string;
       code: string;
       startTime: string;
       endTime: string;
       orderCutoff?: string | null;
+      departments?: string[] | null;
       sequence?: number;
       isActive?: boolean;
     };
+    const deptList = Array.isArray(departments)
+      ? Array.from(new Set(departments.map((d) => String(d).trim()).filter(Boolean)))
+      : [];
     if (!name || !code || !startTime || !endTime) {
       res.status(400).json({ error: 'name, code, startTime, endTime are required' });
       return;
@@ -50,6 +59,7 @@ export const upsertMealTimeSlot = async (req: Request, res: Response): Promise<v
       startTime,
       endTime,
       orderCutoff: orderCutoff || null,
+      departments: deptList.length ? JSON.stringify(deptList) : null,
       sequence: sequence ?? 0,
       isActive: isActive ?? true,
     };
@@ -70,15 +80,46 @@ export const upsertMealTimeSlot = async (req: Request, res: Response): Promise<v
       action: id ? 'UPDATE' : 'CREATE',
       entityType: 'MealTimeSlot',
       entityId: row.id,
-      payload: { code: row.code, sequence: row.sequence },
+      payload: { code: row.code, sequence: row.sequence, departments: deptList },
     });
-    res.status(id ? 200 : 201).json(row);
+    // Today's remaining trays and tomorrow's follow the slot change straight
+    // away (e.g. a new OBG-only 18:30 meal, or departments edited).
+    void (async () => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      for (const d of [new Date(), tomorrow]) await generateOrdersForDate(d);
+    })().catch((e) => console.error('[dietetics] regenerate after slot change failed:', e));
+    res.status(id ? 200 : 201).json(slotOut(row));
   } catch (error) {
     console.error('[dietetics] upsertMealTimeSlot failed:', error);
     res.status(500).json({
       error: 'Failed to save meal-time slot',
       detail: error instanceof Error ? error.message : String(error),
     });
+  }
+};
+
+/**
+ * Department names exactly as admissions store them (last 180 days), so a
+ * meal time is limited by a name that really matches ("OBG" vs "OBGYN").
+ */
+export const listAdmissionDepartments = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const since = new Date(Date.now() - 180 * 86400000);
+    const rows = await prisma.ipdAdmission.groupBy({
+      by: ['department'],
+      where: { OR: [{ status: 'admitted' }, { admissionDate: { gte: since } }] },
+      _count: { _all: true },
+    });
+    res.status(200).json(
+      rows
+        .filter((r) => r.department?.trim())
+        .map((r) => ({ name: r.department, admissions: r._count._all }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    );
+  } catch (error) {
+    console.error('[dietetics] listAdmissionDepartments failed:', error);
+    res.status(500).json({ error: 'Failed to list departments' });
   }
 };
 
