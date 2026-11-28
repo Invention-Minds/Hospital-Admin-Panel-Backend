@@ -4,7 +4,30 @@ jest.mock('../masters.controller', () => ({ readSettings: jest.fn() }));
 import {
   feedMinutes, parseFeedText, effectiveFeedOrder, isAutoSkip, noMenuReason, MENU_GAP_PREFIX,
   censusNpoReason, censusNpoFeed, holdStopsFeeds,
+  parseSlotDepartments, slotServesDepartment, slotDeptReason,
 } from '../meal-order.cron';
+
+describe('meal time limited to departments (e.g. OBG 18:30 snack)', () => {
+  it('reads the stored list', () => {
+    expect(parseSlotDepartments(null)).toEqual([]);
+    expect(parseSlotDepartments('not json')).toEqual([]);
+    expect(parseSlotDepartments('[" OBG ",""]')).toEqual(['OBG']);
+  });
+  it('serves everyone when no department is set', () => {
+    expect(slotServesDepartment([], 'Orthopaedics')).toBe(true);
+    expect(slotServesDepartment([], null)).toBe(true);
+  });
+  it('serves only the listed departments, ignoring case and spaces', () => {
+    expect(slotServesDepartment(['OBG'], 'obg ')).toBe(true);
+    expect(slotServesDepartment(['OBG', 'Gynaecology'], 'Gynaecology')).toBe(true);
+    expect(slotServesDepartment(['OBG'], 'Orthopaedics')).toBe(false);
+    expect(slotServesDepartment(['ENT'], 'Dental')).toBe(false);
+    expect(slotServesDepartment(['OBG'], null)).toBe(false);
+  });
+  it('a tray skipped for another department comes back if the department changes', () => {
+    expect(isAutoSkip(slotDeptReason(['OBG']))).toBe(true);
+  });
+});
 
 describe('census NPO with RT feed', () => {
   it('keeps the nurse\'s feed choice in the hold reason', () => {
